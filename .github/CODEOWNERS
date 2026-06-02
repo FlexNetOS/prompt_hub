@@ -1,0 +1,70 @@
+# CODEOWNERS — Responsibility Map for prompt_hub
+
+# Core Types & Errors (Foundation)
+prompt-hub/src/models.rs @drdave
+prompt-hub/src/error.rs @drdave
+
+# Storage & Database
+prompt-hub/src/storage.rs @drdave
+migrations/ @drdave
+
+# Configuration & Templates
+prompt-hub/src/config.rs @drdave
+prompt-hub/src/templates.rs @drdave
+prompt-hub/src/defaults.rs @drdave
+
+# Authentication & Security
+prompt-hub/src/auth.rs @drdave
+prompt-hub/src/audit.rs @drdave
+prompt-hub/src/lock.rs @drdave
+prompt-hub/src/sanitize.rs @drdave
+
+# Search & Synchronization
+prompt-hub/src/search.rs @drdave
+prompt-hub/src/swarm.rs @drdave
+prompt-hub/src/sync.rs @drdave
+
+# Automation Engine
+prompt-hub/src/vibe.rs @drdave
+prompt-hub/src/context_gatherer.rs @drdave
+prompt-hub/src/fallback.rs @drdave
+prompt-hub/src/preview.rs @drdave
+prompt-hub/src/confidence.rs @drdave
+
+# Advanced Features
+prompt-hub/src/evolution.rs @drdave
+prompt-hub/src/pollination.rs @drdave
+prompt-hub/src/cost.rs @drdave
+prompt-hub/src/privacy.rs @drdave
+prompt-hub/src/i18n.rs @drdave
+prompt-hub/src/multimodal.rs @drdave
+prompt-hub/src/learn.rs @drdave
+
+# Core Orchestration
+prompt-hub/src/hub.rs @drdave
+prompt-hub/src/metrics.rs @drdave
+prompt-hub/src/health.rs @drdave
+prompt-hub/src/shutdown.rs @drdave
+prompt-hub/src/plugins.rs @drdave
+
+# HTTP Server
+prompthub-server/src/ @drdave
+
+# CLI Binary
+prompthub/src/ @drdave
+
+# Tests & Benchmarks
+tests/ @drdave
+benches/ @drdave
+
+# Documentation
+docs/ @drdave
+*.md @drdave
+
+# Configuration
+Cargo.toml @drdave
+rust-toolchain.toml @drdave
+.github/ @drdave
+
+# GitHub Actions require approval
+.github/workflows/ @drdave
