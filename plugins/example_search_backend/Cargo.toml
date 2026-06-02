@@ -1,0 +1,7 @@
+[package]
+name = "example-search-backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+prompt-hub = { path = "../../prompt-hub" }

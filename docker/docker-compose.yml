@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  prompthub:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: prompthub/prompthub:latest
+    container_name: prompthub-server
+    ports:
+      - "8080:8080"
+    volumes:
+      - prompthub-data:/data
+      - ./certs:/certs:ro
+    environment:
+      - PROMPTHUB_DB_PATH=/data/prompthub.db
+      - PROMPTHUB_DB_KEY=${PROMPTHUB_DB_KEY:-}
+      - PROMPTHUB_TLS_CERT=/certs/cert.pem
+      - PROMPTHUB_TLS_KEY=/certs/key.pem
+      - RUST_LOG=${RUST_LOG:-info}
+      - PROMPTHUB_CONFIG=/data/config.toml
+    healthcheck:
+      test: ["CMD", "/bin/prompthub-server", "--help"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  prompthub-data:
+    driver: local

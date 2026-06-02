@@ -1,0 +1,130 @@
+[package]
+name = "prompt-hub"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Production-ready prompt management library for LLM agent swarms"
+
+[features]
+default = ["handlebars"]
+smart = ["dep:ndarray"]
+tui = ["dep:ratatui"]
+otel = ["dep:opentelemetry", "dep:opentelemetry-prometheus", "dep:prometheus"]
+sqlcipher = []
+tls = ["dep:tokio-rustls"]
+ffi = []
+handlebars = ["dep:handlebars"]
+tera = ["dep:tera"]
+tiktoken = ["dep:tiktoken-rs"]
+tokenizers = ["dep:tokenizers"]
+plugins = ["dep:libloading", "dep:inventory"]
+qdrant = ["dep:reqwest"]
+vibe = []
+preview = []
+privacy = []
+quality = []
+multimodal = []
+rollback = []
+cost = []
+confidence = []
+learn = []
+fallback = []
+gather = []
+voice = []
+accessibility = []
+budget = []
+cost-limits = []
+quota = []
+circuit-breaker = []
+moderation = []
+malware-scan = []
+sandbox = []
+retention = []
+auto-purge = []
+voice-anonymize = []
+multi-provider = []
+provider-health = []
+load-balance = []
+offline = []
+local-llm = []
+satisfaction = []
+analytics = []
+canary = []
+gradual-rollout = []
+beta-program = []
+mobile = []
+touch = []
+chaos = []
+chaos-automation = []
+
+[dependencies]
+clap = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-tungstenite = { workspace = true, optional = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tower-governor = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = { workspace = true }
+libsql = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+semver = { workspace = true }
+validator = { workspace = true }
+jsonwebtoken = { workspace = true }
+regex = { workspace = true }
+fancy-regex = { workspace = true }
+argon2 = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true, optional = true }
+ndarray = { workspace = true, optional = true }
+petgraph = { workspace = true, optional = true }
+dirs = { workspace = true }
+notify = { workspace = true, optional = true }
+dashmap = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-prometheus = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+handlebars = { workspace = true, optional = true }
+tera = { workspace = true, optional = true }
+tiktoken-rs = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+libloading = { workspace = true, optional = true }
+inventory = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+criterion = { workspace = true }
+proptest = { workspace = true }
+insta = { workspace = true }
+tokio-test = "0.4"
+
+[[bench]]
+name = "search_latency"
+harness = false
+
+[[bench]]
+name = "embedding_generation"
+harness = false
+
+[[bench]]
+name = "db_write_throughput"
+harness = false
+
+[build-dependencies]

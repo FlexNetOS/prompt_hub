@@ -1,0 +1,66 @@
+[package]
+name = "prompthub-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "HTTP API server for prompt-hub"
+
+[[bin]]
+name = "prompthub-server"
+path = "src/main.rs"
+
+[features]
+default = ["prompt-hub/handlebars"]
+smart = ["prompt-hub/smart"]
+otel = ["prompt-hub/otel"]
+sqlcipher = ["prompt-hub/sqlcipher"]
+tls = ["prompt-hub/tls", "dep:tokio-rustls"]
+handlebars = ["prompt-hub/handlebars"]
+tera = ["prompt-hub/tera"]
+tiktoken = ["prompt-hub/tiktoken"]
+tokenizers = ["prompt-hub/tokenizers"]
+plugins = ["prompt-hub/plugins"]
+qdrant = ["prompt-hub/qdrant"]
+
+[dependencies]
+prompt-hub = { path = "../prompt-hub" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tower-governor = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+semver = { workspace = true }
+jsonwebtoken = { workspace = true }
+validator = { workspace = true }
+clap = { workspace = true }
+regex = { workspace = true }
+argon2 = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+dashmap = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+prometheus = { workspace = true, optional = true }
+
+[build-dependencies]
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+reqwest = { workspace = true }
