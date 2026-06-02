@@ -1,0 +1,204 @@
+name: External AI APIs (Claude, Devin.ai)
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_choice:
+        description: 'AI Model to use'
+        required: true
+        default: 'claude'
+        type: choice
+        options:
+          - claude
+          - devin
+          - both
+
+  pull_request:
+    types: [opened]
+    paths:
+      - '**/*.rs'
+      - 'Cargo.toml'
+    if: contains(github.event.pull_request.labels.*.name, 'ai-review')
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  claude-api-review:
+    runs-on: ubuntu-latest
+    name: Code Review (Claude - Anthropic API)
+    if: |
+      github.event.inputs.model_choice == 'claude' ||
+      github.event.inputs.model_choice == 'both' ||
+      github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        if: github.event.pull_request
+        run: |
+          diff=$(git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | head -3000)
+          # Escape for JSON
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          echo "$diff" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Call Claude API
+        id: claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          response=$(curl -s -X POST https://api.anthropic.com/v1/messages \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d '{
+              "model": "claude-opus-4-1",
+              "max_tokens": 2048,
+              "system": "You are an expert Rust code reviewer. Review the code for:\n1. Correctness and safety\n2. Following prompt_hub architecture\n3. Error handling with HubError\n4. Test coverage\n5. Performance implications\n\nKeep review concise and actionable.",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "Please review this Rust code change:\n\n${{ steps.diff.outputs.content }}"
+                }
+              ]
+            }')
+          
+          review=$(echo "$response" | jq -r '.content[0].text')
+          echo "review<<EOF" >> $GITHUB_OUTPUT
+          echo "$review" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post Claude review to PR
+        if: github.event.pull_request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const review = `## 🤖 AI Code Review (Claude - Anthropic)
+            
+            ${{ steps.claude.outputs.review }}
+            
+            ---
+            **Model**: Claude Opus 4.1  
+            **Provider**: Anthropic  
+            **Status**: ✅ API Review Complete`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: review
+            });
+
+  devin-code-generation:
+    runs-on: ubuntu-latest
+    name: Code Generation (Devin.ai API)
+    if: |
+      github.event.inputs.model_choice == 'devin' ||
+      github.event.inputs.model_choice == 'both'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get context
+        id: context
+        run: |
+          # Get recent commits and affected files
+          context=$(git log --oneline -10 | head -5)
+          echo "recent_context<<EOF" >> $GITHUB_OUTPUT
+          echo "$context" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Call Devin.ai API
+        id: devin
+        env:
+          DEVIN_API_KEY: ${{ secrets.DEVIN_API_KEY }}
+        run: |
+          # Note: Devin.ai API is still in development
+          # Update endpoint and payload based on their current API
+          response=$(curl -s -X POST https://api.devin.ai/v1/generate \
+            -H "Authorization: Bearer $DEVIN_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "task": "Generate comprehensive unit tests for the Rust code changes",
+              "context": {
+                "project": "prompt_hub",
+                "language": "rust",
+                "recent_commits": "${{ steps.context.outputs.recent_context }}"
+              },
+              "requirements": [
+                "Follow test patterns in prompt-hub/src",
+                "Use tokio::test for async tests",
+                "Test error paths with HubError",
+                "Include property-based tests where applicable"
+              ]
+            }')
+          
+          # Parse response
+          result=$(echo "$response" | jq -r '.generated_code')
+          echo "generated<<EOF" >> $GITHUB_OUTPUT
+          echo "$result" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create test generation artifact
+        run: |
+          cat > /tmp/generated_tests.rs << 'EOF'
+          // Generated by Devin.ai
+          ${{ steps.devin.outputs.generated }}
+          EOF
+          
+          echo "Generated tests saved to artifact"
+          cat /tmp/generated_tests.rs
+
+      - name: Upload generated tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: devin-generated-tests
+          path: /tmp/generated_tests.rs
+          retention-days: 30
+
+  combined-analysis:
+    runs-on: ubuntu-latest
+    name: Combined Analysis
+    needs: [claude-api-review, devin-code-generation]
+    if: always() && github.event.pull_request
+    steps:
+      - name: Post combined summary
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            let summary = `## 🤖 External AI Analysis Summary
+            
+            ### Claude (Anthropic)
+            - Deep architectural insights
+            - Error handling review
+            - Performance recommendations
+            
+            ### Devin.ai
+            - Unit test generation
+            - Test pattern suggestions
+            - Edge case coverage
+            
+            ---
+            
+            **Tip**: Compare suggestions from multiple models to make data-driven decisions about your code.
+            
+            **Next Steps**:
+            1. Review generated tests from Devin
+            2. Incorporate Claude's suggestions
+            3. Run: \`cargo test --all-features\`
+            4. Verify: \`cargo clippy --all-targets\``;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

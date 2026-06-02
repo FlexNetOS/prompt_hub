@@ -1,0 +1,120 @@
+name: Code Review with GitHub Models
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  models: read
+  pull-requests: write
+
+jobs:
+  code-review:
+    runs-on: ubuntu-latest
+    name: AI Code Review (GitHub Models)
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR changes
+        id: changes
+        run: |
+          # Get the list of changed files
+          git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} --name-only > /tmp/changed_files.txt
+          
+          # Get diff for first 5 files (limit to avoid token overflow)
+          echo "diff_output<<EOF" >> $GITHUB_OUTPUT
+          head -5 /tmp/changed_files.txt | while read file; do
+            echo "=== $file ===" >> $GITHUB_OUTPUT
+            git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- "$file" | head -100 >> $GITHUB_OUTPUT
+          done
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Review code with GitHub Models (GPT-4o)
+        id: review_gpt4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "openai/gpt-4o",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are an expert Rust code reviewer for the prompt_hub project. Review the code changes for: 1) Compilation safety (no unsafe blocks), 2) Type correctness (using models.rs), 3) Error handling (HubError), 4) Test coverage, 5) Performance. Keep review concise (under 500 chars)."
+                },
+                {
+                  "role": "user",
+                  "content": "Review these Rust code changes:\n\n${{ steps.changes.outputs.diff_output }}"
+                }
+              ],
+              "temperature": 0.3,
+              "max_tokens": 1000
+            }')
+          
+          review=$(echo "$response" | jq -r '.choices[0].message.content')
+          echo "review=$review" >> $GITHUB_OUTPUT
+
+      - name: Post review to PR
+        if: github.event.pull_request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const review = `## 🤖 AI Code Review (GitHub Models - GPT-4o)
+            
+            ${{ steps.review_gpt4.outputs.review }}
+            
+            **Note**: This is an automated review. Please verify manually before merging.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: review
+            });
+
+  feature-suggestions:
+    runs-on: ubuntu-latest
+    name: Feature Suggestions (Claude)
+    if: contains(github.event.pull_request.labels.*.name, 'feature')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get SPEC.md
+        id: spec
+        run: |
+          content=$(cat SPEC.md | head -1000)
+          echo "spec=$content" >> $GITHUB_OUTPUT
+
+      - name: Suggest features with Claude via GitHub Models
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "claude/claude-opus",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a Rust architect. Suggest 2-3 features that would complement the prompt_hub project based on the spec."
+                },
+                {
+                  "role": "user",
+                  "content": "Current spec:\n\n${{ steps.spec.outputs.spec }}"
+                }
+              ],
+              "temperature": 0.7
+            }' | jq '.choices[0].message.content' > /tmp/suggestions.txt
+          cat /tmp/suggestions.txt

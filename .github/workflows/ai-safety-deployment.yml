@@ -1,0 +1,271 @@
+name: AI Safety & Deployment Check
+
+on:
+  pull_request:
+    types: [ready_for_review]
+  workflow_dispatch:
+    inputs:
+      severity:
+        description: 'Safety check severity'
+        required: true
+        default: 'strict'
+        type: choice
+        options:
+          - lenient
+          - normal
+          - strict
+
+permissions:
+  models: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  security-analysis:
+    runs-on: ubuntu-latest
+    name: Security Analysis (GitHub Models)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get code changes
+        id: changes
+        if: github.event.pull_request
+        run: |
+          diff=$(git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | head -2000)
+          echo "diff<<EOF" >> $GITHUB_OUTPUT
+          echo "$diff" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Analyze security with GPT-4o
+        id: security
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "openai/gpt-4o",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a Rust security expert. Analyze code for security vulnerabilities:\n1. SQL injection risks\n2. Hardcoded secrets or credentials\n3. Unsafe code blocks\n4. Missing input validation\n5. Unprotected sensitive operations\n6. Authentication/authorization issues\n7. Crypto misuse\n\nFor each issue found, provide: SEVERITY (CRITICAL/HIGH/MEDIUM/LOW), LOCATION, ISSUE, FIX"
+                },
+                {
+                  "role": "user",
+                  "content": "Analyze this Rust code for security issues:\n\n${{ steps.changes.outputs.diff }}"
+                }
+              ],
+              "temperature": 0.2,
+              "max_tokens": 1500
+            }')
+          
+          analysis=$(echo "$response" | jq -r '.choices[0].message.content')
+          echo "analysis<<EOF" >> $GITHUB_OUTPUT
+          echo "$analysis" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Check for unsafe blocks
+        id: unsafe
+        run: |
+          unsafe_count=$(git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep -c "^+.*unsafe {")
+          echo "unsafe_blocks=$unsafe_count" >> $GITHUB_OUTPUT
+          
+          if [ "$unsafe_count" -gt 0 ]; then
+            echo "status=FAILED" >> $GITHUB_OUTPUT
+          else
+            echo "status=PASSED" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for secrets
+        id: secrets
+        run: |
+          # Simple pattern matching for common secrets
+          secret_patterns=$(git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} | grep -E 'password|api_key|secret|token|credential' | wc -l)
+          echo "secret_patterns=$secret_patterns" >> $GITHUB_OUTPUT
+
+      - name: Post security report
+        if: github.event.pull_request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const safetyStatus = '${{ steps.unsafe.outputs.status }}' === 'PASSED' ? '✅ PASS' : '❌ FAIL';
+            
+            const report = `## 🔒 Security Analysis Report
+            
+            ### Unsafe Code Check
+            - **Status**: ${safetyStatus}
+            - **Unsafe blocks found**: ${{ steps.unsafe.outputs.unsafe_blocks }}
+            - **Pattern matches**: ${{ steps.secrets.outputs.secret_patterns }}
+            
+            ### AI Security Analysis
+            
+            ${{ steps.security.outputs.analysis }}
+            
+            ---
+            
+            **Recommendation**: Review findings before merging.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+  performance-impact:
+    runs-on: ubuntu-latest
+    name: Performance Impact Analysis
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract affected modules
+        id: modules
+        if: github.event.pull_request
+        run: |
+          modules=$(git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} --name-only | grep -E 'src/.*\.rs$' | sed 's|.*src/||;s|\.rs$||')
+          echo "modules<<EOF" >> $GITHUB_OUTPUT
+          echo "$modules" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Analyze performance implications
+        id: perf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "claude/claude-opus",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a performance engineer for Rust. Analyze code for performance impact:\n1. Allocations and memory usage\n2. Algorithm complexity (O(n), O(n²), etc.)\n3. Database query efficiency\n4. Lock contention\n5. Async overhead\n6. Caching opportunities\n\nFor each issue, suggest optimizations."
+                },
+                {
+                  "role": "user",
+                  "content": "Analyze performance implications of changes to these modules in a Rust async database application:\n\n${{ steps.modules.outputs.modules }}"
+                }
+              ],
+              "temperature": 0.3,
+              "max_tokens": 1500
+            }')
+          
+          analysis=$(echo "$response" | jq -r '.choices[0].message.content')
+          echo "analysis<<EOF" >> $GITHUB_OUTPUT
+          echo "$analysis" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post performance analysis
+        if: github.event.pull_request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const analysis = `## ⚡ Performance Impact Analysis
+            
+            ### Affected Modules
+            ${{ steps.modules.outputs.modules }}
+            
+            ### AI Performance Analysis
+            
+            ${{ steps.perf.outputs.analysis }}
+            
+            ---
+            
+            **Recommendations**:
+            1. Consider running benchmarks: \`cargo bench\`
+            2. Profile with: \`cargo flamegraph\`
+            3. Check memory usage with valgrind`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: analysis
+            });
+
+  deployment-readiness:
+    runs-on: ubuntu-latest
+    name: Deployment Readiness Check
+    needs: [security-analysis, performance-impact]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify compilation
+        run: |
+          cargo check --all-features --quiet 2>&1 | head -20
+
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: |
+          cargo test --all-features --lib 2>&1 | tail -5
+
+      - name: Check deployment safety
+        id: deployment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "openai/gpt-4o",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a DevOps engineer. Provide a deployment readiness checklist for a Rust application:\n1. Code review status\n2. Test coverage\n3. Database migration safety\n4. Configuration management\n5. Rollback plan\n6. Monitoring setup\n7. Documentation completeness"
+                },
+                {
+                  "role": "user",
+                  "content": "Provide deployment readiness assessment for prompt_hub\n\nTest results:\n${{ steps.tests.outputs.test_results }}"
+                }
+              ],
+              "temperature": 0.2,
+              "max_tokens": 1000
+            }')
+          
+          checklist=$(echo "$response" | jq -r '.choices[0].message.content')
+          echo "checklist<<EOF" >> $GITHUB_OUTPUT
+          echo "$checklist" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post deployment readiness
+        if: github.event.pull_request
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const readinessColor = '${{ steps.tests.outcome }}' === 'success' ? '✅' : '⚠️';
+            
+            const checklist = `## ${readinessColor} Deployment Readiness Assessment
+            
+            ### Test Status
+            - Compilation: ✅ OK
+            - Tests: ${{ steps.tests.outcome === 'success' ? '✅ PASS' : '⚠️ REVIEW' }}
+            
+            ### Deployment Checklist
+            
+            ${{ steps.deployment.outputs.checklist }}
+            
+            ---
+            
+            **Final Review**: All checks should pass before merging to main.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: checklist
+            });

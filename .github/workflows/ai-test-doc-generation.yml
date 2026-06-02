@@ -1,0 +1,263 @@
+name: AI Test & Doc Generation
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  models: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  test-generation:
+    runs-on: ubuntu-latest
+    name: Generate Unit Tests (GitHub Models)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract code for testing
+        id: code
+        if: github.event.pull_request
+        run: |
+          # Get Rust files that changed
+          files=$(git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} --name-only --diff-filter=AM | grep '\.rs$' | head -3)
+          
+          content=""
+          for file in $files; do
+            if [ -f "$file" ]; then
+              content="$content\n=== $file ===\n$(cat $file | head -200)"
+            fi
+          done
+          
+          echo "code<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$content" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate tests with GitHub Models
+        id: tests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "openai/gpt-4o",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a Rust testing expert. Generate comprehensive unit tests for Rust code using tokio for async tests. Include error cases and edge cases. Format output as valid Rust code in a code block."
+                },
+                {
+                  "role": "user",
+                  "content": "Generate unit tests for this Rust code:\n\n${{ steps.code.outputs.code }}\n\nRequirements:\n- Use #[tokio::test] for async tests\n- Test success paths and error cases\n- Include assertions for HubError\n- Add property-based tests where applicable"
+                }
+              ],
+              "temperature": 0.4,
+              "max_tokens": 2000
+            }')
+          
+          tests=$(echo "$response" | jq -r '.choices[0].message.content')
+          echo "tests<<EOF" >> $GITHUB_OUTPUT
+          echo "$tests" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Save generated tests
+        run: |
+          mkdir -p /tmp/generated
+          cat > /tmp/generated/tests.rs << 'EOF'
+          // Auto-generated tests from GitHub Models
+          ${{ steps.tests.outputs.tests }}
+          EOF
+
+      - name: Upload test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-unit-tests
+          path: /tmp/generated/tests.rs
+          retention-days: 7
+
+  documentation-generation:
+    runs-on: ubuntu-latest
+    name: Generate Documentation (Claude)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract functions
+        id: funcs
+        run: |
+          # Find public functions in Rust files
+          funcs=$(grep -h "pub async fn\|pub fn" prompt-hub/src/*.rs | head -20 | sed 's/^[[:space:]]*//')
+          echo "functions<<EOF" >> $GITHUB_OUTPUT
+          echo "$funcs" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate docs with GitHub Models
+        id: docs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "claude/claude-opus",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a technical documentation expert. Generate clear, concise Rust doc comments (///) with examples for public functions. Follow Rust documentation conventions."
+                },
+                {
+                  "role": "user",
+                  "content": "Generate documentation for these Rust functions:\n\n${{ steps.funcs.outputs.functions }}\n\nInclude:\n- Brief description\n- Parameter documentation\n- Return value documentation\n- Example usage\n- Errors that can occur"
+                }
+              ],
+              "temperature": 0.5,
+              "max_tokens": 2000
+            }')
+          
+          docs=$(echo "$response" | jq -r '.choices[0].message.content')
+          echo "docs<<EOF" >> $GITHUB_OUTPUT
+          echo "$docs" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Save generated docs
+        run: |
+          mkdir -p /tmp/generated
+          cat > /tmp/generated/docs.md << 'EOF'
+          # Auto-generated Documentation
+          
+          Generated with Claude via GitHub Models
+          
+          ${{ steps.docs.outputs.docs }}
+          EOF
+
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-documentation
+          path: /tmp/generated/docs.md
+          retention-days: 7
+
+  example-generation:
+    runs-on: ubuntu-latest
+    name: Generate Examples (DeepSeek)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get example prompts
+        id: prompts
+        run: |
+          # Extract feature names from spec
+          features=$(grep -o "^## [^#].*" SPEC.md | head -5)
+          echo "features<<EOF" >> $GITHUB_OUTPUT
+          echo "$features" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate example code
+        id: examples
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "deepseek/deepseek-coder",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a Rust code example expert. Generate runnable, well-commented examples that demonstrate Rust features clearly."
+                },
+                {
+                  "role": "user",
+                  "content": "Generate complete, runnable Rust examples for these features:\n\n${{ steps.prompts.outputs.features }}\n\nRequirements:\n- Each example is a standalone program\n- Use realistic data\n- Include error handling\n- Add comments explaining key concepts\n- Make examples runnable with: cargo run --example <name>"
+                }
+              ],
+              "temperature": 0.6,
+              "max_tokens": 2000
+            }')
+          
+          examples=$(echo "$response" | jq -r '.choices[0].message.content')
+          echo "examples<<EOF" >> $GITHUB_OUTPUT
+          echo "$examples" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Save generated examples
+        run: |
+          mkdir -p /tmp/generated
+          cat > /tmp/generated/examples.rs << 'EOF'
+          // Auto-generated examples from DeepSeek
+          ${{ steps.examples.outputs.examples }}
+          EOF
+
+      - name: Upload examples artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-examples
+          path: /tmp/generated/examples.rs
+          retention-days: 7
+
+  create-pull-request:
+    runs-on: ubuntu-latest
+    name: Create PR with Generated Content
+    needs: [test-generation, documentation-generation, example-generation]
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/artifacts
+
+      - name: Create summary
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            
+            let summary = `## 🤖 AI-Generated Content Available
+            
+            AI models have generated helpful content for your PR:
+            
+            ### Generated Unit Tests
+            - **Model**: GitHub Models (GPT-4o)
+            - **Location**: \`generated-unit-tests\` artifact
+            - **Action**: Download and review tests, then add to your code
+            
+            ### Generated Documentation
+            - **Model**: Claude (via GitHub Models)
+            - **Location**: \`generated-documentation\` artifact
+            - **Action**: Review doc comments for accuracy
+            
+            ### Generated Examples
+            - **Model**: DeepSeek Coder (via GitHub Models)
+            - **Location**: \`generated-examples\` artifact
+            - **Action**: Review examples for correctness
+            
+            ---
+            
+            **How to use**:
+            1. Go to the "Artifacts" section of this workflow run
+            2. Download the relevant artifact
+            3. Review the generated content
+            4. Incorporate into your PR if acceptable
+            5. Run tests: \`cargo test --all-features\`
+            
+            **Note**: Always review AI-generated code before using!`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

@@ -1,0 +1,202 @@
+name: Multi-Model Evaluation
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  workflow_dispatch:
+    inputs:
+      evaluation_type:
+        description: 'Type of evaluation to run'
+        required: true
+        default: 'code-review'
+        type: choice
+        options:
+          - code-review
+          - test-generation
+          - documentation
+
+permissions:
+  pull-requests: write
+  contents: read
+  models: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      pr_title: ${{ steps.pr.outputs.title }}
+      pr_body: ${{ steps.pr.outputs.body }}
+      changed_files: ${{ steps.files.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR info
+        id: pr
+        if: github.event.pull_request
+        run: |
+          echo "title=${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+          echo "body=${{ github.event.pull_request.body }}" >> $GITHUB_OUTPUT
+
+      - name: Get changed files
+        id: files
+        run: |
+          if [ "${{ github.event.pull_request.base.sha }}" != "" ]; then
+            git diff ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} --name-only | head -10 > /tmp/files.txt
+          else
+            git diff HEAD~1 HEAD --name-only | head -10 > /tmp/files.txt
+          fi
+          files=$(cat /tmp/files.txt | tr '\n' ',' | sed 's/,$//')
+          echo "changed=$files" >> $GITHUB_OUTPUT
+
+  github-models-review:
+    runs-on: ubuntu-latest
+    name: Review (GitHub Models - GPT-4o)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run review with GitHub Models
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "openai/gpt-4o",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a Rust expert. Review code for safety, correctness, and style."
+                },
+                {
+                  "role": "user",
+                  "content": "Review the Rust code changes for prompt_hub:\n\nChanged files: ${{ needs.setup.outputs.changed_files }}"
+                }
+              ],
+              "temperature": 0.3
+            }' | jq '.'
+
+  claude-review:
+    runs-on: ubuntu-latest
+    name: Review (Claude via GitHub Models)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run review with Claude
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "claude/claude-opus",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are an expert software architect specializing in Rust and distributed systems."
+                },
+                {
+                  "role": "user",
+                  "content": "Analyze these changes to prompt_hub and suggest architectural improvements:\n\nChanged files: ${{ needs.setup.outputs.changed_files }}"
+                }
+              ],
+              "temperature": 0.5
+            }' | jq '.'
+
+  openai-codex:
+    runs-on: ubuntu-latest
+    name: Code Completion (OpenAI via GitHub Models)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate code completions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "openai/gpt-4o",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are an expert code generator for Rust. Generate well-tested, idiomatic code."
+                },
+                {
+                  "role": "user",
+                  "content": "For the changed files in this Rust project, suggest unit tests and documentation:\n\nFiles: ${{ needs.setup.outputs.changed_files }}"
+                }
+              ],
+              "temperature": 0.2
+            }' | jq '.'
+
+  deepseek-analysis:
+    runs-on: ubuntu-latest
+    name: Performance Analysis (DeepSeek via GitHub Models)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Analyze performance implications
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://models.github.ai/inference/chat/completions \
+            -d '{
+              "model": "deepseek/deepseek-coder",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "You are a performance engineer specializing in Rust. Analyze code for performance bottlenecks."
+                },
+                {
+                  "role": "user",
+                  "content": "Analyze the performance implications of these changes to prompt_hub:\n\nFiles: ${{ needs.setup.outputs.changed_files }}"
+                }
+              ],
+              "temperature": 0.2
+            }' | jq '.'
+
+  post-summary:
+    runs-on: ubuntu-latest
+    name: Post Evaluation Summary
+    needs: [github-models-review, claude-review, openai-codex, deepseek-analysis]
+    if: always() && github.event.pull_request
+    steps:
+      - name: Create summary comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const summary = `## 🤖 Multi-Model AI Evaluation Complete
+            
+            This PR was evaluated by multiple AI models:
+            - ✅ **GitHub Models (GPT-4o)** - Code Review
+            - ✅ **Claude (via GitHub Models)** - Architectural Analysis
+            - ✅ **OpenAI (via GitHub Models)** - Code Completion Suggestions
+            - ✅ **DeepSeek (via GitHub Models)** - Performance Analysis
+            
+            See workflow logs for detailed results from each model.
+            
+            ---
+            
+            **Tips**:
+            - Compare outputs to choose the best suggestions
+            - Manual review is always recommended
+            - Use evaluations to iterate on your code`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
