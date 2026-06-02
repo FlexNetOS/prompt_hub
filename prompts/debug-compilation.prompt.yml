@@ -1,0 +1,149 @@
+name: Debug Rust Compilation Errors
+description: |
+  Systematic approach to debugging and fixing Rust compilation errors in prompt_hub.
+  Identifies error types and provides targeted solutions.
+model: openai/gpt-4o
+modelParameters:
+  temperature: 0.2
+  top_p: 0.9
+messages:
+  - role: system
+    content: |
+      You are a Rust debugging expert for the prompt_hub monorepo. Your goal is to help developers quickly fix compilation errors.
+      
+      DEBUGGING METHODOLOGY:
+      
+      1. Parse the error carefully
+         - Note the error type (type mismatch, missing import, borrow checker, etc.)
+         - Identify the file and line number
+         - Read the full error message, not just the first line
+      
+      2. For Type Mismatches
+         - Check models.rs for the correct type definition
+         - Verify the actual vs. expected types
+         - Look for Vec<T> vs T mismatches
+         - Check Option<T> vs T
+      
+      3. For Missing Imports
+         - Verify the module is exported from lib.rs
+         - Check if the type needs `use crate::...`
+         - Look for types in models.rs that need importing
+      
+      4. For Method Not Found
+         - Grep the codebase for similar working code
+         - Verify the struct/enum definition has the method
+         - Check if it's private vs. public
+      
+      5. For Borrow Checker Issues
+         - Check ownership (who owns the value?)
+         - Verify mutable vs. immutable references
+         - Look for unwanted moves vs. borrows
+      
+      6. For Async Issues
+         - Verify all .await are present
+         - Check that async fn returns impl Future or is awaited
+         - Look for blocking operations in async contexts
+      
+      7. Verify the Fix
+         - Run: cargo check --all-features
+         - Run: cargo test --lib <module>::
+         - Run: cargo clippy --all-targets --all-features
+      
+      MSRV constraint: Rust 1.91.1 (don't use newer features)
+      
+  - role: user
+    content: |
+      I'm getting this Rust compilation error:
+      
+      {{error_message}}
+      
+      In this code:
+      {{code_snippet}}
+      
+      How do I fix it?
+
+testData:
+  - error_message: |
+      error[E0308]: mismatched types
+      expected: `Vec<Capability>`
+      found: `Vec<String>`
+      --> prompthub-server/src/routes.rs:65:20
+    code_snippet: |
+      let capabilities = vec!["read".to_string(), "write".to_string()];
+      let agent = AgentIdentity {
+          id: "agent1".to_string(),
+          name: "test".to_string(),
+          capabilities,  // ERROR: expects Vec<Capability> not Vec<String>
+      };
+    expected: |
+      FIX: Type Mismatch in capabilities field
+      
+      The `AgentIdentity` struct (defined in models.rs) expects:
+      pub struct AgentIdentity {
+          pub capabilities: Vec<Capability>,  // NOT Vec<String>
+      }
+      
+      SOLUTION:
+      ```rust
+      // Instead of Vec<String>, use Vec<Capability>
+      let capabilities = vec![Capability::Read, Capability::Write];
+      let agent = AgentIdentity {
+          id: "agent1".to_string(),
+          name: "test".to_string(),
+          capabilities,  // Now correct type!
+      };
+      ```
+      
+      Alternative (if Capability needs to_string):
+      ```rust
+      let capabilities = vec!["read".to_string(), "write".to_string()]
+          .iter()
+          .filter_map(|s| Capability::from_str(s).ok())
+          .collect();
+      ```
+      
+      After fixing, run:
+      - cargo check --all-features
+      - cargo test --lib auth::
+
+  - error_message: |
+      error[E0433]: cannot find function `Sha256::digest` in this scope
+      --> prompt-hub/src/canary.rs:27:22
+    code_snippet: |
+      let hash = Sha256::digest(hash_input.as_bytes());
+    expected: |
+      FIX: Missing trait import for Digest
+      
+      The `sha2::Sha256::digest()` method requires the `Digest` trait in scope.
+      
+      SOLUTION - Add import at top of file:
+      ```rust
+      use sha2::{Sha256, Digest};  // Add Digest here
+      
+      // Then use as before:
+      let hash = Sha256::digest(hash_input.as_bytes());
+      ```
+      
+      OR use full path without import:
+      ```rust
+      use sha2::Sha256;
+      
+      // Use fully qualified call:
+      let hash = {
+          use sha2::Digest;
+          Sha256::digest(hash_input.as_bytes())
+      };
+      ```
+      
+      Run: cargo check --all-features
+
+evaluators:
+  - name: Identifies error type correctly
+    string:
+      contains: 'error'
+  - name: Provides working code fix
+    string:
+      contains: '```rust'
+  - name: Includes verification command
+    string:
+      contains: 'cargo'

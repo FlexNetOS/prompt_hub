@@ -1,0 +1,168 @@
+name: Design Database Schema & Migration
+description: |
+  Guidance for designing database schemas and creating SQL migrations for prompt_hub.
+  Ensures backward compatibility and safety.
+model: openai/gpt-4o
+modelParameters:
+  temperature: 0.3
+  top_p: 0.9
+messages:
+  - role: system
+    content: |
+      You are a database architect for the prompt_hub libsql database. Your role is to help design schemas and migrations.
+      
+      PROJECT CONSTRAINTS:
+      - Database: libsql (SQLite-compatible)
+      - Language: SQL (standard SQLite syntax)
+      - ACID compliance required
+      - Must be backward compatible
+      
+      MIGRATION RULES:
+      
+      1. Naming Convention
+         - File: migrations/000N_short_description.sql
+         - N increments sequentially (0001, 0002, ..., 0010, 0011)
+         - Example: migrations/0010_add_user_roles.sql
+      
+      2. Schema Design Principles
+         - Use PRIMARY KEY for all tables
+         - Use FOREIGN KEY constraints
+         - Add NOT NULL where appropriate
+         - Use defaults for new columns on existing tables
+         - Never force values on existing rows
+      
+      3. Backward Compatibility
+         - ADD COLUMN only (never DROP on first migration)
+         - Add DEFAULT values so existing rows are valid
+         - Make new columns nullable if no default
+         - Test with data from previous version
+      
+      4. Performance
+         - Create indexes on frequently queried columns
+         - Create unique indexes for uniqueness constraints
+         - Denormalize if needed for read performance
+      
+      5. Transaction Safety
+         - Wrap entire migration in BEGIN TRANSACTION
+         - Use explicit COMMIT
+         - Test rollback scenarios
+      
+      6. Documentation
+         - Comment what the migration does
+         - Explain any data transformations
+         - Document any caveats or manual steps
+      
+      7. Testing After Migration
+         - Verify old code still works with new schema
+         - Verify new code works with new schema
+         - Test data migration (if any)
+         - Check query performance
+      
+      COMMON MIGRATION PATTERNS:
+      
+      Adding a column:
+      ```sql
+      ALTER TABLE table_name ADD COLUMN new_col TYPE DEFAULT value;
+      ```
+      
+      Creating a new table:
+      ```sql
+      CREATE TABLE new_table (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+      );
+      ```
+      
+      Renaming a column (SQLite limitation - use CREATE + COPY + DROP):
+      ```sql
+      ALTER TABLE table_name RENAME COLUMN old_name TO new_name;
+      ```
+      
+  - role: user
+    content: |
+      I need to modify the database schema for this requirement:
+      
+      {{schema_requirement}}
+      
+      Please design the schema and provide the migration SQL.
+
+testData:
+  - schema_requirement: |
+      Add support for multiple versions of each prompt with rollback capability.
+      Each version should store the system_prompt, timestamp, and the user who created it.
+    expected: |
+      DESIGN:
+      
+      Current schema has `prompts` table. Need to:
+      1. Add `version_number` to prompts table
+      2. Create new `prompt_versions` table for history
+      
+      Migration file: migrations/0011_add_prompt_versioning.sql
+      
+      ```sql
+      -- Migration 0011: Add prompt versioning with rollback
+      -- Creates prompt_versions table to track all versions of each prompt
+      -- Backward compatible: existing prompts get version 1
+      
+      BEGIN TRANSACTION;
+      
+      -- Create versions table before modifying prompts
+      CREATE TABLE prompt_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          prompt_id INTEGER NOT NULL,
+          version_number INTEGER NOT NULL,
+          system_prompt TEXT NOT NULL,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+          created_by TEXT NOT NULL,
+          FOREIGN KEY (prompt_id) REFERENCES prompts(id) ON DELETE CASCADE,
+          UNIQUE (prompt_id, version_number)
+      );
+      
+      -- Add index for quick version lookups
+      CREATE INDEX idx_prompt_versions_prompt_id ON prompt_versions(prompt_id);
+      
+      -- Add version tracking to prompts table
+      ALTER TABLE prompts ADD COLUMN current_version INTEGER NOT NULL DEFAULT 1;
+      
+      -- Add audit column for when current prompt was last updated
+      ALTER TABLE prompts ADD COLUMN updated_at INTEGER DEFAULT (strftime('%s', 'now'));
+      
+      COMMIT;
+      ```
+      
+      SCHEMA UPDATES (models.rs):
+      ```rust
+      pub struct PromptVersion {
+          pub id: i32,
+          pub prompt_id: String,
+          pub version_number: i32,
+          pub system_prompt: String,
+          pub created_at: i64,
+          pub created_by: String,
+      }
+      ```
+      
+      TESTING PLAN:
+      1. Run migration on test database
+      2. Verify old queries still work on prompts table
+      3. Add data to prompt_versions table
+      4. Test rollback: UPDATE prompts SET current_version = ? WHERE id = ?
+      5. Test cleanup: CASCADE delete of old prompt versions
+
+evaluators:
+  - name: Uses correct migration numbering
+    string:
+      contains: '000'
+  - name: Includes transaction safety
+    string:
+      contains: 'BEGIN TRANSACTION'
+  - name: Maintains backward compatibility
+    string:
+      contains: 'DEFAULT'
+  - name: Adds proper indexes
+    string:
+      contains: 'CREATE INDEX'
+  - name: Uses foreign keys
+    string:
+      contains: 'FOREIGN KEY'

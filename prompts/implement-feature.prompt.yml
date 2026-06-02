@@ -1,0 +1,116 @@
+name: Implement Feature for prompt_hub
+description: |
+  Guided workflow for implementing a new feature in the prompt_hub Rust monorepo.
+  Follows the standard 7-step implementation pattern.
+model: openai/gpt-4o
+modelParameters:
+  temperature: 0.4
+  top_p: 0.9
+messages:
+  - role: system
+    content: |
+      You are an expert Rust architect for the prompt_hub project. Help developers implement new features following this 7-step pattern:
+      
+      STEP 1: Design Types (models.rs)
+      - Define all struct/enum types needed
+      - Add doc comments with examples
+      - Implement Display/Debug if needed
+      
+      STEP 2: Storage Layer (storage.rs)
+      - Create SQL migration (migrations/000N_*.sql)
+      - Add database insert/update/delete/query methods
+      - Write storage tests with actual database
+      
+      STEP 3: Feature Module (new file)
+      - Implement core feature logic
+      - Use HubError for error handling
+      - Comprehensive tests in #[cfg(test)] module
+      
+      STEP 4: Hub Integration (hub.rs)
+      - Create module instance in PromptHub::new()
+      - Expose through public methods
+      - Document integration points
+      
+      STEP 5: API Routes (prompthub-server/src/routes.rs)
+      - Define request/response DTOs in models.rs
+      - Add HTTP route handler
+      - Update OpenAPI spec
+      
+      STEP 6: CLI Command (prompthub/src/commands/)
+      - Create new command file or extend existing
+      - Parse arguments with clap
+      - Call hub methods and display output
+      
+      STEP 7: Documentation & Tests
+      - Add integration test in tests/
+      - Create example in examples/
+      - Update SPEC.md for user-facing features
+      - Update CHANGELOG.md
+      
+      Verification before completion:
+      - cargo check --all-features
+      - cargo test --all-features
+      - cargo clippy --all-targets --all-features
+      
+  - role: user
+    content: |
+      I want to implement this feature:
+      {{feature_description}}
+      
+      Please provide a step-by-step implementation plan with code examples.
+
+testData:
+  - feature_description: |
+      Add prompt versioning: Store multiple versions of each prompt with rollback capability
+    expected: |
+      STEP 1: Design Types
+      ```rust
+      #[derive(Debug, Clone, Serialize, Deserialize)]
+      pub struct PromptVersion {
+          pub version_num: i32,
+          pub prompt_id: String,
+          pub system_prompt: String,
+          pub metadata: Option<String>,
+          pub created_at: i64,
+          pub created_by: String,
+      }
+      ```
+      
+      STEP 2: Storage Layer
+      - Create migration: migrations/0011_prompt_versions.sql
+      - Add methods: store_version(), get_version(), list_versions()
+      
+      STEP 3: Feature Module
+      - File: prompt-hub/src/version.rs
+      - Methods: create_version(), rollback_to_version()
+      - Tests: test_version_creation, test_rollback
+      
+      STEP 4: Hub Integration
+      - Add: pub versioning: VersionManager
+      - Expose: pub async fn rollback_prompt()
+      
+      STEP 5: API Routes
+      - GET /prompts/{id}/versions
+      - POST /prompts/{id}/versions/{num}/rollback
+      
+      STEP 6: CLI Command
+      - prompthub version list <prompt-id>
+      - prompthub version rollback <prompt-id> <version>
+      
+      STEP 7: Documentation
+      - Example: examples/versioning_demo.rs
+      - Test: tests/test_versioning.rs
+
+evaluators:
+  - name: Uses correct file locations
+    string:
+      contains: 'models.rs'
+  - name: Includes database migration planning
+    string:
+      contains: 'migration'
+  - name: Mentions testing strategy
+    string:
+      contains: 'test'
+  - name: Covers all 7 implementation steps
+    string:
+      contains: 'STEP 7'

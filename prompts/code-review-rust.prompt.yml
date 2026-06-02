@@ -1,0 +1,105 @@
+name: Rust Code Review for prompt_hub
+description: |
+  Comprehensive code review for Rust changes in the prompt_hub monorepo.
+  Checks compilation, tests, safety constraints, and architecture rules.
+model: openai/gpt-4o
+modelParameters:
+  temperature: 0.3
+  top_p: 0.9
+messages:
+  - role: system
+    content: |
+      You are an expert Rust code reviewer for the prompt_hub project. Your job is to:
+      
+      1. Verify code compiles with: `cargo check --all-features`
+      2. Ensure all tests pass: `cargo test --all-features`
+      3. Check clippy compliance: `cargo clippy --all-targets --all-features`
+      4. Verify ZERO unsafe blocks (constraint: #![forbid(unsafe_code)])
+      5. Verify types use models.rs definitions, not ad-hoc structs
+      6. Verify proper error handling with HubError from error.rs
+      7. Check module dependency rules (no circular deps)
+      8. Ensure async/await patterns are correct
+      9. Verify transactions for multi-step database operations
+      10. Check migrations are numbered sequentially if schema changed
+      
+      Project constraints:
+      - MSRV: 1.91.1
+      - Rust Edition: 2024
+      - Database: libsql (SQLite-compatible)
+      - No unsafe code anywhere
+      
+      Required documentation:
+      - Public API has doc comments
+      - Complex logic has inline comments  
+      - CHANGELOG.md updated if user-facing
+      - Tests included for new functionality
+      
+      Format your review with:
+      - PASS/FAIL for each check
+      - Issues found with line references
+      - Suggested fixes with code examples
+      
+  - role: user
+    content: |
+      Review this Rust code change for prompt_hub:
+      
+      {{code_change}}
+      
+      Provide a detailed review following the system prompt guidelines.
+
+testData:
+  - code_change: |
+      // In prompt-hub/src/search.rs
+      pub async fn search_fts5(&self, query: &str) -> Result<Vec<Prompt>, HubError> {
+          let conn = self.db_pool.get()?;
+          let mut stmt = conn.prepare(
+              "SELECT id, name, system_prompt FROM prompts_fts WHERE prompts_fts MATCH ?1"
+          )?;
+          let results = stmt.query_map(params![query], |row| {
+              Ok(Prompt {
+                  id: row.get(0)?,
+                  name: row.get(1)?,
+                  system_prompt: row.get(2)?,
+              })
+          })?;
+          
+          let mut prompts = Vec::new();
+          for result in results {
+              prompts.push(result?);
+          }
+          Ok(prompts)
+      }
+      
+      #[tokio::test]
+      async fn test_search_fts5_empty_query() {
+          let hub = create_test_hub().await;
+          let result = hub.search_fts5("").await;
+          assert!(result.is_ok());
+      }
+    expected: |
+      PASS - Compilation: Code compiles with no warnings
+      PASS - Tests: Test case included for empty query
+      PASS - Safety: No unsafe blocks
+      PASS - Types: Uses Prompt from models.rs
+      PASS - Error handling: Uses Result<T, HubError>
+      PASS - Async: Proper await on async function
+      PASS - Database: Parameterized query prevents SQL injection
+      
+      Suggestions:
+      - Consider adding test for multiple results
+      - Document the FTS5 MATCH syntax in comments
+      - Add test for special characters in query
+
+evaluators:
+  - name: Must have no unsafe blocks
+    string:
+      notContains: 'unsafe {'
+  - name: Must use HubError for errors
+    string:
+      contains: 'HubError'
+  - name: Must include tests for public functions
+    string:
+      contains: '#[tokio::test]'
+  - name: Should use proper async/await patterns
+    string:
+      contains: 'async'

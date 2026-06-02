@@ -1,0 +1,238 @@
+name: Design HTTP API Endpoint
+description: |
+  Design and implement REST API endpoints for prompt_hub-server with proper request/response types,
+  authentication, and OpenAPI documentation.
+model: openai/gpt-4o
+modelParameters:
+  temperature: 0.4
+  top_p: 0.9
+messages:
+  - role: system
+    content: |
+      You are an API architect for prompt_hub-server. Help design RESTful endpoints that follow best practices.
+      
+      DESIGN PRINCIPLES:
+      
+      1. Endpoint Structure
+         - Use nouns for resources: /prompts, /agents, /searches
+         - Use verbs for actions: GET, POST, PUT, DELETE, PATCH
+         - Use IDs in path: /prompts/{id}
+         - Use query params for filtering: /prompts?tags=important
+      
+      2. Request/Response Types
+         - Define DTOs in models.rs
+         - Separate input (CreatePromptRequest) from output (PromptResponse)
+         - Always include proper type metadata
+         - Use serde for serialization
+      
+      3. Status Codes
+         - 200 OK: Successful GET, successful updates
+         - 201 Created: Successful POST creating new resource
+         - 204 No Content: Successful DELETE or PATCH with no response body
+         - 400 Bad Request: Invalid input validation failure
+         - 401 Unauthorized: Not authenticated
+         - 403 Forbidden: Authenticated but not authorized
+         - 404 Not Found: Resource doesn't exist
+         - 409 Conflict: Request conflicts with current state
+         - 500 Internal Server Error: Unexpected server error
+      
+      4. Error Responses
+         - All errors return JSON with: { error: string, details: optional }
+         - Use HubError mapped to HTTP status
+      
+      5. Authentication & Authorization
+         - Check AgentIdentity from auth middleware
+         - Verify capabilities with authorize_action()
+         - Log all access with audit logging
+         - Return 401 for missing auth, 403 for insufficient permissions
+      
+      6. Pagination
+         - Use limit and offset: ?limit=20&offset=0
+         - Return total count in response
+         - Default limit: 20, max limit: 100
+      
+      7. OpenAPI Documentation
+         - Document every endpoint in openapi.rs
+         - Include request/response schemas
+         - Include error responses
+         - Include authentication requirements
+      
+      IMPLEMENTATION CHECKLIST:
+      - [ ] Define request/response DTOs in models.rs
+      - [ ] Add handler function in routes.rs
+      - [ ] Implement error handling
+      - [ ] Add authentication check
+      - [ ] Add audit logging for mutations
+      - [ ] Add tests in tests/
+      - [ ] Document in OpenAPI spec
+      - [ ] Handle edge cases (not found, conflicts, etc.)
+      
+  - role: user
+    content: |
+      I need to design an API endpoint with these requirements:
+      
+      {{endpoint_requirement}}
+      
+      Please provide:
+      1. Endpoint design (method, path, status codes)
+      2. Request/response types
+      3. Implementation code
+      4. Tests
+
+testData:
+  - endpoint_requirement: |
+      Create an endpoint to search prompts by full-text query.
+      Should support filtering by tags and return paginated results.
+      Only authenticated users can search.
+    expected: |
+      ENDPOINT DESIGN:
+      
+      GET /api/v1/prompts/search?q=summary&tags=important&limit=20&offset=0
+      
+      Authentication: Required (Bearer token)
+      Permissions: Can read any prompt (or own prompts if privacy enabled)
+      
+      STATUS CODES:
+      - 200 OK: Search successful (may be empty)
+      - 400 Bad Request: Invalid query or parameters
+      - 401 Unauthorized: Missing or invalid token
+      - 500 Internal Server Error: Database error
+      
+      ---
+      
+      REQUEST TYPES (models.rs):
+      
+      ```rust
+      #[derive(Serialize, Deserialize, Debug)]
+      pub struct SearchPromptsRequest {
+          pub q: String,                    // Required: search query
+          pub tags: Option<Vec<String>>,    // Optional: filter by tags
+          pub limit: Option<i32>,           // Optional: default 20, max 100
+          pub offset: Option<i32>,          // Optional: default 0
+      }
+      
+      #[derive(Serialize, Deserialize, Debug)]
+      pub struct SearchPromptsResponse {
+          pub results: Vec<PromptSearchResult>,
+          pub total: i32,
+          pub limit: i32,
+          pub offset: i32,
+      }
+      
+      #[derive(Serialize, Deserialize, Debug)]
+      pub struct PromptSearchResult {
+          pub id: String,
+          pub name: String,
+          pub snippet: String,  // First 200 chars of system_prompt
+          pub tags: Vec<String>,
+          pub score: f32,       // Relevance score from FTS5
+      }
+      ```
+      
+      ---
+      
+      IMPLEMENTATION (routes.rs):
+      
+      ```rust
+      use axum::{
+          extract::Query,
+          http::StatusCode,
+          response::IntoResponse,
+          Json,
+      };
+      use serde::{Deserialize, Serialize};
+      use crate::{models::*, hub::PromptHub, error::HubError};
+      
+      #[derive(Deserialize)]
+      pub struct SearchQuery {
+          q: String,
+          tags: Option<String>,
+          limit: Option<i32>,
+          offset: Option<i32>,
+      }
+      
+      pub async fn search_prompts(
+          Query(params): Query<SearchQuery>,
+          axum::extract::State(hub): axum::extract::State<PromptHub>,
+      ) -> Result<(StatusCode, Json<SearchPromptsResponse>), HubError> {
+          // Validate query length
+          if params.q.is_empty() || params.q.len() > 500 {
+              return Err(HubError::BadRequest("Query must be 1-500 characters".to_string()));
+          }
+          
+          // Parse pagination
+          let limit = params.limit.unwrap_or(20).min(100).max(1);
+          let offset = params.offset.unwrap_or(0).max(0);
+          
+          // Parse tags filter
+          let tags = params.tags.map(|t| t.split(',').map(|s| s.trim().to_string()).collect());
+          
+          // Call hub search method
+          let (results, total) = hub.search_prompts(
+              &params.q,
+              tags,
+              limit,
+              offset,
+          ).await?;
+          
+          Ok((
+              StatusCode::OK,
+              Json(SearchPromptsResponse {
+                  results,
+                  total,
+                  limit,
+                  offset,
+              }),
+          ))
+      }
+      ```
+      
+      ---
+      
+      TESTS (tests/test_api_search.rs):
+      
+      ```rust
+      #[tokio::test]
+      async fn test_search_prompts_success() {
+          let client = setup_test_client().await;
+          
+          let response = client.get("/api/v1/prompts/search?q=test&limit=10")
+              .header("Authorization", "Bearer token123")
+              .send()
+              .await
+              .unwrap();
+          
+          assert_eq!(response.status(), 200);
+          let body: SearchPromptsResponse = response.json().await.unwrap();
+          assert!(body.limit <= 10);
+      }
+      
+      #[tokio::test]
+      async fn test_search_prompts_empty_query() {
+          let client = setup_test_client().await;
+          let response = client.get("/api/v1/prompts/search?q=")
+              .header("Authorization", "Bearer token123")
+              .send()
+              .await
+              .unwrap();
+          
+          assert_eq!(response.status(), 400);
+      }
+      ```
+
+evaluators:
+  - name: Includes proper HTTP status codes
+    string:
+      contains: '200'
+  - name: Defines request/response types
+    string:
+      contains: 'struct'
+  - name: Handles authentication
+    string:
+      contains: 'Authorization'
+  - name: Includes pagination support
+    string:
+      contains: 'limit'
+  - name: Has test coverage
+    string:
+      contains: '#[tokio::test]'
