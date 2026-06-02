@@ -1431,7 +1431,7 @@ mod tests {
         assert_eq!(fetched.id, prompt.id);
         assert_eq!(fetched.tags, vec!["test", "unit"]);
         assert_eq!(fetched.domain, Domain::Coding);
-        assert!(fetched.is_active());
+        assert_eq!(fetched.status, Status::Active);
     }
 
     #[tokio::test]

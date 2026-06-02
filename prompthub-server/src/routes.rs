@@ -61,7 +61,7 @@ fn default_agent() -> AgentIdentity {
     AgentIdentity {
         id: Uuid::new_v4(),
         name: "http-server".to_string(),
-        capabilities: vec!["read".to_string(), "write".to_string()],
+        capabilities: vec![Capability::Read, Capability::Write],
         token_hash: String::new(),
         specialization_score: 0.0,
     }

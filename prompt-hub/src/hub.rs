@@ -262,16 +262,10 @@ impl PromptHub {
                 "Attempted to release expired lock on prompt {} by agent {}",
                 token.prompt_id, token.agent_id
             );
-            return Err(HubError::LockError {
-                prompt_id: token.prompt_id,
-                held_by: AgentIdentity {
-                    id: token.agent_id.clone(),
-                    name: "expired".to_string(),
-                    capabilities: Default::default(),
-                    token_hash: String::new(),
-                    specialization_score: 0.0,
-                },
-            });
+            return Err(HubError::LockError(format!(
+                "Lock expired for prompt {} held by agent {}",
+                token.prompt_id, token.agent_id
+            )));
         }
         self.metrics.record_lock_released();
         self.storage.log_audit(AuditEntry {
@@ -582,7 +576,7 @@ mod tests {
         AgentIdentity {
             id: Uuid::new_v4(),
             name: "test-agent".to_string(),
-            capabilities: vec!["read".to_string(), "write".to_string()],
+            capabilities: vec![Capability::Read, Capability::Write],
             token_hash: "abc123".to_string(),
             specialization_score: 0.8,
         }
@@ -591,16 +585,24 @@ mod tests {
     fn test_prompt() -> Prompt {
         Prompt {
             id: Uuid::new_v4(),
-            role: Role::User,
-            intent: "greet".to_string(),
+            name: "test-prompt".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            status: Status::Active,
             system_prompt: "You are a helpful assistant.".to_string(),
             user_template: "Hello, {{name}}!".to_string(),
-            domain: "general".to_string(),
-            version: semver::Version::new(1, 0, 0),
-            metadata: Default::default(),
+            required_vars: vec!["name".to_string()],
+            domain: Domain::General,
+            tags: vec!["test".to_string()],
+            target_roles: vec![Role::Developer],
+            metadata: PromptMeta::default(),
+            metrics: PromptMetrics::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            created_by: Uuid::new_v4(),
+            author: AgentIdentity::default(),
+            deleted_at: None,
+            generation_params: None,
+            locale: None,
+            multimodal: None,
         }
     }
 
@@ -623,7 +625,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), id);
 
-        let fetched = hub.get(Role::User, "greet", &agent).await;
+        let fetched = hub.get(Role::Developer, "greet", &agent).await;
         assert!(fetched.is_ok());
     }
 

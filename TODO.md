@@ -4,48 +4,76 @@
 
 ## P0 — Compilation Blockers (do first)
 
-- [ ] **Verify `cargo check` passes** — Run in environment with rustc. Fix first N errors.
-  - `cd /mnt/agents/output/project && cargo check 2>&1 | head -50`
-  - File: all crates
+- [ ] **Verify `cargo check` passes** — Requires rustc in environment (not available in sandbox).
+  - All *known* blockers below are fixed. Next agent should run `cargo check`.
 
-- [ ] **Fix `AgentIdentity::default()` usage** — `hub.rs` calls `AgentIdentity::default()` but struct may not derive Default.
-  - File: `prompt-hub/src/models.rs` line ~141
-  - Fix: Add `#[derive(Default)]` to `AgentIdentity` or write manual impl
+- [x] **Fix `AgentIdentity::default()` usage** — Already had manual Default impl.
+  - File: `prompt-hub/src/models.rs` lines 146-156
+  - Status: Was already correct (manual impl, not derive)
 
-- [ ] **Make `storage.row_to_prompt()` accessible to search engines** — It's private, FastEngine/SmartEngine need it.
-  - File: `prompt-hub/src/storage.rs` line ~180
-  - Fix: Change `fn row_to_prompt` to `pub(crate) fn row_to_prompt`
+- [x] **Fix routes.rs `default_agent()` capabilities type** — `Vec<String>` → `Vec<Capability>`
+  - File: `prompthub-server/src/routes.rs` line 64
+  - Changed: `vec!["read".to_string(), "write".to_string()]` → `vec![Capability::Read, Capability::Write]`
 
-- [ ] **Add missing `use` imports in `routes.rs`** — `Server`, `State`, `Arc` types may need explicit imports.
-  - File: `prompthub-server/src/routes.rs`
-  - Fix: Add `use axum::extract::State; use std::sync::Arc;`
+- [x] **Fix canary.rs sha2 import** — Added `use sha2::{Sha256, Digest};`
+  - File: `prompt-hub/src/canary.rs` lines 5, 27
+  - Changed: `sha2::Sha256::digest(...)` → `Sha256::digest(...)`
 
-- [ ] **Add `#[cfg(feature = "handlebars")]` guards in `templates.rs`** — HandlebarsEngine uses `handlebars` crate behind feature flag.
-  - File: `prompt-hub/src/templates.rs`
-  - Fix: Wrap `#[cfg(feature = "handlebars")]` around `handlebars_engine` module
+- [x] **Fix hub.rs tests** — `test_agent()` capabilities + `test_prompt()` fields + `Role::User`
+  - File: `prompt-hub/src/hub.rs` lines 583-634
+  - Changed: capabilities type, all Prompt fields corrected, `Role::User` → `Role::Developer`
+
+- [x] **Add missing `Prompt::new()` constructor** — storage.rs test calls it
+  - File: `prompt-hub/src/models.rs` lines 400-426
+  - Added: `pub fn new(name: &str, system_prompt: &str) -> Self`
+
+- [x] **Fix storage.rs test `.is_active()`** — method doesn't exist on Prompt
+  - File: `prompt-hub/src/storage.rs` line 1434
+  - Changed: `assert!(fetched.is_active())` → `assert_eq!(fetched.status, Status::Active)`
+
+- [x] **Add 10 missing HubError variants** — used across codebase but never defined
+  - File: `prompt-hub/src/error.rs` lines 32-60
+  - Added: StorageError, AuthError, LockError, SearchError, BadRequest, AuditError, ValidationError, SerdeError, SyncError, SanitizationError
+
+- [x] **Fix hub.rs LockError struct literal** — LockError is String, not struct
+  - File: `prompt-hub/src/hub.rs` lines 265-268
+  - Changed: struct literal `{ prompt_id, held_by }` → `LockError(format!("..."))`
+
+- [x] **Fix auth.rs error construction + test** — Unauthorized is tuple, not struct
+  - File: `prompt-hub/src/auth.rs` lines 109-111, 371, 162
+  - Changed: struct literal → tuple, pattern match, added missing RateLimited arg
+
+- [x] **Add missing `VersionRecord` struct** — used in storage.rs, never defined
+  - File: `prompt-hub/src/models.rs` lines 428-438
+  - Added: `pub struct VersionRecord { id, prompt_id, parent_id, version, changelog, diff, created_at }`
+
+- [x] **Fix auth.rs `crate::error::AgentIdentity`** — AgentIdentity is in models, not error
+  - File: `prompt-hub/src/auth.rs` line 111
+  - Changed: `crate::error::AgentIdentity { id, name }` → format string for `Unauthorized(String)`
 
 ## P1 — Feature Completeness
 
-- [ ] **Add `hub.list()` method** — Used by routes.rs `list_prompts` handler but may not exist.
+- [x] **Add `hub.list()` method** — Already exists at lines 212-226.
   - File: `prompt-hub/src/hub.rs`
-  - Fix: Add `pub async fn list(&self, pagination: Pagination) -> Result<Paginated<Prompt>>`
 
-- [ ] **Add `storage.list_prompts()` method** — Needed by `hub.list()`.
+- [x] **Add `storage.list_prompts()` method** — Already exists at lines 584-636.
   - File: `prompt-hub/src/storage.rs`
-  - Fix: Add `pub async fn list_prompts(&self, page: usize, per_page: usize) -> Result<Paginated<Prompt>>`
 
-- [ ] **Verify `storage.log_audit()` is called by all mutating hub methods** — audit_trail needs data.
-  - File: `prompt-hub/src/hub.rs`
-  - Check: `register()`, `update()`, `rollback()`, `lock()`, `unlock()`, `transfer_ownership()`, `evolve_prompt()`
+- [x] **Verify `storage.log_audit()` called by mutating hub methods** — All 7 methods call it.
+  - Methods: register, update, rollback, lock, unlock, transfer_ownership, evolve_prompt
 
-- [ ] **Fix `canary.rs` sha2 import** — `sha2::Sha256::digest` needs `use sha2::{Sha256, Digest};`
-  - File: `prompt-hub/src/canary.rs`
-
-- [ ] **Add `pub mod` declarations for 12 new wave-6 modules** — circuit_breaker, budget, quota, moderation, retention, garbage_collector, load_balancer, provider_health, satisfaction, analytics, diff, lineage.
+- [x] **Add `pub mod` declarations for 12 wave-6 modules** — All 12 declared in lib.rs.
   - File: `prompt-hub/src/lib.rs`
-  - Check: Are all 12 declared? Currently canary.rs is declared. Add the rest.
+
+- [x] **Make `storage.row_to_prompt()` accessible** — Already `pub(crate)` at line 1219.
+  - File: `prompt-hub/src/storage.rs`
+
+- [x] **Add `#[cfg(feature = "handlebars")]` guards in templates.rs** — Already present at lines 51, 95.
+  - File: `prompt-hub/src/templates.rs`
 
 ## P2 — Quality
+
+- [x] **Verify `#![forbid(unsafe_code)]` on all 49 library modules** — 49/49 confirmed.
 
 - [ ] **Run `cargo clippy --workspace --all-features -- -D warnings`**
   - Fix all warnings (unused imports, redundant clones, etc.)
@@ -55,9 +83,6 @@
 
 - [ ] **Run `cargo doc --workspace --all-features --no-deps`**
   - Fix documentation warnings
-
-- [ ] **Verify `#![forbid(unsafe_code)]` on all 49 library modules**
-  - `grep -r "forbid(unsafe_code)" prompt-hub/src/ | wc -l` should be 49
 
 ## P3 — Testing
 
@@ -101,7 +126,7 @@
 ## Done
 
 - [x] 49 library modules with real logic
-- [x] 50 types in models.rs
+- [x] 50 types in models.rs (+ VersionRecord = 51)
 - [x] 20 Hub API methods
 - [x] 13 HTTP routes with real PromptHub state
 - [x] 36 CLI commands calling real methods
@@ -109,6 +134,8 @@
 - [x] 9 SQL migrations
 - [x] Remove `async_trait` (Rust 2024 native)
 - [x] Remove `optional = true` from workspace deps
+- [x] 27 HubError variants (17 original + 10 added)
 - [x] Write SESSION.md
 - [x] Write TODO.md
 - [x] Write AGENT_GUIDE.md
+- [x] Wave 9: Fix all known compilation blockers (13 fixes)

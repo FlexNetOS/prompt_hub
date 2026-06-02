@@ -29,6 +29,36 @@ pub enum HubError {
     #[error("Validation failed: {0}")]
     Validation(String),
 
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
+    #[error("Auth error: {0}")]
+    AuthError(String),
+
+    #[error("Audit error: {0}")]
+    AuditError(String),
+
+    #[error("Lock error: {0}")]
+    LockError(String),
+
+    #[error("Storage error: {0}")]
+    StorageError(String),
+
+    #[error("Search error: {0}")]
+    SearchError(String),
+
+    #[error("Serialization error: {0}")]
+    SerdeError(String),
+
+    #[error("Sync error: {0}")]
+    SyncError(String),
+
+    #[error("Sanitization error: {0}")]
+    SanitizationError(String),
+
     #[error("IO error: {0}")]
     Io(String),
 
@@ -100,6 +130,16 @@ mod tests {
             HubError::RateLimited("test".to_string()),
             HubError::Timeout("test".to_string()),
             HubError::Validation("test".to_string()),
+            HubError::ValidationError("test".to_string()),
+            HubError::BadRequest("test".to_string()),
+            HubError::AuthError("test".to_string()),
+            HubError::AuditError("test".to_string()),
+            HubError::LockError("test".to_string()),
+            HubError::StorageError("test".to_string()),
+            HubError::SearchError("test".to_string()),
+            HubError::SerdeError("test".to_string()),
+            HubError::SyncError("test".to_string()),
+            HubError::SanitizationError("test".to_string()),
             HubError::Io("test".to_string()),
             HubError::Serialization("test".to_string()),
             HubError::Network("test".to_string()),

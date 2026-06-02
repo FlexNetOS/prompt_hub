@@ -397,6 +397,46 @@ impl Default for Prompt {
     }
 }
 
+impl Prompt {
+    /// Create a minimal prompt with just a name and system prompt.
+    /// All other fields use sensible defaults.
+    pub fn new(name: &str, system_prompt: &str) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            version: semver::Version::new(0, 1, 0),
+            status: Status::Draft,
+            system_prompt: system_prompt.to_string(),
+            user_template: String::new(),
+            required_vars: Vec::new(),
+            domain: Domain::General,
+            tags: Vec::new(),
+            target_roles: Vec::new(),
+            metadata: PromptMeta::default(),
+            metrics: PromptMetrics::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            author: AgentIdentity::default(),
+            deleted_at: None,
+            generation_params: None,
+            locale: None,
+            multimodal: None,
+        }
+    }
+}
+
+/// A recorded version snapshot of a prompt
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionRecord {
+    pub id: i64,
+    pub prompt_id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub version: semver::Version,
+    pub changelog: String,
+    pub diff: String,
+    pub created_at: DateTime<Utc>,
+}
+
 // ─────────────────────────────────────────────
 // Supporting types
 // ─────────────────────────────────────────────

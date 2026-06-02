@@ -106,13 +106,10 @@ impl RbacAuthManager {
                 "Authorization denied: {:?} lacks {:?} for {:?}",
                 identity.id, required, action
             );
-            Err(HubError::Unauthorized {
-                action: format!("{:?}", action),
-                identity: crate::error::AgentIdentity {
-                    id: identity.id,
-                    name: identity.name.clone(),
-                },
-            })
+            Err(HubError::Unauthorized(format!(
+                "agent '{}' lacks capability {:?} for {:?}",
+                identity.name, required, action
+            )))
         }
     }
 
@@ -162,7 +159,9 @@ impl RbacAuthManager {
             let cooldown = chrono::Duration::hours(24);
             let now = chrono::Utc::now();
             if now - last < cooldown {
-                return Err(HubError::RateLimited);
+                return Err(HubError::RateLimited(
+                    "Rate limit bypass cooldown is still active".to_string(),
+                ));
             }
         }
         Ok(())
@@ -371,7 +370,7 @@ mod tests {
         };
         let result = RbacAuthManager::can_transfer_ownership(&from, &to, &non_admin);
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), HubError::Unauthorized { .. }));
+        assert!(matches!(result.unwrap_err(), HubError::Unauthorized(_)));
     }
 
     // ── Specialization scoring ──────────────────────────────────────────────

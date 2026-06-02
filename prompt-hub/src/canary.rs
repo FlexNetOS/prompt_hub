@@ -2,6 +2,7 @@
 
 use crate::error::{HubError, Result};
 use crate::models::*;
+use sha2::{Sha256, Digest};
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
@@ -23,7 +24,7 @@ impl CanaryEngine {
         }
         // Percentage-based rollout using hash of user_id + feature name
         let hash_input = format!("{}{}", user_id, canary.feature);
-        let hash = sha2::Sha256::digest(hash_input.as_bytes());
+        let hash = Sha256::digest(hash_input.as_bytes());
         let user_bucket = (hash[0] as f64 / 255.0) * 100.0;
         let included = user_bucket < canary.canary_percentage;
         if included {
