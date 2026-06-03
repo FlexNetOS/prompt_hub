@@ -47,8 +47,8 @@ fn bench_cosine_similarity(c: &mut Criterion) {
     let a: Vec<f32> = (0..384).map(|i| (i as f32) / 384.0).collect();
     let b: Vec<f32> = (0..384).map(|i| ((i + 1) as f32) / 384.0).collect();
 
-    c.bench_function("cosine_similarity_384d", |b| {
-        b.iter(|| SmartEngine::cosine_similarity(black_box(&a), black_box(&b)));
+    c.bench_function("cosine_similarity_384d", |bencher| {
+        bencher.iter(|| SmartEngine::cosine_similarity(black_box(&a), black_box(&b)));
     });
 }
 
