@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
-use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use anyhow::Result;
+use chrono::Utc;
+use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use std::path::Path;
 use tracing::info;
 use uuid::Uuid;
-use chrono::Utc;
 
 pub async fn run(file: Option<&Path>, interactive: bool) -> Result<()> {
     let config = HubConfig::load().unwrap_or_default();

@@ -63,9 +63,15 @@ impl HealthAggregator {
             },
         ];
 
-        let overall = if checks.iter().all(|c| matches!(c.status, HealthStatus::Healthy)) {
+        let overall = if checks
+            .iter()
+            .all(|c| matches!(c.status, HealthStatus::Healthy))
+        {
             HealthStatus::Healthy
-        } else if checks.iter().any(|c| matches!(c.status, HealthStatus::Unhealthy)) {
+        } else if checks
+            .iter()
+            .any(|c| matches!(c.status, HealthStatus::Unhealthy))
+        {
             HealthStatus::Unhealthy
         } else {
             HealthStatus::Degraded
@@ -102,10 +108,12 @@ mod tests {
 
         assert!(matches!(health.overall, HealthStatus::Healthy));
         assert_eq!(health.checks.len(), 5);
-        assert!(health
-            .checks
-            .iter()
-            .all(|c| matches!(c.status, HealthStatus::Healthy)));
+        assert!(
+            health
+                .checks
+                .iter()
+                .all(|c| matches!(c.status, HealthStatus::Healthy))
+        );
     }
 
     #[tokio::test]

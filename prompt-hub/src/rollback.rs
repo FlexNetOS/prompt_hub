@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result};
+use crate::error::Result;
 use crate::models::*;
 use std::collections::HashMap;
 use tracing::{info, instrument, warn};
@@ -9,10 +9,46 @@ use tracing::{info, instrument, warn};
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeploymentSnapshot {
     pub id: String,
-    pub artifact_id: uuid::Uuid,
+    pub artifact_label: String,
     pub previous_content: String,
     pub metadata: HashMap<String, String>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Outcome of a safe deployment attempt.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeployResult {
+    /// Deployment succeeded and is live at `url`.
+    Success { url: String },
+    /// Deployment failed its health check and was rolled back.
+    RolledBack { reason: String },
+    /// Deployment failed and was left in place (rollback disabled).
+    Failed { reason: String },
+}
+
+/// Stable, human-readable label for an [`Artifact`] used in snapshot ids,
+/// deployment urls, and logs.
+fn artifact_label(artifact: &Artifact) -> &str {
+    match artifact {
+        Artifact::Prompt { .. } => "prompt",
+        Artifact::Code { path, .. } => path,
+        Artifact::Config { path, .. } => path,
+        Artifact::Test { path, .. } => path,
+        Artifact::Migration { path, .. } => path,
+        Artifact::Documentation { title, .. } => title,
+    }
+}
+
+/// The primary textual payload of an [`Artifact`], used for health checks.
+fn artifact_content(artifact: &Artifact) -> &str {
+    match artifact {
+        Artifact::Prompt { system, .. } => system,
+        Artifact::Code { content, .. } => content,
+        Artifact::Config { content, .. } => content,
+        Artifact::Test { content, .. } => content,
+        Artifact::Migration { content, .. } => content,
+        Artifact::Documentation { content, .. } => content,
+    }
 }
 
 /// Safe deployment engine with automatic rollback.
@@ -55,8 +91,9 @@ impl SafeDeployer {
         artifact: &Artifact,
         rollback_enabled: bool,
     ) -> Result<DeployResult> {
+        let label = artifact_label(artifact);
         info!(
-            artifact_id = %artifact.id,
+            artifact = %label,
             rollback_enabled = %rollback_enabled,
             "Starting safe deployment"
         );
@@ -75,7 +112,7 @@ impl SafeDeployer {
             HealthStatus::Healthy => {
                 info!("Health check passed - deployment successful");
                 Ok(DeployResult::Success {
-                    url: format!("https://deployed.example.com/{}", artifact.id),
+                    url: format!("https://deployed.example.com/{}", label),
                 })
             }
             HealthStatus::Unhealthy(reasons) => {
@@ -113,10 +150,11 @@ impl SafeDeployer {
 
     /// Create a snapshot of the current state before deployment.
     fn create_snapshot(&self, artifact: &Artifact) -> String {
-        let snapshot_id = format!("snap-{}", artifact.id);
+        let label = artifact_label(artifact);
+        let snapshot_id = format!("snap-{}", label);
         info!(
             snapshot_id = %snapshot_id,
-            artifact_id = %artifact.id,
+            artifact = %label,
             "Created deployment snapshot"
         );
         snapshot_id
@@ -146,18 +184,19 @@ impl SafeDeployer {
     ///
     /// Checks basic connectivity and artifact integrity.
     async fn health_check(&self, artifact: &Artifact) -> Result<HealthStatus> {
-        info!(artifact_id = %artifact.id, "Running health check");
+        let label = artifact_label(artifact);
+        info!(artifact = %label, "Running health check");
 
         // Simulated health check
-        if artifact.content.is_empty() {
+        if artifact_content(artifact).is_empty() {
             return Ok(HealthStatus::Unhealthy(vec![
                 "Artifact content is empty".to_string(),
             ]));
         }
 
-        if artifact.name.is_empty() {
+        if label.is_empty() {
             return Ok(HealthStatus::Unhealthy(vec![
-                "Artifact name is empty".to_string(),
+                "Artifact label is empty".to_string(),
             ]));
         }
 
@@ -183,16 +222,12 @@ impl SafeDeployer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use uuid::Uuid;
 
     fn make_artifact(content: &str) -> Artifact {
-        Artifact {
-            id: Uuid::new_v4(),
-            name: "test".to_string(),
+        Artifact::Code {
+            path: "test".to_string(),
             content: content.to_string(),
-            artifact_type: "code".to_string(),
-            metadata: HashMap::new(),
+            language: "rust".to_string(),
         }
     }
 
@@ -200,7 +235,10 @@ mod tests {
     async fn test_successful_deployment() {
         let deployer = SafeDeployer::new();
         let artifact = make_artifact("fn main() { println!(\"hello\"); }");
-        let result = deployer.deploy_with_rollback(&artifact, true).await.unwrap();
+        let result = deployer
+            .deploy_with_rollback(&artifact, true)
+            .await
+            .unwrap();
         match result {
             DeployResult::Success { url } => {
                 assert!(url.contains("deployed.example.com"));
@@ -213,7 +251,10 @@ mod tests {
     async fn test_failed_deployment_with_rollback() {
         let deployer = SafeDeployer::new();
         let artifact = make_artifact(""); // Empty content fails health check
-        let result = deployer.deploy_with_rollback(&artifact, true).await.unwrap();
+        let result = deployer
+            .deploy_with_rollback(&artifact, true)
+            .await
+            .unwrap();
         match result {
             DeployResult::RolledBack { reason } => {
                 assert!(reason.contains("Health check failed"));
@@ -226,7 +267,10 @@ mod tests {
     async fn test_failed_deployment_without_rollback() {
         let deployer = SafeDeployer::new();
         let artifact = make_artifact(""); // Empty content fails health check
-        let result = deployer.deploy_with_rollback(&artifact, false).await.unwrap();
+        let result = deployer
+            .deploy_with_rollback(&artifact, false)
+            .await
+            .unwrap();
         match result {
             DeployResult::Failed { reason } => {
                 assert!(reason.contains("rollback disabled"));
@@ -236,11 +280,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rollback_with_empty_name() {
+    async fn test_rollback_with_empty_label() {
         let deployer = SafeDeployer::new();
-        let mut artifact = make_artifact("some content");
-        artifact.name = "".to_string(); // Empty name fails health check
-        let result = deployer.deploy_with_rollback(&artifact, true).await.unwrap();
+        // An artifact with an empty path/label fails the health check.
+        let artifact = Artifact::Code {
+            path: String::new(),
+            content: "some content".to_string(),
+            language: "rust".to_string(),
+        };
+        let result = deployer
+            .deploy_with_rollback(&artifact, true)
+            .await
+            .unwrap();
         match result {
             DeployResult::RolledBack { reason } => {
                 assert!(reason.contains("Health check failed"));
@@ -280,7 +331,10 @@ mod tests {
     async fn test_deploy_rollback_disabled_healthy() {
         let deployer = SafeDeployer::new();
         let artifact = make_artifact("valid content here");
-        let result = deployer.deploy_with_rollback(&artifact, false).await.unwrap();
+        let result = deployer
+            .deploy_with_rollback(&artifact, false)
+            .await
+            .unwrap();
         match result {
             DeployResult::Success { .. } => {}
             other => panic!("Expected Success with healthy artifact, got {:?}", other),

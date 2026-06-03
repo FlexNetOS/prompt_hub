@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result};
+use crate::error::Result;
 use crate::models::*;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
@@ -46,10 +46,12 @@ impl CanaryEngine {
             );
             return true;
         }
-        if latency_p99 > canary.rollback_threshold * 1000.0 {
+        // p99 latency SLA budget (ms); independent of the error-rate threshold.
+        const LATENCY_P99_SLA_MS: f64 = 1000.0;
+        if latency_p99 > LATENCY_P99_SLA_MS {
             warn!(
-                "Canary rollback triggered: latency_p99 {:.0}ms exceeds threshold",
-                latency_p99
+                "Canary rollback triggered: latency_p99 {:.0}ms exceeds SLA {:.0}ms",
+                latency_p99, LATENCY_P99_SLA_MS
             );
             return true;
         }

@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
-pub mod init;
 pub mod add;
-pub mod search;
-pub mod list;
+pub mod budget;
+pub mod cache;
 pub mod export;
 pub mod import;
-pub mod cache;
+pub mod init;
+pub mod list;
 pub mod plugin;
-pub mod budget;
+pub mod search;

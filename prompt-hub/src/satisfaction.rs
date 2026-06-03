@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use crate::error::Result;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 use tracing::{info, instrument, warn};
@@ -293,11 +292,15 @@ mod tests {
     fn test_nps_calculation() {
         let tracker = SatisfactionTracker::new(100);
         tracker.record_nps(10); // promoter
-        tracker.record_nps(9);  // promoter
-        tracker.record_nps(5);  // detractor
+        tracker.record_nps(9); // promoter
+        tracker.record_nps(5); // detractor
         let metrics = tracker.metrics();
         // (2 - 1) / 3 * 100 = 33.33...
-        assert!((metrics.nps_score - 33.33).abs() < 0.1, "NPS score: {}", metrics.nps_score);
+        assert!(
+            (metrics.nps_score - 33.33).abs() < 0.1,
+            "NPS score: {}",
+            metrics.nps_score
+        );
     }
 
     #[test]

@@ -53,12 +53,13 @@ impl CircuitBreaker {
             match &*state {
                 BreakerState::Open { opened_at } => {
                     if opened_at.elapsed() > self.reset_timeout {
-                        *state = BreakerState::HalfOpen { calls: 0, successes: 0 };
+                        *state = BreakerState::HalfOpen {
+                            calls: 0,
+                            successes: 0,
+                        };
                         info!("Circuit breaker entering HALF-OPEN state");
                     } else {
-                        return Err(HubError::Internal(
-                            "Circuit breaker is OPEN".to_string(),
-                        ));
+                        return Err(HubError::Internal("Circuit breaker is OPEN".to_string()));
                     }
                 }
                 BreakerState::HalfOpen { calls, .. } => {
@@ -152,12 +153,14 @@ mod tests {
     #[test]
     fn test_cb_opens_after_failures() {
         let cb = CircuitBreaker::new(2, 60);
-        assert!(cb
-            .call(|| Err(HubError::Internal("fail".to_string())))
-            .is_err());
-        assert!(cb
-            .call(|| Err(HubError::Internal("fail".to_string())))
-            .is_err());
+        assert!(
+            cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())))
+                .is_err()
+        );
+        assert!(
+            cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())))
+                .is_err()
+        );
         // Third call should fail fast - breaker is open
         let result = cb.call(|| Ok(42));
         assert!(result.is_err());
@@ -173,16 +176,17 @@ mod tests {
     #[test]
     fn test_cb_opens_after_single_failure_when_threshold_one() {
         let cb = CircuitBreaker::new(1, 60);
-        assert!(cb
-            .call(|| Err(HubError::Internal("fail".to_string())))
-            .is_err());
+        assert!(
+            cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())))
+                .is_err()
+        );
         assert_eq!(cb.current_state(), "open");
     }
 
     #[test]
     fn test_cb_resets_to_closed() {
         let cb = CircuitBreaker::new(1, 60);
-        let _ = cb.call(|| Err(HubError::Internal("fail".to_string())));
+        let _ = cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())));
         assert_eq!(cb.current_state(), "open");
         cb.reset();
         assert_eq!(cb.current_state(), "closed");
@@ -202,12 +206,12 @@ mod tests {
         // This test verifies the documented behavior
         let cb = CircuitBreaker::new(3, 60);
         // Two failures
-        let _ = cb.call(|| Err(HubError::Internal("fail".to_string())));
-        let _ = cb.call(|| Err(HubError::Internal("fail".to_string())));
+        let _ = cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())));
+        let _ = cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())));
         // Still closed with 2 failures
         assert_eq!(cb.current_state(), "closed");
         // Third failure opens it
-        let _ = cb.call(|| Err(HubError::Internal("fail".to_string())));
+        let _ = cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())));
         assert_eq!(cb.current_state(), "open");
     }
 
@@ -215,7 +219,7 @@ mod tests {
     fn test_with_half_open_max_calls() {
         let cb = CircuitBreaker::new(1, 0).with_half_open_max_calls(1);
         // Force open
-        let _ = cb.call(|| Err(HubError::Internal("fail".to_string())));
+        let _ = cb.call(|| Err::<(), _>(HubError::Internal("fail".to_string())));
         assert_eq!(cb.current_state(), "open");
     }
 

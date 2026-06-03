@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
-use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use anyhow::{Context, Result};
+use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use std::path::Path;
 use tracing::{info, warn};
 
@@ -8,7 +8,10 @@ pub async fn run(file: &Path, skip_validation: bool) -> Result<()> {
     let config = HubConfig::load().unwrap_or_default();
     let hub = PromptHub::new(Path::new("prompthub.db"), config).await?;
 
-    info!("Importing prompts from {:?} (skip_validation={})", file, skip_validation);
+    info!(
+        "Importing prompts from {:?} (skip_validation={})",
+        file, skip_validation
+    );
     println!("Importing from {:?}...", file);
 
     let content = tokio::fs::read_to_string(file)
@@ -16,7 +19,11 @@ pub async fn run(file: &Path, skip_validation: bool) -> Result<()> {
         .with_context(|| format!("Failed to read import file: {:?}", file))?;
 
     // Detect format and parse
-    let prompts = if file.extension().map(|e| e == "yaml" || e == "yml").unwrap_or(false) {
+    let prompts = if file
+        .extension()
+        .map(|e| e == "yaml" || e == "yml")
+        .unwrap_or(false)
+    {
         parse_yaml(&content)?
     } else if file.extension().map(|e| e == "jsonl").unwrap_or(false) {
         parse_jsonl(&content)?
@@ -65,9 +72,7 @@ pub async fn run(file: &Path, skip_validation: bool) -> Result<()> {
     );
     info!(
         "Import from {:?} complete: {} imported, {} failed",
-        file,
-        imported,
-        failed
+        file, imported, failed
     );
     Ok(())
 }

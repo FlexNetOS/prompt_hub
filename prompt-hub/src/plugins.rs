@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result};
+use crate::error::Result;
 use crate::models::HealthStatus;
 use std::path::Path;
 use std::sync::Mutex;
@@ -49,8 +49,7 @@ pub fn load_static_plugins() -> Vec<Box<dyn Plugin>> {
         .lock()
         .map(|registry| {
             let count = registry.len();
-            let plugins: Vec<Box<dyn Plugin>> =
-                registry.iter().map(|(_, ctor)| ctor()).collect();
+            let plugins: Vec<Box<dyn Plugin>> = registry.iter().map(|(_, ctor)| ctor()).collect();
             info!("Loaded {} static plugin(s)", count);
             plugins
         })
@@ -93,13 +92,19 @@ pub struct PluginRegistry {
 impl PluginRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
-        Self { plugins: Vec::new() }
+        Self {
+            plugins: Vec::new(),
+        }
     }
 
     /// Register a plugin.  The plugin's `initialize` is called immediately.
     #[instrument(skip(self, plugin))]
     pub fn register(&mut self, mut plugin: Box<dyn Plugin>) -> Result<()> {
-        info!("Initializing plugin: {} v{}", plugin.name(), plugin.version());
+        info!(
+            "Initializing plugin: {} v{}",
+            plugin.name(),
+            plugin.version()
+        );
         plugin.initialize()?;
         self.plugins.push(plugin);
         Ok(())

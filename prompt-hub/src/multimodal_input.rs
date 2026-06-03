@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result};
+use crate::error::Result;
 use crate::models::*;
 use tracing::{info, instrument};
 
@@ -53,10 +53,7 @@ impl MultiModalInput {
             InputType::Screenshot => {
                 info!("Processing screenshot input (UI/domain detection)");
                 Ok(Intent {
-                    raw_text: format!(
-                        "Build UI like screenshot: {}",
-                        input.extracted_text
-                    ),
+                    raw_text: format!("Build UI like screenshot: {}", input.extracted_text),
                     domain: Domain::Design,
                     role: Role::Architect,
                     task_type: TaskType::Create,
@@ -68,10 +65,7 @@ impl MultiModalInput {
             InputType::Sketch => {
                 info!("Processing sketch input (wireframe detection)");
                 Ok(Intent {
-                    raw_text: format!(
-                        "Build from sketch/wireframe: {}",
-                        input.extracted_text
-                    ),
+                    raw_text: format!("Build from sketch/wireframe: {}", input.extracted_text),
                     domain: Domain::Design,
                     role: Role::Designer,
                     task_type: TaskType::Create,
@@ -83,10 +77,7 @@ impl MultiModalInput {
             InputType::File => {
                 info!("Processing file input (content analysis)");
                 Ok(Intent {
-                    raw_text: format!(
-                        "Analyze and process file content: {}",
-                        input.extracted_text
-                    ),
+                    raw_text: format!("Analyze and process file content: {}", input.extracted_text),
                     domain: Domain::Coding,
                     role: Role::Orchestrator,
                     task_type: TaskType::Review,
@@ -98,10 +89,7 @@ impl MultiModalInput {
             InputType::Url => {
                 info!("Processing URL input (web resource)");
                 Ok(Intent {
-                    raw_text: format!(
-                        "Process web resource at: {}",
-                        input.extracted_text
-                    ),
+                    raw_text: format!("Process web resource at: {}", input.extracted_text),
                     domain: Domain::General,
                     role: Role::Orchestrator,
                     task_type: TaskType::Convert,
@@ -118,15 +106,34 @@ impl MultiModalInput {
         let lower = text.to_lowercase();
         if lower.contains("test") || lower.contains("spec") || lower.contains("assert") {
             Domain::Testing
-        } else if lower.contains("deploy") || lower.contains("docker") || lower.contains("k8s") || lower.contains("kubernetes") {
+        } else if lower.contains("deploy")
+            || lower.contains("docker")
+            || lower.contains("k8s")
+            || lower.contains("kubernetes")
+        {
             Domain::DevOps
-        } else if lower.contains("design") || lower.contains("ui") || lower.contains("css") || lower.contains("layout") {
+        } else if lower.contains("design")
+            || lower.split_whitespace().any(|w| w == "ui")
+            || lower.contains("css")
+            || lower.contains("layout")
+        {
             Domain::Design
-        } else if lower.contains("write") || lower.contains("doc") || lower.contains("blog") || lower.contains("article") {
+        } else if lower.contains("write")
+            || lower.contains("doc")
+            || lower.contains("blog")
+            || lower.contains("article")
+        {
             Domain::Writing
-        } else if lower.contains("analy") || lower.contains("research") || lower.contains("investigate") {
+        } else if lower.contains("analy")
+            || lower.contains("research")
+            || lower.contains("investigate")
+        {
             Domain::Analysis
-        } else if lower.contains("code") || lower.contains("function") || lower.contains("api") || lower.contains("impl") {
+        } else if lower.contains("code")
+            || lower.contains("function")
+            || lower.contains("api")
+            || lower.contains("impl")
+        {
             Domain::Coding
         } else {
             Domain::General
@@ -138,17 +145,32 @@ impl MultiModalInput {
         let lower = text.to_lowercase();
         if lower.starts_with("fix") || lower.starts_with("bug") || lower.starts_with("repair") {
             TaskType::Fix
-        } else if lower.starts_with("improve") || lower.starts_with("refactor") || lower.starts_with("optim") {
+        } else if lower.starts_with("improve")
+            || lower.starts_with("refactor")
+            || lower.starts_with("optim")
+        {
             TaskType::Improve
-        } else if lower.starts_with("explain") || lower.starts_with("why") || lower.starts_with("how") {
+        } else if lower.starts_with("explain")
+            || lower.starts_with("why")
+            || lower.starts_with("how")
+        {
             TaskType::Explain
-        } else if lower.starts_with("convert") || lower.starts_with("translat") || lower.starts_with("turn") {
+        } else if lower.starts_with("convert")
+            || lower.starts_with("translat")
+            || lower.starts_with("turn")
+        {
             TaskType::Convert
         } else if lower.starts_with("test") {
             TaskType::Test
-        } else if lower.starts_with("deploy") || lower.starts_with("push") || lower.starts_with("release") {
+        } else if lower.starts_with("deploy")
+            || lower.starts_with("push")
+            || lower.starts_with("release")
+        {
             TaskType::Deploy
-        } else if lower.starts_with("review") || lower.starts_with("check") || lower.starts_with("audit") {
+        } else if lower.starts_with("review")
+            || lower.starts_with("check")
+            || lower.starts_with("audit")
+        {
             TaskType::Review
         } else {
             TaskType::Create
@@ -197,9 +219,9 @@ mod tests {
             extracted_text: "Build me a blog".to_string(),
         };
         let intent = processor.process(input).await.unwrap();
-        assert_eq!(intent.domain, Domain::Coding);
+        assert_eq!(intent.domain, Domain::Writing);
         assert_eq!(intent.task_type, TaskType::Create);
-        assert_eq!(intent.domain, Domain::Coding);
+        assert_eq!(intent.role, Role::Orchestrator);
     }
 
     #[tokio::test]
@@ -315,7 +337,7 @@ mod tests {
             input_type: InputType::Text,
             raw_data: vec![],
             // 50+ words should be Research
-            extracted_text: "Create a full-stack application with user authentication, database integration, real-time notifications, and a responsive frontend that works on mobile and desktop with dark mode support and accessibility compliance following WCAG 2.1 AA standards".to_string(),
+            extracted_text: "Create a full-stack application with user authentication, database integration, real-time notifications, and a responsive frontend that works on mobile and desktop with dark mode support and accessibility compliance following WCAG 2.1 AA standards, plus a comprehensive automated testing suite, continuous integration pipelines, infrastructure as code, observability dashboards, role based access control, internationalization, and detailed developer documentation for every public module".to_string(),
         };
         let intent = processor.process(input).await.unwrap();
         assert_eq!(intent.complexity, Complexity::Research);

@@ -16,7 +16,11 @@ impl CostEstimator {
     ///
     /// Estimates are based on complexity tier and adjusted for project size.
     #[instrument]
-    pub async fn estimate(&self, intent: &Intent, context: &ProjectContext) -> Result<CostEstimate> {
+    pub async fn estimate(
+        &self,
+        intent: &Intent,
+        context: &ProjectContext,
+    ) -> Result<CostEstimate> {
         // Base estimates from complexity tier
         let (tokens_in, tokens_out, time_secs, cost) = match intent.complexity {
             Complexity::Simple => (5_000, 2_000, 60, 0.03),
@@ -59,6 +63,7 @@ impl CostEstimator {
             tokens_input: adjusted_tokens_in,
             tokens_output: tokens_out,
             cost_usd: adjusted_cost,
+            estimated_cost_usd: adjusted_cost,
             time_seconds: adjusted_time,
             confidence: confidence.min(0.95),
         })
@@ -232,6 +237,7 @@ mod tests {
             tokens_input: 15_000,
             tokens_output: 5_000,
             cost_usd: 0.08,
+            estimated_cost_usd: 0.08,
             time_seconds: 180,
             confidence: 0.82,
         };
@@ -273,6 +279,7 @@ mod tests {
             tokens_input: 5_000,
             tokens_output: 2_000,
             cost_usd: 0.03,
+            estimated_cost_usd: 0.03,
             time_seconds: 45,
             confidence: 0.75,
         };

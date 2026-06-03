@@ -2,7 +2,7 @@
 
 use crate::error::{HubError, Result};
 use crate::models::{AgentIdentity, LockToken};
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
@@ -53,12 +53,15 @@ impl LockManager {
     #[instrument]
     pub fn create_lock(prompt_id: Uuid, agent_id: Uuid, ttl_seconds: u64) -> LockToken {
         let clamped_ttl = ttl_seconds.min(Self::MAX_TTL_SECONDS);
-        let expires_at = Utc::now() + Duration::seconds(clamped_ttl as i64);
+        let now = Utc::now();
+        let expires_at = now + Duration::seconds(clamped_ttl as i64);
         LockToken {
-            token: Uuid::new_v4(),
+            id: Uuid::new_v4(),
             prompt_id,
             agent_id,
+            token_hash: Uuid::new_v4().to_string(),
             expires_at,
+            created_at: now,
         }
     }
 
@@ -79,11 +82,11 @@ impl LockManager {
         if new_expiry > token.expires_at {
             debug!(
                 "Lock {} heartbeat: expiry extended to {}",
-                token.token, new_expiry
+                token.id, new_expiry
             );
             token.expires_at = new_expiry;
         } else {
-            debug!("Lock {} heartbeat: already at max TTL", token.token);
+            debug!("Lock {} heartbeat: already at max TTL", token.id);
         }
     }
 
@@ -119,7 +122,7 @@ impl LockManager {
             );
             return Err(HubError::LockError(format!(
                 "Identity {} does not hold lock {}",
-                identity.id, lock.token
+                identity.id, lock.id
             )));
         }
         debug!("Lock holder verified: {}", identity.id);
@@ -179,7 +182,6 @@ impl Default for LockManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     // ── Lock creation ───────────────────────────────────────────────────────
 
@@ -302,8 +304,7 @@ mod tests {
     #[test]
     fn test_ttl_validation_boundary() {
         assert_eq!(
-            LockManager::validate_ttl(LockManager::MAX_TTL_SECONDS)
-                .unwrap(),
+            LockManager::validate_ttl(LockManager::MAX_TTL_SECONDS).unwrap(),
             LockManager::MAX_TTL_SECONDS,
             "TTL exactly at MAX_TTL_SECONDS should be accepted"
         );
@@ -314,8 +315,7 @@ mod tests {
     #[test]
     fn test_verify_lock_holder_matching() {
         let aid = Uuid::new_v4();
-        let mut caps = HashSet::new();
-        caps.insert(crate::models::Capability::Write);
+        let caps = vec![crate::models::Capability::Write];
         let identity = AgentIdentity {
             id: aid,
             name: "writer".to_string(),
@@ -329,8 +329,7 @@ mod tests {
 
     #[test]
     fn test_verify_lock_holder_mismatch() {
-        let mut caps = HashSet::new();
-        caps.insert(crate::models::Capability::Write);
+        let caps = vec![crate::models::Capability::Write];
         let identity = AgentIdentity {
             id: Uuid::new_v4(),
             name: "other".to_string(),

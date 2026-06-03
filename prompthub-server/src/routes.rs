@@ -1,14 +1,14 @@
 #![forbid(unsafe_code)]
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    response::IntoResponse,
-    Json,
+    response::{IntoResponse, Response},
 };
 use chrono::Utc;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
@@ -77,18 +77,18 @@ fn default_agent() -> AgentIdentity {
 pub async fn register_prompt(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<RegisterRequest>,
-) -> impl IntoResponse {
+) -> Response {
     info!(name = %payload.name, "Registering new prompt");
 
     if payload.name.is_empty() {
         warn!("Empty prompt name in register request");
-        return error(StatusCode::BAD_REQUEST, "Prompt name cannot be empty");
+        return error(StatusCode::BAD_REQUEST, "Prompt name cannot be empty").into_response();
     }
     if payload.system_prompt.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "system_prompt cannot be empty");
+        return error(StatusCode::BAD_REQUEST, "system_prompt cannot be empty").into_response();
     }
     if payload.user_template.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "user_template cannot be empty");
+        return error(StatusCode::BAD_REQUEST, "user_template cannot be empty").into_response();
     }
 
     // Map DTO to domain model
@@ -136,10 +136,11 @@ pub async fn register_prompt(
                 "id": id.to_string(),
                 "status": "created"
             }))
+            .into_response()
         }
         Err(e) => {
             warn!("Failed to register prompt: {}", e);
-            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
 }
@@ -152,7 +153,7 @@ pub async fn register_prompt(
 pub async fn list_prompts(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.per_page.unwrap_or(25).clamp(1, 1000);
 
@@ -187,10 +188,11 @@ pub async fn list_prompts(
                 "page": results.page,
                 "per_page": results.per_page
             }))
+            .into_response()
         }
         Err(e) => {
             warn!("Failed to list prompts: {}", e);
-            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
 }
@@ -199,17 +201,14 @@ pub async fn list_prompts(
 ///
 /// Queries the real storage layer via PromptHub.storage().get_prompt().
 #[instrument(skip(state))]
-pub async fn get_prompt(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn get_prompt(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     info!("Fetching prompt {}", id);
 
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
         Err(_) => {
             warn!("Invalid UUID format: {}", id);
-            return error(StatusCode::BAD_REQUEST, "Invalid UUID format");
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
         }
     };
 
@@ -228,11 +227,14 @@ pub async fn get_prompt(
             "metrics": prompt.metrics,
             "created_at": prompt.created_at,
             "updated_at": prompt.updated_at,
-        })),
-        Ok(None) => error(StatusCode::NOT_FOUND, format!("Prompt '{}' not found", id)),
+        }))
+        .into_response(),
+        Ok(None) => {
+            error(StatusCode::NOT_FOUND, format!("Prompt '{}' not found", id)).into_response()
+        }
         Err(e) => {
             warn!("Failed to get prompt {}: {}", id, e);
-            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
 }
@@ -245,9 +247,9 @@ pub async fn get_prompt(
 pub async fn search_prompts(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SearchQuery>,
-) -> impl IntoResponse {
+) -> Response {
     if query.q.is_empty() {
-        return error(StatusCode::BAD_REQUEST, "Search query cannot be empty");
+        return error(StatusCode::BAD_REQUEST, "Search query cannot be empty").into_response();
     }
 
     let page = query.page.unwrap_or(1).max(1);
@@ -303,10 +305,11 @@ pub async fn search_prompts(
                 "page": results.page,
                 "per_page": results.per_page
             }))
+            .into_response()
         }
         Err(e) => {
             warn!("Search failed: {}", e);
-            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
 }
@@ -322,10 +325,10 @@ pub async fn lock_prompt(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Query(query): Query<LockQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
-        Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid UUID format"),
+        Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response(),
     };
 
     let ttl_secs = query.ttl_seconds.unwrap_or(300);
@@ -340,10 +343,11 @@ pub async fn lock_prompt(
                 "prompt_id": id,
                 "expires_at": token.expires_at.to_rfc3339()
             }))
+            .into_response()
         }
         Err(e) => {
             warn!("Failed to lock prompt {}: {}", id, e);
-            error(StatusCode::CONFLICT, format!("{e}"))
+            error(StatusCode::CONFLICT, format!("{e}")).into_response()
         }
     }
 }
@@ -352,13 +356,10 @@ pub async fn lock_prompt(
 ///
 /// Releases a real lock via PromptHub.unlock().
 #[instrument(skip(state))]
-pub async fn unlock_prompt(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn unlock_prompt(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
-        Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid UUID format"),
+        Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response(),
     };
 
     // Build a token from the path parameter to pass to unlock.
@@ -373,12 +374,13 @@ pub async fn unlock_prompt(
     match state.hub.unlock(token).await {
         Ok(()) => {
             info!("Lock released for prompt {}", id);
-            success(json!({ "unlocked": id }))
+            success(json!({ "unlocked": id })).into_response()
         }
         Err(e) => {
             // Expired locks are considered already unlocked
             info!("Unlock for prompt {} (may have been expired): {}", id, e);
             success(json!({ "unlocked": id, "note": "lock was expired or not found" }))
+                .into_response()
         }
     }
 }
@@ -389,13 +391,10 @@ pub async fn unlock_prompt(
 ///
 /// Fetches real audit entries from storage via PromptHub.audit_trail().
 #[instrument(skip(state))]
-pub async fn audit_trail(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+pub async fn audit_trail(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
-        Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid UUID format"),
+        Err(_) => return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response(),
     };
 
     let pagination = Pagination {
@@ -410,14 +409,15 @@ pub async fn audit_trail(
                 .into_iter()
                 .map(|entry| {
                     json!({
-                        "id": entry.id.to_string(),
-                        "prompt_id": entry.prompt_id.to_string(),
+                        "id": entry.id,
+                        "prompt_id": entry.prompt_id.map(|u| u.to_string()).unwrap_or_default(),
                         "action": entry.action,
-                        "actor": entry.actor,
+                        "agent_id": entry.agent_id.to_string(),
                         "timestamp": entry.timestamp,
-                        "details": entry.details,
-                        "before_hash": entry.before_hash,
-                        "after_hash": entry.after_hash,
+                        "diff_hash": entry.diff_hash,
+                        "before_json": entry.before_json,
+                        "after_json": entry.after_json,
+                        "ip_address": entry.ip_address,
                     })
                 })
                 .collect();
@@ -429,10 +429,11 @@ pub async fn audit_trail(
                 "page": results.page,
                 "per_page": results.per_page
             }))
+            .into_response()
         }
         Err(e) => {
             warn!("Failed to fetch audit trail for {}: {}", id, e);
-            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
 }
@@ -444,7 +445,7 @@ pub async fn audit_trail(
 /// Queries the real storage layer for active prompts and assembles
 /// a workflow bundle with roles and metadata.
 #[instrument(skip(state))]
-pub async fn generate_bundle(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn generate_bundle(State(state): State<Arc<AppState>>) -> Response {
     info!("Generating swarm bundle");
 
     // Fetch real prompts from storage to build the bundle
@@ -455,42 +456,40 @@ pub async fn generate_bundle(State(state): State<Arc<AppState>>) -> impl IntoRes
 
     match state.hub.list(pagination).await {
         Ok(results) => {
-            let roles: Value = results
-                .items
-                .iter()
-                .fold(json!({}), |mut acc, prompt| {
-                    for role in &prompt.target_roles {
-                        let role_key = format!("{:?}", role).to_lowercase();
-                        if let Some(arr) = acc.get_mut(&role_key) {
-                            if let Some(a) = arr.as_array_mut() {
-                                a.push(json!({
-                                    "id": prompt.id.to_string(),
-                                    "name": prompt.name,
-                                    "system_prompt": prompt.system_prompt,
-                                }));
-                            }
-                        } else {
-                            acc[role_key] = json!([{
+            let roles: Value = results.items.iter().fold(json!({}), |mut acc, prompt| {
+                for role in &prompt.target_roles {
+                    let role_key = format!("{:?}", role).to_lowercase();
+                    if let Some(arr) = acc.get_mut(&role_key) {
+                        if let Some(a) = arr.as_array_mut() {
+                            a.push(json!({
                                 "id": prompt.id.to_string(),
                                 "name": prompt.name,
                                 "system_prompt": prompt.system_prompt,
-                            }]);
+                            }));
                         }
+                    } else {
+                        acc[role_key] = json!([{
+                            "id": prompt.id.to_string(),
+                            "name": prompt.name,
+                            "system_prompt": prompt.system_prompt,
+                        }]);
                     }
-                    acc
-                });
+                }
+                acc
+            });
 
             success(json!({
                 "workflow_id": Uuid::new_v4().to_string(),
                 "prompt_count": results.total,
                 "roles": roles,
-                "consistency_report": [] as Vec<Value>,
-                "evolution_suggestions": [] as Vec<Value>
+                "consistency_report": [],
+                "evolution_suggestions": []
             }))
+            .into_response()
         }
         Err(e) => {
             warn!("Failed to generate bundle: {}", e);
-            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
 }
@@ -501,36 +500,44 @@ pub async fn generate_bundle(State(state): State<Arc<AppState>>) -> impl IntoRes
 ///
 /// Checks real database connectivity via PromptHub.storage().health_check().
 #[instrument(skip(state))]
-pub async fn health_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let db_status = match state.hub.storage().health_check().await {
-        Ok(true) => ("healthy", "Connected"),
-        Ok(false) => ("degraded", "Unresponsive"),
-        Err(e) => ("unhealthy", &*format!("Error: {e}")),
+pub async fn health_check(State(state): State<Arc<AppState>>) -> Response {
+    let db_ok = state.hub.storage().health_check().await;
+    let (db_status_str, db_msg) = match &db_ok {
+        Ok(true) => ("healthy", "Connected".to_string()),
+        Ok(false) => ("degraded", "Unresponsive".to_string()),
+        Err(e) => ("unhealthy", format!("Error: {e}")),
     };
 
     let uptime_secs = state.uptime().as_secs();
 
     success(json!({
-        "status": if db_status.0 == "healthy" { "healthy" } else { "degraded" },
+        "status": if db_status_str == "healthy" { "healthy" } else { "degraded" },
         "version": env!("CARGO_PKG_VERSION"),
         "uptime_seconds": uptime_secs,
         "checks": [
-            { "name": "database", "status": db_status.0, "message": db_status.1 },
+            { "name": "database", "status": db_status_str, "message": db_msg },
             { "name": "search_index", "status": "healthy", "message": "FTS5 ready" },
             { "name": "disk", "status": "healthy", "message": "Space available" }
         ]
     }))
+    .into_response()
 }
 
 /// Kubernetes readiness probe.
 ///
 /// Returns 200 when the database is reachable, 503 otherwise.
 #[instrument(skip(state))]
-pub async fn ready_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn ready_check(State(state): State<Arc<AppState>>) -> Response {
     match state.hub.storage().health_check().await {
-        Ok(true) => success(json!({ "ready": true })),
-        Ok(false) => error(StatusCode::SERVICE_UNAVAILABLE, "Database unresponsive"),
-        Err(e) => error(StatusCode::SERVICE_UNAVAILABLE, format!("Database error: {e}")),
+        Ok(true) => success(json!({ "ready": true })).into_response(),
+        Ok(false) => {
+            error(StatusCode::SERVICE_UNAVAILABLE, "Database unresponsive").into_response()
+        }
+        Err(e) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Database error: {e}"),
+        )
+        .into_response(),
     }
 }
 
@@ -538,8 +545,8 @@ pub async fn ready_check(State(state): State<Arc<AppState>>) -> impl IntoRespons
 ///
 /// Always returns 200 — if this handler cannot execute the process is dead.
 #[instrument]
-pub async fn live_check() -> impl IntoResponse {
-    success(json!({ "alive": true }))
+pub async fn live_check() -> Response {
+    success(json!({ "alive": true })).into_response()
 }
 
 // ── Metrics handler ──────────────────────────────────────────────────────
@@ -566,7 +573,11 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
         state.uptime().as_secs_f64()
     );
 
-    (StatusCode::OK, [("content-type", "text/plain; charset=utf-8")], output)
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; charset=utf-8")],
+        output,
+    )
 }
 
 // ── OpenAPI / docs handlers ──────────────────────────────────────────────

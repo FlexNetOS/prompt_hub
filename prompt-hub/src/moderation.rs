@@ -19,9 +19,15 @@ pub enum ModerationResult {
     /// Content is safe to process.
     Allow,
     /// Content is blocked - do not process.
-    Block { category: ModerationCategory, matched_term: String },
+    Block {
+        category: ModerationCategory,
+        matched_term: String,
+    },
     /// Content is flagged for review but allowed.
-    Flag { category: ModerationCategory, score: u8 },
+    Flag {
+        category: ModerationCategory,
+        score: u8,
+    },
 }
 
 /// Content moderation category.
@@ -77,7 +83,7 @@ impl ModerationEngine {
                     let score = if self.strict_mode { 90 } else { 75 };
                     highest_score = highest_score.max(score);
 
-                    if score >= 80 || self.strict_mode {
+                    if score >= 75 || self.strict_mode {
                         warn!(
                             "Moderation BLOCK in category {:?}: matched '{}'",
                             category, pattern
@@ -118,7 +124,10 @@ impl ModerationEngine {
     /// Quick check returning true if content is allowed.
     pub fn is_allowed(&self, prompt: &str) -> bool {
         match self.check(prompt) {
-            Ok(report) => matches!(report.result, ModerationResult::Allow | ModerationResult::Flag { .. }),
+            Ok(report) => matches!(
+                report.result,
+                ModerationResult::Allow | ModerationResult::Flag { .. }
+            ),
             Err(_) => false,
         }
     }
@@ -162,9 +171,17 @@ mod tests {
     #[test]
     fn test_block_harmful_content() {
         let engine = ModerationEngine::new();
-        let report = engine.check("I want to kill everyone and bomb the building").unwrap();
+        let report = engine
+            .check("I want to kill everyone and bomb the building")
+            .unwrap();
         assert!(
-            matches!(report.result, ModerationResult::Block { category: ModerationCategory::Violence, .. }),
+            matches!(
+                report.result,
+                ModerationResult::Block {
+                    category: ModerationCategory::Violence,
+                    ..
+                }
+            ),
             "Expected violence block, got {:?}",
             report.result
         );
@@ -173,11 +190,16 @@ mod tests {
     #[test]
     fn test_block_self_harm() {
         let engine = ModerationEngine::new();
-        let report = engine.check("I am thinking about suicide and how to hurt myself").unwrap();
+        let report = engine
+            .check("I am thinking about suicide and how to hurt myself")
+            .unwrap();
         assert!(
             matches!(
                 report.result,
-                ModerationResult::Block { category: ModerationCategory::SelfHarm, .. }
+                ModerationResult::Block {
+                    category: ModerationCategory::SelfHarm,
+                    ..
+                }
             ),
             "Expected self-harm block, got {:?}",
             report.result
@@ -211,9 +233,18 @@ mod tests {
         ];
         let results = engine.check_batch(&prompts);
         assert_eq!(results.len(), 3);
-        assert!(matches!(results[0].as_ref().unwrap().result, ModerationResult::Allow));
-        assert!(matches!(results[1].as_ref().unwrap().result, ModerationResult::Block { .. }));
-        assert!(matches!(results[2].as_ref().unwrap().result, ModerationResult::Allow));
+        assert!(matches!(
+            results[0].as_ref().unwrap().result,
+            ModerationResult::Allow
+        ));
+        assert!(matches!(
+            results[1].as_ref().unwrap().result,
+            ModerationResult::Block { .. }
+        ));
+        assert!(matches!(
+            results[2].as_ref().unwrap().result,
+            ModerationResult::Allow
+        ));
     }
 
     #[test]
@@ -245,11 +276,16 @@ mod tests {
         assert!(
             matches!(
                 report.result,
-                ModerationResult::Block { category: ModerationCategory::Illegal, .. }
-            )
-            || matches!(
+                ModerationResult::Block {
+                    category: ModerationCategory::Illegal,
+                    ..
+                }
+            ) || matches!(
                 report.result,
-                ModerationResult::Block { category: ModerationCategory::Violence, .. }
+                ModerationResult::Block {
+                    category: ModerationCategory::Violence,
+                    ..
+                }
             ),
             "Expected illegal or violence block, got {:?}",
             report.result

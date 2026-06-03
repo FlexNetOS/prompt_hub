@@ -2,14 +2,37 @@
 
 use crate::error::Result;
 use crate::models::*;
+use std::future::Future;
+use std::pin::Pin;
 use tracing::{info, instrument};
+
+/// Boxed future returned by object-safe checker traits.
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// Best-effort human label for an artifact, used for logging.
+///
+/// `Artifact` is an enum without a stable id, so we derive a label from
+/// whichever identifying field the variant carries.
+fn artifact_label(artifact: &Artifact) -> &str {
+    match artifact {
+        Artifact::Prompt { .. } => "prompt",
+        Artifact::Code { path, .. } => path,
+        Artifact::Config { path, .. } => path,
+        Artifact::Test { path, .. } => path,
+        Artifact::Migration { path, .. } => path,
+        Artifact::Documentation { title, .. } => title,
+    }
+}
 
 /// Trait for linting artifacts.
 ///
 /// Implementors check style, formatting, and structural correctness.
+///
+/// The method returns a boxed future so the trait stays usable as
+/// `Box<dyn Linter>` (object-safe).
 pub trait Linter: Send + Sync {
     /// Lint an artifact and return a result.
-    async fn lint(&self, artifact: &Artifact) -> Result<LintResult>;
+    fn lint<'a>(&'a self, artifact: &'a Artifact) -> BoxFuture<'a, Result<LintResult>>;
 }
 
 /// Trait for security scanning.
@@ -17,7 +40,7 @@ pub trait Linter: Send + Sync {
 /// Implementors check for vulnerabilities, secrets, and unsafe patterns.
 pub trait SecurityScanner: Send + Sync {
     /// Scan an artifact for security issues.
-    async fn scan(&self, artifact: &Artifact) -> Result<ScanResult>;
+    fn scan<'a>(&'a self, artifact: &'a Artifact) -> BoxFuture<'a, Result<ScanResult>>;
 }
 
 /// Trait for performance checking.
@@ -25,13 +48,13 @@ pub trait SecurityScanner: Send + Sync {
 /// Implementors analyze resource usage and efficiency.
 pub trait PerformanceChecker: Send + Sync {
     /// Check performance characteristics of an artifact.
-    async fn check(&self, artifact: &Artifact) -> Result<PerfResult>;
+    fn check<'a>(&'a self, artifact: &'a Artifact) -> BoxFuture<'a, Result<PerfResult>>;
 }
 
 /// Trait for accessibility checking.
 pub trait AccessibilityChecker: Send + Sync {
     /// Check accessibility compliance of an artifact.
-    async fn check(&self, artifact: &Artifact) -> Result<A11yResult>;
+    fn check<'a>(&'a self, artifact: &'a Artifact) -> BoxFuture<'a, Result<A11yResult>>;
 }
 
 /// Result of a lint check.
@@ -72,11 +95,29 @@ pub enum A11yResult {
     Issues(Vec<String>),
 }
 
+/// Aggregated verdict produced by a [`QualityGate`] run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualityResult {
+    /// Whether the artifact passed (no errors).
+    pub passed: bool,
+    /// Non-fatal issues surfaced by checkers.
+    pub warnings: Vec<String>,
+    /// Fatal issues that caused the gate to fail.
+    pub errors: Vec<String>,
+    /// Lint score in `[0.0, 1.0]`.
+    pub lint_score: f64,
+    /// Security score in `[0.0, 1.0]`.
+    pub security_score: f64,
+    /// Performance score in `[0.0, 1.0]`.
+    pub performance_score: f64,
+    /// Accessibility score in `[0.0, 1.0]`.
+    pub accessibility_score: f64,
+}
+
 /// Quality gate that runs multiple checkers against an artifact.
 ///
 /// Aggregates results from linters, security scanners, performance checkers,
 /// and accessibility checkers to produce an overall quality verdict.
-#[derive(Debug, Clone)]
 pub struct QualityGate {
     pub linters: Vec<Box<dyn Linter>>,
     pub security_scanners: Vec<Box<dyn SecurityScanner>>,
@@ -130,15 +171,15 @@ impl QualityGate {
     /// Returns a `QualityResult` with detailed scores and any warnings/errors.
     /// If any security scanner finds vulnerabilities or any linter returns Error,
     /// the gate fails (`passed: false`).
-    #[instrument]
+    #[instrument(skip(self))]
     pub async fn check(&self, artifact: &Artifact) -> Result<QualityResult> {
-        info!(artifact_id = %artifact.id, "Running quality gate");
+        info!(artifact = %artifact_label(artifact), "Running quality gate");
 
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
 
         // Run linters
-        let mut lint_score = 1.0;
+        let mut lint_score: f64 = 1.0;
         for linter in &self.linters {
             match linter.lint(artifact).await? {
                 LintResult::Pass => {}
@@ -166,7 +207,7 @@ impl QualityGate {
         }
 
         // Run performance checkers
-        let mut performance_score = 1.0;
+        let mut performance_score: f64 = 1.0;
         for checker in &self.performance_checkers {
             match checker.check(artifact).await? {
                 PerfResult::Acceptable => {}
@@ -178,7 +219,7 @@ impl QualityGate {
         }
 
         // Run accessibility checkers
-        let mut accessibility_score = 1.0;
+        let mut accessibility_score: f64 = 1.0;
         for checker in &self.accessibility_checkers {
             match checker.check(artifact).await? {
                 A11yResult::Pass => {}
@@ -211,7 +252,7 @@ impl QualityGate {
 
     /// Quick check: run with no registered checkers (always passes).
     pub async fn check_minimal(&self, artifact: &Artifact) -> Result<QualityResult> {
-        info!(artifact_id = %artifact.id, "Running minimal quality gate (no checkers)");
+        info!(artifact = %artifact_label(artifact), "Running minimal quality gate (no checkers)");
         Ok(QualityResult {
             passed: true,
             warnings: Vec::new(),
@@ -227,81 +268,79 @@ impl QualityGate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use uuid::Uuid;
 
     fn make_artifact(content: &str) -> Artifact {
-        Artifact {
-            id: Uuid::new_v4(),
-            name: "test".to_string(),
+        Artifact::Code {
+            path: "test".to_string(),
             content: content.to_string(),
-            artifact_type: "code".to_string(),
-            metadata: HashMap::new(),
+            language: "rust".to_string(),
         }
     }
 
     struct AlwaysPassLinter;
     impl Linter for AlwaysPassLinter {
-        async fn lint(&self, _artifact: &Artifact) -> Result<LintResult> {
-            Ok(LintResult::Pass)
+        fn lint<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<LintResult>> {
+            Box::pin(async { Ok(LintResult::Pass) })
         }
     }
 
     struct AlwaysWarnLinter;
     impl Linter for AlwaysWarnLinter {
-        async fn lint(&self, _artifact: &Artifact) -> Result<LintResult> {
-            Ok(LintResult::Warning(vec!["Missing docs".to_string()]))
+        fn lint<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<LintResult>> {
+            Box::pin(async { Ok(LintResult::Warning(vec!["Missing docs".to_string()])) })
         }
     }
 
     struct AlwaysErrorLinter;
     impl Linter for AlwaysErrorLinter {
-        async fn lint(&self, _artifact: &Artifact) -> Result<LintResult> {
-            Ok(LintResult::Error(vec!["Syntax error".to_string()]))
+        fn lint<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<LintResult>> {
+            Box::pin(async { Ok(LintResult::Error(vec!["Syntax error".to_string()])) })
         }
     }
 
     struct AlwaysCleanScanner;
     impl SecurityScanner for AlwaysCleanScanner {
-        async fn scan(&self, _artifact: &Artifact) -> Result<ScanResult> {
-            Ok(ScanResult::Clean)
+        fn scan<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<ScanResult>> {
+            Box::pin(async { Ok(ScanResult::Clean) })
         }
     }
 
     struct AlwaysVulnScanner;
     impl SecurityScanner for AlwaysVulnScanner {
-        async fn scan(&self, _artifact: &Artifact) -> Result<ScanResult> {
-            Ok(ScanResult::Vulnerabilities(vec![
-                "SQL injection risk".to_string(),
-            ]))
+        fn scan<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<ScanResult>> {
+            Box::pin(async {
+                Ok(ScanResult::Vulnerabilities(vec![
+                    "SQL injection risk".to_string(),
+                ]))
+            })
         }
     }
 
     struct AlwaysAcceptablePerf;
     impl PerformanceChecker for AlwaysAcceptablePerf {
-        async fn check(&self, _artifact: &Artifact) -> Result<PerfResult> {
-            Ok(PerfResult::Acceptable)
+        fn check<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<PerfResult>> {
+            Box::pin(async { Ok(PerfResult::Acceptable) })
         }
     }
 
     struct AlwaysIssuePerf;
     impl PerformanceChecker for AlwaysIssuePerf {
-        async fn check(&self, _artifact: &Artifact) -> Result<PerfResult> {
-            Ok(PerfResult::Issues(vec!["Slow loop detected".to_string()]))
+        fn check<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<PerfResult>> {
+            Box::pin(async { Ok(PerfResult::Issues(vec!["Slow loop detected".to_string()])) })
         }
     }
 
     struct AlwaysPassA11y;
     impl AccessibilityChecker for AlwaysPassA11y {
-        async fn check(&self, _artifact: &Artifact) -> Result<A11yResult> {
-            Ok(A11yResult::Pass)
+        fn check<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<A11yResult>> {
+            Box::pin(async { Ok(A11yResult::Pass) })
         }
     }
 
     struct AlwaysIssueA11y;
     impl AccessibilityChecker for AlwaysIssueA11y {
-        async fn check(&self, _artifact: &Artifact) -> Result<A11yResult> {
-            Ok(A11yResult::Issues(vec!["Missing alt text".to_string()]))
+        fn check<'a>(&'a self, _artifact: &'a Artifact) -> BoxFuture<'a, Result<A11yResult>> {
+            Box::pin(async { Ok(A11yResult::Issues(vec!["Missing alt text".to_string()])) })
         }
     }
 

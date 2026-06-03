@@ -168,10 +168,7 @@ impl CrossAgentPollination {
             .iter()
             .map(|(k, p)| (k, Self::score_pattern(p, num_domains)))
             .collect();
-        ranked.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ranked
     }
 
@@ -214,6 +211,7 @@ mod tests {
                 avg_tokens: 300,
                 avg_latency_ms: 100,
                 last_used: Some(Utc::now()),
+                cost_estimate_usd: 0.0,
             },
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -233,7 +231,10 @@ mod tests {
 
     #[test]
     fn test_extract_step_by_step_pattern() {
-        let prompt = make_prompt("Follow these steps: 1. Analyze 2. Plan 3. Execute", "Help me.");
+        let prompt = make_prompt(
+            "Follow these steps: 1. Analyze 2. Plan 3. Execute",
+            "Help me.",
+        );
         let patterns = CrossAgentPollination::extract_patterns(&prompt);
         assert!(
             patterns.iter().any(|p| p.structure == "step-by-step"),
@@ -309,7 +310,10 @@ mod tests {
         };
 
         let score = CrossAgentPollination::score_pattern(&pattern, 0);
-        assert!(score > 0.0, "Score with zero domains should use generality=1.0");
+        assert!(
+            score > 0.0,
+            "Score with zero domains should use generality=1.0"
+        );
     }
 
     #[test]
@@ -366,7 +370,10 @@ mod tests {
 
         let ranked = engine.rank_patterns(5);
         assert_eq!(ranked.len(), 2);
-        assert!(ranked[0].1 > ranked[1].1, "Higher usage+score should rank first");
+        assert!(
+            ranked[0].1 > ranked[1].1,
+            "Higher usage+score should rank first"
+        );
     }
 
     #[test]

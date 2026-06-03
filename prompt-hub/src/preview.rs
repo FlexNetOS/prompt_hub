@@ -17,7 +17,10 @@ pub enum PreviewType {
     /// Database ER diagram
     DatabaseSchema { er_diagram: String },
     /// Code file preview with diff
-    CodePreview { files: Vec<PreviewFile>, diff: String },
+    CodePreview {
+        files: Vec<PreviewFile>,
+        diff: String,
+    },
     /// Architecture diagram in Mermaid syntax
     ArchitectureDiagram { mermaid: String },
 }
@@ -57,7 +60,11 @@ impl PreviewEngine {
 
         for (i, artifact) in artifacts.iter().enumerate() {
             match artifact {
-                Artifact::Code { path, content, language } => {
+                Artifact::Code {
+                    path,
+                    content,
+                    language,
+                } => {
                     files.push(PreviewFile {
                         path: path.clone(),
                         content: content.clone(),
@@ -65,7 +72,11 @@ impl PreviewEngine {
                     });
                     diff_lines.push(format!("+ [{i}] {path} ({language})"));
                 }
-                Artifact::Config { path, content, format } => {
+                Artifact::Config {
+                    path,
+                    content,
+                    format,
+                } => {
                     files.push(PreviewFile {
                         path: path.clone(),
                         content: content.clone(),
@@ -84,7 +95,11 @@ impl PreviewEngine {
                     });
                     diff_lines.push(format!("+ [{i}] prompt_{i}.md (prompt)"));
                 }
-                Artifact::Test { path, content, framework } => {
+                Artifact::Test {
+                    path,
+                    content,
+                    framework,
+                } => {
                     files.push(PreviewFile {
                         path: path.clone(),
                         content: content.clone(),
@@ -92,7 +107,11 @@ impl PreviewEngine {
                     });
                     diff_lines.push(format!("+ [{i}] {path} (test/{framework})"));
                 }
-                Artifact::Migration { path, content, database } => {
+                Artifact::Migration {
+                    path,
+                    content,
+                    database,
+                } => {
                     files.push(PreviewFile {
                         path: path.clone(),
                         content: content.clone(),
@@ -100,7 +119,11 @@ impl PreviewEngine {
                     });
                     diff_lines.push(format!("+ [{i}] {path} (migration/{database})"));
                 }
-                Artifact::Documentation { title, content, format } => {
+                Artifact::Documentation {
+                    title,
+                    content,
+                    format,
+                } => {
                     files.push(PreviewFile {
                         path: format!("docs/{title}.{format}"),
                         content: content.clone(),
@@ -126,7 +149,7 @@ impl PreviewEngine {
         let mut er_diagram = String::from("erDiagram\n");
 
         for (table_name, columns) in tables {
-            er_diagram.push_str(&format!("    {} {\n", table_name));
+            er_diagram.push_str(&format!("    {} {{\n", table_name));
             for (col_name, col_type) in *columns {
                 er_diagram.push_str(&format!("        {} {}\n", col_type, col_name));
             }
@@ -138,10 +161,7 @@ impl PreviewEngine {
 
     /// Generate an API spec preview from endpoint definitions.
     #[instrument]
-    pub async fn preview_api(
-        &self,
-        endpoints: &[(&str, &str, &str)],
-    ) -> Result<PreviewType> {
+    pub async fn preview_api(&self, endpoints: &[(&str, &str, &str)]) -> Result<PreviewType> {
         let mut spec = serde_json::Map::new();
         spec.insert(
             "openapi".to_string(),
@@ -160,14 +180,10 @@ impl PreviewEngine {
             paths.insert(path.to_string(), serde_json::Value::Object(path_item));
         }
 
-        spec.insert(
-            "paths".to_string(),
-            serde_json::Value::Object(paths),
-        );
+        spec.insert("paths".to_string(), serde_json::Value::Object(paths));
 
-        let openapi_json =
-            serde_json::to_string_pretty(&serde_json::Value::Object(spec))
-                .map_err(|e| HubError::Serialization(format!("JSON: {e}")))?;
+        let openapi_json = serde_json::to_string_pretty(&serde_json::Value::Object(spec))
+            .map_err(|e| HubError::Serialization(format!("JSON: {e}")))?;
 
         Ok(PreviewType::ApiSpec { openapi_json })
     }
@@ -185,9 +201,7 @@ impl PreviewEngine {
         for (i, step) in plan.steps.iter().enumerate() {
             let node_id = format!("step{i}");
             let escaped_desc = step.description.replace('"', "\\\"");
-            mermaid.push_str(&format!(
-                "    {node_id}[\"{escaped_desc}\"]\n"
-            ));
+            mermaid.push_str(&format!("    {node_id}[\"{escaped_desc}\"]\n"));
 
             // Style based on estimated duration
             let duration_style = if step.estimated_duration_secs < 60 {
@@ -197,9 +211,7 @@ impl PreviewEngine {
             } else {
                 "fill:#f99"
             };
-            mermaid.push_str(&format!(
-                "    style {node_id} {duration_style}\n"
-            ));
+            mermaid.push_str(&format!("    style {node_id} {duration_style}\n"));
         }
 
         mermaid.push('\n');
@@ -354,7 +366,11 @@ mod tests {
         let tables = vec![
             (
                 "users",
-                &[("id", "INT"), ("email", "VARCHAR"), ("password_hash", "VARCHAR")] as &[(&str, &str)],
+                &[
+                    ("id", "INT"),
+                    ("email", "VARCHAR"),
+                    ("password_hash", "VARCHAR"),
+                ] as &[(&str, &str)],
             ),
             (
                 "posts",
@@ -435,6 +451,7 @@ mod tests {
         // Plan with no explicit dependencies should show sequential flow
         let plan = ExecutionPlan {
             title: "Sequential".to_string(),
+            description: "Sequential plan".to_string(),
             steps: vec![
                 ExecutionStep {
                     id: 0,

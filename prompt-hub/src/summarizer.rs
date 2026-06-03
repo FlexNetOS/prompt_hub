@@ -14,7 +14,11 @@ pub struct ResultSummarizer;
 impl ResultSummarizer {
     /// Summarize an execution result at the appropriate level for the user.
     #[instrument]
-    pub async fn summarize(&self, result: &ExecutionResult, user_level: SkillLevel) -> Result<String> {
+    pub async fn summarize(
+        &self,
+        result: &ExecutionResult,
+        user_level: SkillLevel,
+    ) -> Result<String> {
         info!("Summarizing result for {:?} user", user_level);
 
         let summary = match user_level {

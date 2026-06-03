@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result};
-use crate::models::*;
+use crate::error::Result;
 use tracing::{info, instrument};
 
 /// Token counting engine supporting multiple strategies.
@@ -11,6 +10,15 @@ use tracing::{info, instrument};
 /// (~4 chars per token for GPT-style tokenizers).
 #[derive(Debug, Clone, Default)]
 pub struct TokenCounter;
+
+/// Result of counting tokens for a given model.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenCount {
+    /// Model identifier the count was computed for.
+    pub model: String,
+    /// Number of tokens counted.
+    pub tokens: usize,
+}
 
 /// Cost estimate for a given token count and model.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -70,7 +78,11 @@ impl TokenCounter {
     /// Estimate cost for a given token count.
     ///
     /// Pricing is approximate and based on common OpenAI pricing tiers.
-    pub fn estimate_cost(input_tokens: usize, output_tokens: usize, model: &str) -> CostEstimateDetail {
+    pub fn estimate_cost(
+        input_tokens: usize,
+        output_tokens: usize,
+        model: &str,
+    ) -> CostEstimateDetail {
         let (input_price_per_1k, output_price_per_1k) = Self::pricing(model);
 
         let input_cost = input_tokens as f64 * input_price_per_1k / 1000.0;
@@ -95,7 +107,11 @@ impl TokenCounter {
         expected_output_tokens: usize,
     ) -> Result<CostEstimateDetail> {
         let input_count = Self::count_text(&format!("{}\n{}", system, user), model)?;
-        Ok(Self::estimate_cost(input_count.tokens, expected_output_tokens, model))
+        Ok(Self::estimate_cost(
+            input_count.tokens,
+            expected_output_tokens,
+            model,
+        ))
     }
 
     /// Get approximate pricing per 1K tokens for known models.
@@ -112,7 +128,7 @@ impl TokenCounter {
             // Standard GPT-4
             (30.0, 60.0)
         } else if lower.contains("gpt-3.5-turbo") || lower.contains("gpt-3.5") {
-            (0.5, 1.5)
+            (0.0005, 0.0015)
         } else if lower.contains("claude-3-opus") {
             (15.0, 75.0)
         } else if lower.contains("claude-3-sonnet") {
@@ -176,7 +192,10 @@ mod tests {
         assert_eq!(estimate.output_tokens, 500);
         assert!(estimate.input_cost > 0.0);
         assert!(estimate.output_cost > 0.0);
-        assert_eq!(estimate.total_cost, estimate.input_cost + estimate.output_cost);
+        assert_eq!(
+            estimate.total_cost,
+            estimate.input_cost + estimate.output_cost
+        );
         assert_eq!(estimate.model, "gpt-4");
     }
 
@@ -184,7 +203,11 @@ mod tests {
     fn test_estimate_cost_gpt35() {
         let estimate = TokenCounter::estimate_cost(1000, 500, "gpt-3.5-turbo");
         // GPT-3.5 is cheaper than GPT-4
-        assert!(estimate.total_cost < 1.0, "GPT-3.5 should be cheap: {}", estimate.total_cost);
+        assert!(
+            estimate.total_cost < 1.0,
+            "GPT-3.5 should be cheap: {}",
+            estimate.total_cost
+        );
     }
 
     #[test]
@@ -202,7 +225,10 @@ mod tests {
     fn test_estimate_cost_unknown_model() {
         // Should use default pricing
         let estimate = TokenCounter::estimate_cost(1000, 500, "some-unknown-model-v1");
-        assert!(estimate.total_cost > 0.0, "Unknown model should use default pricing");
+        assert!(
+            estimate.total_cost > 0.0,
+            "Unknown model should use default pricing"
+        );
     }
 
     #[tokio::test]

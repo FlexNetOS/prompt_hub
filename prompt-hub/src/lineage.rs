@@ -197,7 +197,7 @@ impl LineageTracker {
 
     /// Build a lineage tree view from a root.
     pub fn build_tree(&self, root_version: &str) -> Option<LineageTree> {
-        let root_node = self.nodes.get(root_version)?;
+        let _root_node = self.nodes.get(root_version)?;
         let mut all_nodes = Vec::new();
         let mut queue = vec![root_version.to_string()];
         let mut max_depth = 0;
@@ -394,9 +394,7 @@ mod tests {
     #[test]
     fn test_deep_ancestry() {
         let mut tracker = make_tracker();
-        tracker
-            .register_version("v1", "p1", None, "a")
-            .unwrap();
+        tracker.register_version("v1", "p1", None, "a").unwrap();
         for i in 2..=5 {
             let prev = format!("v{}", i - 1);
             tracker
@@ -412,12 +410,8 @@ mod tests {
     #[test]
     fn test_multiple_roots() {
         let mut tracker = make_tracker();
-        tracker
-            .register_version("r1", "p1", None, "a")
-            .unwrap();
-        tracker
-            .register_version("r2", "p2", None, "b")
-            .unwrap();
+        tracker.register_version("r1", "p1", None, "a").unwrap();
+        tracker.register_version("r2", "p2", None, "b").unwrap();
         assert_eq!(tracker.roots().len(), 2);
         assert_eq!(tracker.node_count(), 2);
     }

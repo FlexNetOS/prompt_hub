@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use prompt_hub::search::SmartEngine;
 use prompt_hub::storage::{Storage, StorageConfig};
 use std::sync::Arc;
@@ -13,15 +13,25 @@ fn bench_mock_embed(c: &mut Criterion) {
             wal_mode: false,
             foreign_keys: true,
         };
-        Arc::new(Storage::new(config).await.expect("Failed to create in-memory storage"))
+        Arc::new(
+            Storage::new(config)
+                .await
+                .expect("Failed to create in-memory storage"),
+        )
     });
 
     let engine = SmartEngine::new("all-MiniLM-L6-v2", storage);
 
     let inputs = vec![
         ("short", "Sort a list"),
-        ("medium", "Build a React login page with Google OAuth, dark mode, and Tailwind CSS using Next.js 14"),
-        ("long", "Create a microservices architecture with a GraphQL API gateway, gRPC inter-service communication, PostgreSQL primary database, Redis caching layer, Kafka event streaming, Kubernetes deployment manifests, Prometheus monitoring, and Jaeger distributed tracing. Include CI/CD pipelines with GitHub Actions, Terraform infrastructure as code, and comprehensive integration tests."),
+        (
+            "medium",
+            "Build a React login page with Google OAuth, dark mode, and Tailwind CSS using Next.js 14",
+        ),
+        (
+            "long",
+            "Create a microservices architecture with a GraphQL API gateway, gRPC inter-service communication, PostgreSQL primary database, Redis caching layer, Kafka event streaming, Kubernetes deployment manifests, Prometheus monitoring, and Jaeger distributed tracing. Include CI/CD pipelines with GitHub Actions, Terraform infrastructure as code, and comprehensive integration tests.",
+        ),
     ];
 
     let mut group = c.benchmark_group("mock_embed");
@@ -52,7 +62,11 @@ fn bench_mock_embed_consistency(c: &mut Criterion) {
             wal_mode: false,
             foreign_keys: true,
         };
-        Arc::new(Storage::new(config).await.expect("Failed to create in-memory storage"))
+        Arc::new(
+            Storage::new(config)
+                .await
+                .expect("Failed to create in-memory storage"),
+        )
     });
 
     let engine = SmartEngine::new("all-MiniLM-L6-v2", storage);
@@ -69,5 +83,10 @@ fn bench_mock_embed_consistency(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_mock_embed, bench_cosine_similarity, bench_mock_embed_consistency);
+criterion_group!(
+    benches,
+    bench_mock_embed,
+    bench_cosine_similarity,
+    bench_mock_embed_consistency
+);
 criterion_main!(benches);

@@ -9,6 +9,8 @@ use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
 use crate::sync::{SyncEvent, SyncManager};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
@@ -64,6 +66,18 @@ pub use lock::{LockManager, LockToken};
 /// Type alias for agent identifiers.
 pub type AgentId = Uuid;
 
+/// Compute a tamper-evidence hash over a before→after audit transition.
+///
+/// Produces a stable hex digest of the concatenated before/after JSON, used to
+/// populate [`AuditEntry::diff_hash`].
+fn diff_hash(before: Option<&str>, after: Option<&str>) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    before.unwrap_or("").hash(&mut hasher);
+    after.unwrap_or("").hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 // ---------------------------------------------------------------------------
 // Core PromptHub engine — Send + Sync + 'static
 // ---------------------------------------------------------------------------
@@ -76,7 +90,7 @@ pub type AgentId = Uuid;
 #[derive(Debug)]
 pub struct PromptHub {
     storage: Arc<Storage>,
-    search_engine: Arc<dyn SearchEngine>,
+    search_engine: Arc<HybridEngine>,
     sanitizer: PromptSanitizer,
     auth: RbacAuthManager,
     lock_manager: LockManager,
@@ -91,14 +105,14 @@ impl PromptHub {
     pub async fn new(db_path: &Path, config: HubConfig) -> Result<Self> {
         let storage_config = StorageConfig {
             db_path: db_path.to_string_lossy().to_string(),
-            max_connections: config.max_connections,
+            max_connections: config.max_pool_size,
             wal_mode: true,
             foreign_keys: true,
         };
 
         let storage = Arc::new(Storage::new(storage_config).await?);
         let fast = Arc::new(FastEngine::new(storage.clone()));
-        let smart = Arc::new(SmartEngine::new(config.model_name, storage.clone()));
+        let smart = Arc::new(SmartEngine::new(config.embedding_model, storage.clone()));
         let hybrid = Arc::new(HybridEngine::new(fast, smart));
 
         info!("PromptHub initialized at {:?}", db_path);
@@ -131,9 +145,7 @@ impl PromptHub {
     /// Register a new prompt after sanitization and RBAC checks.
     #[instrument(skip(self, prompt))]
     pub async fn register(&self, prompt: Prompt, identity: &AgentIdentity) -> Result<Uuid> {
-        self.auth
-            .authorize_action(identity, Action::Write)
-            .map_err(|e| HubError::AuthError(e.to_string()))?;
+        RbacAuthManager::authorize_action(identity, Action::Write)?;
 
         // Run sanitizer
         match self
@@ -143,7 +155,12 @@ impl PromptHub {
             SanitizationResult::Clean | SanitizationResult::Suspicious(_) => {}
             SanitizationResult::Blocked(issues) => {
                 self.metrics.record_sanitization_blocked();
-                return Err(HubError::SanitizationError(issues));
+                let summary = issues
+                    .iter()
+                    .map(|i| format!("[{}] {}", i.category, i.description))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(HubError::SanitizationError(summary));
             }
         }
 
@@ -151,19 +168,26 @@ impl PromptHub {
         self.search_engine.index(&prompt).await?;
         self.metrics.record_request();
 
-        self.storage.log_audit(AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: prompt.id,
-            action: AuditAction::Created,
-            actor: identity.clone(),
-            timestamp: Utc::now(),
-            details: Some(format!("Registered prompt {}", prompt.id)),
-            before_hash: None,
-            after_hash: Some(serde_json::to_string(&prompt).unwrap_or_default()),
-        }).await?;
+        let after_json = serde_json::to_string(&prompt).unwrap_or_default();
+        self.storage
+            .log_audit(&AuditEntry {
+                id: 0,
+                timestamp: Utc::now(),
+                agent_id: identity.id,
+                action: format!("{:?}", AuditAction::Created),
+                prompt_id: Some(prompt.id),
+                diff_hash: diff_hash(None, Some(&after_json)),
+                before_json: None,
+                after_json: Some(after_json),
+                ip_address: None,
+            })
+            .await?;
 
-        self.sync
-            .broadcast(SyncEvent::PromptAdded { prompt_id: prompt.id });
+        // Sync broadcast is best-effort: a send error just means no subscribers
+        // are listening, which must not fail the registration.
+        let _ = self.sync.broadcast(SyncEvent::PromptAdded {
+            prompt_id: prompt.id,
+        });
 
         info!(
             "Registered prompt {} by {} (agent {})",
@@ -180,9 +204,7 @@ impl PromptHub {
         intent: &str,
         identity: &AgentIdentity,
     ) -> Result<Option<Prompt>> {
-        self.auth
-            .authorize_action(identity, Action::Read)
-            .map_err(|e| HubError::AuthError(e.to_string()))?;
+        RbacAuthManager::authorize_action(identity, Action::Read)?;
         self.metrics.record_request();
 
         // Simplified: use search engine to find best matching prompt.
@@ -206,14 +228,17 @@ impl PromptHub {
         filters: SearchFilters,
         pagination: Pagination,
     ) -> Result<Paginated<ScoredPrompt>> {
-        self.search_engine.search(query, &filters, &pagination).await
+        self.search_engine
+            .search(query, &filters, &pagination)
+            .await
     }
 
     /// List all prompts with pagination.
     #[instrument(skip(self))]
     pub async fn list(&self, pagination: Pagination) -> Result<Paginated<Prompt>> {
         let offset = (pagination.page.saturating_sub(1)) * pagination.per_page;
-        let items = self.storage
+        let items = self
+            .storage
             .list_prompts(None, None, pagination.per_page, offset)
             .await?;
         let total = self.storage.count_prompts(None, None).await? as usize;
@@ -235,21 +260,23 @@ impl PromptHub {
         agent: &AgentIdentity,
         ttl: std::time::Duration,
     ) -> Result<LockToken> {
-        self.auth
-            .authorize_action(agent, Action::Lock)
-            .map_err(|e| HubError::AuthError(e.to_string()))?;
-        let token = LockManager::create_lock(id, agent.id.clone(), ttl.as_secs());
+        RbacAuthManager::authorize_action(agent, Action::Lock)?;
+        let token = LockManager::create_lock(id, agent.id, ttl.as_secs());
         self.metrics.record_lock_acquired();
-        self.storage.log_audit(AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: id,
-            action: AuditAction::Locked,
-            actor: agent.clone(),
-            timestamp: Utc::now(),
-            details: Some(format!("Lock acquired for prompt {} by agent {}", id, agent.id)),
-            before_hash: None,
-            after_hash: Some(token.token.clone()),
-        }).await?;
+        let after_json = token.token.clone();
+        self.storage
+            .log_audit(&AuditEntry {
+                id: 0,
+                timestamp: Utc::now(),
+                agent_id: agent.id,
+                action: format!("{:?}", AuditAction::Locked),
+                prompt_id: Some(id),
+                diff_hash: diff_hash(None, Some(&after_json)),
+                before_json: None,
+                after_json: Some(after_json),
+                ip_address: None,
+            })
+            .await?;
         info!("Lock acquired for prompt {} by agent {}", id, agent.id);
         Ok(token)
     }
@@ -268,22 +295,20 @@ impl PromptHub {
             )));
         }
         self.metrics.record_lock_released();
-        self.storage.log_audit(AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: token.prompt_id,
-            action: AuditAction::Unlocked,
-            actor: AgentIdentity {
-                id: token.agent_id.clone(),
-                name: "unknown".to_string(),
-                capabilities: Vec::new(),
-                token_hash: String::new(),
-                specialization_score: 0.0,
-            },
-            timestamp: Utc::now(),
-            details: Some(format!("Lock released for prompt {}", token.prompt_id)),
-            before_hash: Some(token.token.clone()),
-            after_hash: None,
-        }).await?;
+        let before_json = token.token.clone();
+        self.storage
+            .log_audit(&AuditEntry {
+                id: 0,
+                timestamp: Utc::now(),
+                agent_id: token.agent_id,
+                action: format!("{:?}", AuditAction::Unlocked),
+                prompt_id: Some(token.prompt_id),
+                diff_hash: diff_hash(Some(&before_json), None),
+                before_json: Some(before_json),
+                after_json: None,
+                ip_address: None,
+            })
+            .await?;
         info!("Lock released for prompt {}", token.prompt_id);
         Ok(())
     }
@@ -297,7 +322,9 @@ impl PromptHub {
         id: Uuid,
         pagination: Pagination,
     ) -> Result<Paginated<AuditEntry>> {
-        self.storage.fetch_audit_trail(id, pagination.page, pagination.per_page).await
+        self.storage
+            .fetch_audit_trail(id, pagination.page, pagination.per_page)
+            .await
     }
 
     /// Transfer prompt ownership between agents (admin only).
@@ -309,23 +336,32 @@ impl PromptHub {
         to: &AgentIdentity,
         admin: &AgentIdentity,
     ) -> Result<Prompt> {
-        self.auth.authorize_action(admin, Action::Admin)
-            .map_err(|e| HubError::AuthError(e.to_string()))?;
+        RbacAuthManager::authorize_action(admin, Action::Admin)?;
         let before = self.storage.get_prompt(id).await?;
         self.storage.transfer_prompt_ownership(id, to.id).await?;
         self.metrics.record_request();
-        let prompt = self.storage.get_prompt(id).await?
-            .ok_or(HubError::NotFound(id))?;
-        self.storage.log_audit(AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: id,
-            action: AuditAction::Created,
-            actor: admin.clone(),
-            timestamp: Utc::now(),
-            details: Some(format!("Transferred ownership of prompt {} to agent {}", id, to.id)),
-            before_hash: before.as_ref().map(|b| serde_json::to_string(b).unwrap_or_default()),
-            after_hash: Some(serde_json::to_string(&prompt).unwrap_or_default()),
-        }).await?;
+        let prompt = self
+            .storage
+            .get_prompt(id)
+            .await?
+            .ok_or(HubError::NotFound(id.to_string()))?;
+        let before_json = before
+            .as_ref()
+            .map(|b| serde_json::to_string(b).unwrap_or_default());
+        let after_json = serde_json::to_string(&prompt).unwrap_or_default();
+        self.storage
+            .log_audit(&AuditEntry {
+                id: 0,
+                timestamp: Utc::now(),
+                agent_id: admin.id,
+                action: format!("{:?}", AuditAction::Created),
+                prompt_id: Some(id),
+                diff_hash: diff_hash(before_json.as_deref(), Some(&after_json)),
+                before_json,
+                after_json: Some(after_json),
+                ip_address: None,
+            })
+            .await?;
         info!("Transferred ownership of prompt {} to agent {}", id, to.id);
         Ok(prompt)
     }
@@ -343,7 +379,10 @@ impl PromptHub {
         use crate::vibe::VibeEngine;
         let engine = VibeEngine::default();
         let result = engine.vibe_code(request, input, level).await?;
-        info!("Vibe coding completed with confidence {}", result.confidence);
+        info!(
+            "Vibe coding completed with confidence {}",
+            result.confidence
+        );
         Ok(result)
     }
 
@@ -385,10 +424,7 @@ impl PromptHub {
         use crate::privacy::PrivacyScanner;
         let scanner = PrivacyScanner::default();
         let report = scanner.scan(input).await?;
-        info!(
-            "Privacy scan completed: {:?} risk level",
-            report.risk_level
-        );
+        info!("Privacy scan completed: {:?} risk level", report.risk_level);
         Ok(report)
     }
 
@@ -414,7 +450,7 @@ impl PromptHub {
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down PromptHub storage...");
-        self.storage.close().await?;
+        self.storage.optimize_on_close().await?;
         info!("PromptHub shutdown complete");
         Ok(())
     }
@@ -423,107 +459,160 @@ impl PromptHub {
 
     /// Update an existing prompt.
     #[instrument(skip(self))]
-    pub async fn update(&self, id: Uuid, patch: PromptPatch, identity: &AgentIdentity) -> Result<Prompt> {
-        self.auth.authorize_action(identity, Action::Write)
-            .map_err(|e| HubError::AuthError(e.to_string()))?;
+    pub async fn update(
+        &self,
+        id: Uuid,
+        patch: PromptPatch,
+        identity: &AgentIdentity,
+    ) -> Result<Prompt> {
+        RbacAuthManager::authorize_action(identity, Action::Write)?;
         let before = self.storage.get_prompt(id).await?;
         self.storage.update_prompt(id, &patch).await?;
         self.metrics.record_request();
-        let updated = self.storage.get_prompt(id).await?
-            .ok_or(HubError::NotFound(id))?;
-        self.storage.log_audit(AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: id,
-            action: AuditAction::Updated,
-            actor: identity.clone(),
-            timestamp: Utc::now(),
-            details: Some(format!("Updated prompt {}: {:?}", id, patch)),
-            before_hash: before.as_ref().map(|b| serde_json::to_string(b).unwrap_or_default()),
-            after_hash: Some(serde_json::to_string(&updated).unwrap_or_default()),
-        }).await?;
+        let updated = self
+            .storage
+            .get_prompt(id)
+            .await?
+            .ok_or(HubError::NotFound(id.to_string()))?;
+        let before_json = before
+            .as_ref()
+            .map(|b| serde_json::to_string(b).unwrap_or_default());
+        let after_json = serde_json::to_string(&updated).unwrap_or_default();
+        self.storage
+            .log_audit(&AuditEntry {
+                id: 0,
+                timestamp: Utc::now(),
+                agent_id: identity.id,
+                action: format!("{:?}", AuditAction::Updated),
+                prompt_id: Some(id),
+                diff_hash: diff_hash(before_json.as_deref(), Some(&after_json)),
+                before_json,
+                after_json: Some(after_json),
+                ip_address: None,
+            })
+            .await?;
         info!("Updated prompt {}", id);
         Ok(updated)
     }
 
     /// Rollback a prompt to a previous version.
     #[instrument(skip(self))]
-    pub async fn rollback(&self, id: Uuid, to_version: &str, identity: &AgentIdentity) -> Result<Prompt> {
-        self.auth.authorize_action(identity, Action::Write)
-            .map_err(|e| HubError::AuthError(e.to_string()))?;
+    pub async fn rollback(
+        &self,
+        id: Uuid,
+        to_version: &str,
+        identity: &AgentIdentity,
+    ) -> Result<Prompt> {
+        RbacAuthManager::authorize_action(identity, Action::Write)?;
         let before = self.storage.get_prompt(id).await?;
         self.storage.rollback_prompt(id, to_version).await?;
         self.metrics.record_request();
-        let rolled = self.storage.get_prompt(id).await?
-            .ok_or(HubError::NotFound(id))?;
-        self.storage.log_audit(AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: id,
-            action: AuditAction::RolledBack,
-            actor: identity.clone(),
-            timestamp: Utc::now(),
-            details: Some(format!("Rolled back prompt {} to version {}", id, to_version)),
-            before_hash: before.as_ref().map(|b| serde_json::to_string(b).unwrap_or_default()),
-            after_hash: Some(serde_json::to_string(&rolled).unwrap_or_default()),
-        }).await?;
+        let rolled = self
+            .storage
+            .get_prompt(id)
+            .await?
+            .ok_or(HubError::NotFound(id.to_string()))?;
+        let before_json = before
+            .as_ref()
+            .map(|b| serde_json::to_string(b).unwrap_or_default());
+        let after_json = serde_json::to_string(&rolled).unwrap_or_default();
+        self.storage
+            .log_audit(&AuditEntry {
+                id: 0,
+                timestamp: Utc::now(),
+                agent_id: identity.id,
+                action: format!("{:?}", AuditAction::RolledBack),
+                prompt_id: Some(id),
+                diff_hash: diff_hash(before_json.as_deref(), Some(&after_json)),
+                before_json,
+                after_json: Some(after_json),
+                ip_address: None,
+            })
+            .await?;
         info!("Rolled back prompt {} to version {}", id, to_version);
         Ok(rolled)
     }
 
     /// Evolve a prompt using the specified strategy.
     #[instrument(skip(self))]
-    pub async fn evolve_prompt(&self, id: Uuid, strategy: EvolutionStrategy, identity: &AgentIdentity) -> Result<Prompt> {
-        self.auth.authorize_action(identity, Action::Write)
-            .map_err(|e| HubError::AuthError(e.to_string()))?;
+    pub async fn evolve_prompt(
+        &self,
+        id: Uuid,
+        strategy: EvolutionStrategy,
+        identity: &AgentIdentity,
+    ) -> Result<Prompt> {
+        RbacAuthManager::authorize_action(identity, Action::Write)?;
         use crate::evolution::EvolutionEngine;
-        let base = self.storage.get_prompt(id).await?
-            .ok_or(HubError::NotFound(id))?;
+        let base = self
+            .storage
+            .get_prompt(id)
+            .await?
+            .ok_or(HubError::NotFound(id.to_string()))?;
         let evolved = match strategy {
-            EvolutionStrategy::Mutate => EvolutionEngine::mutate(&base, 0.5),
+            EvolutionStrategy::Mutate => EvolutionEngine::mutate(&base, 0.5)?,
             EvolutionStrategy::Crossover => {
                 let candidates = self.storage.list_prompts(None, None, 10, 0).await?;
                 if candidates.is_empty() {
                     return Err(HubError::Internal("No crossover candidates".into()));
                 }
-                EvolutionEngine::crossover(&base, &candidates[0])
+                EvolutionEngine::crossover(&base, &candidates[0])?
             }
-            _ => EvolutionEngine::mutate(&base, 0.3),
+            _ => EvolutionEngine::mutate(&base, 0.3)?,
         };
         self.storage.insert_prompt(&evolved).await?;
         self.search_engine.index(&evolved).await?;
-        self.storage.log_audit(AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: id,
-            action: AuditAction::Evolved,
-            actor: identity.clone(),
-            timestamp: Utc::now(),
-            details: Some(format!("Evolved prompt {} into new prompt {} using {:?}", id, evolved.id, strategy)),
-            before_hash: Some(serde_json::to_string(&base).unwrap_or_default()),
-            after_hash: Some(serde_json::to_string(&evolved).unwrap_or_default()),
-        }).await?;
+        let before_json = serde_json::to_string(&base).unwrap_or_default();
+        let after_json = serde_json::to_string(&evolved).unwrap_or_default();
+        self.storage
+            .log_audit(&AuditEntry {
+                id: 0,
+                timestamp: Utc::now(),
+                agent_id: identity.id,
+                action: format!("{:?}", AuditAction::Evolved),
+                prompt_id: Some(id),
+                diff_hash: diff_hash(Some(&before_json), Some(&after_json)),
+                before_json: Some(before_json),
+                after_json: Some(after_json),
+                ip_address: None,
+            })
+            .await?;
         info!("Evolved prompt {} into new prompt {}", id, evolved.id);
         Ok(evolved)
     }
 
     /// Execute the fallback chain for an intent.
     #[instrument(skip(self))]
-    pub async fn fallback_chain(&self, intent: &Intent, context: &ProjectContext) -> Result<Artifact> {
+    pub async fn fallback_chain(
+        &self,
+        intent: &Intent,
+        context: &ProjectContext,
+    ) -> Result<Artifact> {
         use crate::fallback::FallbackChain;
         let chain = FallbackChain::default();
         let artifact = chain.execute(intent, context).await?;
-        info!("Fallback chain produced artifact for intent {:?}", intent.task_type);
+        info!(
+            "Fallback chain produced artifact for intent {:?}",
+            intent.task_type
+        );
         Ok(artifact)
     }
 
     /// Learn from user feedback to improve future results.
     #[instrument(skip(self))]
-    pub async fn learn_from_feedback(&self, correction: &str, intent: &Intent, agent_id: Uuid) -> Result<()> {
+    pub async fn learn_from_feedback(
+        &self,
+        correction: &str,
+        intent: &Intent,
+        agent_id: Uuid,
+    ) -> Result<()> {
         use crate::learn::LearningEngine;
         use crate::models::UserCorrection;
         use chrono::Utc;
         let mut engine = LearningEngine::default();
         let correction = UserCorrection {
             original_intent: intent.raw_text.clone(),
-            correction: correction.to_string(),
+            corrected_output: String::new(),
+            feedback: correction.to_string(),
             agent_id,
             timestamp: Utc::now(),
         };
@@ -560,15 +649,15 @@ mod tests {
 
     fn test_config() -> HubConfig {
         HubConfig {
-            model_name: "test-model".to_string(),
-            max_connections: 2,
-            enable_metrics: false,
-            enable_plugins: false,
-            log_level: "warn".to_string(),
-            db_path: ":memory:".to_string(),
-            max_prompt_length: 10_000,
-            max_template_length: 10_000,
+            max_pool_size: 2,
             default_page_size: 10,
+            max_page_size: 100,
+            config_dir: None,
+            auto_migrate: true,
+            default_search_limit: 10,
+            max_search_limit: 100,
+            embedding_model: "test-model".to_string(),
+            embedding_dimension: 384,
         }
     }
 
@@ -609,14 +698,16 @@ mod tests {
     #[tokio::test]
     async fn test_hub_new() {
         let dir = TempDir::new().unwrap();
-        let hub = PromptHub::new(dir.path(), test_config()).await;
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config()).await;
         assert!(hub.is_ok());
     }
 
     #[tokio::test]
     async fn test_register_and_get() {
         let dir = TempDir::new().unwrap();
-        let hub = PromptHub::new(dir.path(), test_config()).await.unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
         let agent = test_agent();
         let prompt = test_prompt();
         let id = prompt.id;
@@ -632,13 +723,13 @@ mod tests {
     #[tokio::test]
     async fn test_lock_unlock() {
         let dir = TempDir::new().unwrap();
-        let hub = PromptHub::new(dir.path(), test_config()).await.unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
         let agent = test_agent();
         let prompt_id = Uuid::new_v4();
 
-        let token = hub
-            .lock(prompt_id, &agent, Duration::from_secs(60))
-            .await;
+        let token = hub.lock(prompt_id, &agent, Duration::from_secs(60)).await;
         assert!(token.is_ok());
 
         let unlock_result = hub.unlock(token.unwrap()).await;
@@ -648,7 +739,9 @@ mod tests {
     #[tokio::test]
     async fn test_lock_expired_unlock_fails() {
         let dir = TempDir::new().unwrap();
-        let hub = PromptHub::new(dir.path(), test_config()).await.unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
         let agent = test_agent();
         let prompt_id = Uuid::new_v4();
 
@@ -667,10 +760,17 @@ mod tests {
     #[tokio::test]
     async fn test_search() {
         let dir = TempDir::new().unwrap();
-        let hub = PromptHub::new(dir.path(), test_config()).await.unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
 
         let results = hub
-            .search("hello", SearchMode::Hybrid, SearchFilters::default(), Pagination::default())
+            .search(
+                "hello",
+                SearchMode::Hybrid,
+                SearchFilters::default(),
+                Pagination::default(),
+            )
             .await;
         assert!(results.is_ok());
         let paginated = results.unwrap();
@@ -680,7 +780,9 @@ mod tests {
     #[tokio::test]
     async fn test_vibe_code() {
         let dir = TempDir::new().unwrap();
-        let hub = PromptHub::new(dir.path(), test_config()).await.unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
 
         let result = hub
             .vibe_code(

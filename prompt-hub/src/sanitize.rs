@@ -1,9 +1,39 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result, SanitizationIssue, Severity};
+use crate::error::Result;
 use regex::Regex;
 use std::sync::LazyLock;
 use tracing::{debug, info, instrument, warn};
+
+// ---------------------------------------------------------------------------
+// Severity & issue types
+// ---------------------------------------------------------------------------
+
+/// Severity level for a detected sanitization issue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Severity {
+    /// Informational; no action strictly required.
+    Info,
+    /// Suspicious; prompt may proceed with caution.
+    Warning,
+    /// Critical; prompt must be blocked.
+    Critical,
+}
+
+/// A single issue surfaced by a sanitization heuristic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SanitizationIssue {
+    /// How severe the issue is.
+    pub severity: Severity,
+    /// Heuristic category (e.g. `"jailbreak"`).
+    pub category: String,
+    /// Where in the input the issue was found.
+    pub location: String,
+    /// Human-readable description of the issue.
+    pub description: String,
+    /// Suggested remediation.
+    pub suggestion: String,
+}
 
 // ---------------------------------------------------------------------------
 // Confidence score
@@ -25,7 +55,7 @@ impl Confidence {
 // ---------------------------------------------------------------------------
 
 /// Extensible plugin interface for custom sanitization heuristics.
-pub trait SanitizerPlugin: Send + Sync {
+pub trait SanitizerPlugin: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &'static str;
     fn check(&self, prompt: &str) -> Vec<SanitizationIssue>;
 }
@@ -50,7 +80,7 @@ pub enum SanitizationResult {
 // ---------------------------------------------------------------------------
 
 /// Prompt injection sanitizer with multiple heuristics and optional plugin support.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PromptSanitizer {
     /// Minimum confidence before a heuristic is considered a real match.
     pub confidence_threshold: f64,
@@ -76,11 +106,7 @@ impl PromptSanitizer {
     /// when an individual heuristic reports critical confidence above the
     /// configured threshold.
     #[instrument(skip(self, system_prompt, user_template))]
-    pub fn sanitize(
-        &self,
-        system_prompt: &str,
-        user_template: &str,
-    ) -> Result<SanitizationResult> {
+    pub fn sanitize(&self, system_prompt: &str, user_template: &str) -> Result<SanitizationResult> {
         let mut all_issues = Vec::new();
 
         // ── Heuristic 1: System prompt leakage ──────────────────────────────
@@ -119,13 +145,11 @@ impl PromptSanitizer {
                     all_issues.len()
                 );
                 return Ok(SanitizationResult::Blocked(all_issues));
-            } else if let Some(warning) = all_issues.iter().find(|i| i.severity == Severity::Warning)
+            } else if let Some(warning) =
+                all_issues.iter().find(|i| i.severity == Severity::Warning)
                 && warning.severity == Severity::Warning
             {
-                info!(
-                    "Prompt suspicious: {} issue(s) found",
-                    all_issues.len()
-                );
+                info!("Prompt suspicious: {} issue(s) found", all_issues.len());
                 return Ok(SanitizationResult::Suspicious(all_issues));
             } else {
                 // Only Info-level issues – treat as suspicious for safety
@@ -183,9 +207,8 @@ impl PromptSanitizer {
                         "Potential system prompt leakage (confidence={:.2}): '{}'",
                         confidence, pattern
                     ),
-                    suggestion:
-                        "Remove system-level instructions from user-facing content"
-                            .to_string(),
+                    suggestion: "Remove system-level instructions from user-facing content"
+                        .to_string(),
                 });
             }
         }
@@ -198,53 +221,57 @@ impl PromptSanitizer {
     fn detect_jailbreak_patterns(text: &str) -> Vec<SanitizationIssue> {
         let mut issues = Vec::new();
 
-        static JAILBREAK_PATTERNS: LazyLock<Vec<(Regex, &'static str, f64)>> = LazyLock::new(|| {
-            vec![
-                (
-                    Regex::new(r"(?i)\bDAN\b|Do Anything Now").unwrap(),
-                    "DAN / Do Anything Now",
-                    0.95,
-                ),
-                (
-                    Regex::new(r"(?i)ignore (all |your )?(previous |prior )?instructions").unwrap(),
-                    "ignore previous instructions",
-                    0.95,
-                ),
-                (
-                    Regex::new(r"(?i)developer mode").unwrap(),
-                    "developer mode",
-                    0.9,
-                ),
-                (
-                    Regex::new(r"(?i)jailbreak").unwrap(),
-                    "jailbreak keyword",
-                    0.9,
-                ),
-                (
-                    Regex::new(r"(?i)simulate |pretend to be |act as (if )?you (are )?").unwrap(),
-                    "role-play / simulation",
-                    0.75,
-                ),
-                (
-                    Regex::new(r"(?i)disregard (all |any )?rules").unwrap(),
-                    "disregard rules",
-                    0.9,
-                ),
-                (
-                    Regex::new(r"(?i)you are (now |no longer )?(restricted|limited|confined)").unwrap(),
-                    "boundary removal",
-                    0.9,
-                ),
-                (
-                    Regex::new(r"(?i)(from now on|enter) .* mode").unwrap(),
-                    "mode switching",
-                    0.7,
-                ),
-            ]
-        });
+        static JAILBREAK_PATTERNS: LazyLock<Vec<(Regex, &'static str, f64)>> =
+            LazyLock::new(|| {
+                vec![
+                    (
+                        Regex::new(r"(?i)\bDAN\b|Do Anything Now").unwrap(),
+                        "DAN / Do Anything Now",
+                        0.95,
+                    ),
+                    (
+                        Regex::new(r"(?i)ignore (all |your )?(previous |prior )?instructions")
+                            .unwrap(),
+                        "ignore previous instructions",
+                        0.95,
+                    ),
+                    (
+                        Regex::new(r"(?i)developer mode").unwrap(),
+                        "developer mode",
+                        0.9,
+                    ),
+                    (
+                        Regex::new(r"(?i)jailbreak").unwrap(),
+                        "jailbreak keyword",
+                        0.9,
+                    ),
+                    (
+                        Regex::new(r"(?i)simulate |pretend to be |act as (if )?you (are )?")
+                            .unwrap(),
+                        "role-play / simulation",
+                        0.75,
+                    ),
+                    (
+                        Regex::new(r"(?i)disregard (all |any )?rules").unwrap(),
+                        "disregard rules",
+                        0.9,
+                    ),
+                    (
+                        Regex::new(r"(?i)you are (now |no longer )?(restricted|limited|confined)")
+                            .unwrap(),
+                        "boundary removal",
+                        0.9,
+                    ),
+                    (
+                        Regex::new(r"(?i)(from now on|enter) .* mode").unwrap(),
+                        "mode switching",
+                        0.7,
+                    ),
+                ]
+            });
 
         for (regex, label, confidence) in JAILBREAK_PATTERNS.iter() {
-            if regex.is_match(text).unwrap_or(false) {
+            if regex.is_match(text) {
                 issues.push(SanitizationIssue {
                     severity: Severity::Critical,
                     category: "jailbreak".to_string(),
@@ -283,7 +310,15 @@ impl PromptSanitizer {
         for &(open, close, label) in &delimiters {
             let open_count = text.matches(open).count();
             let close_count = text.matches(close).count();
-            if open_count != close_count {
+            // When the open and close markers are identical (e.g. ```), a balanced
+            // text must contain an even number of them (each pair = open + close).
+            // Comparing open_count != close_count is always false in that case.
+            let unbalanced = if open == close {
+                open_count % 2 != 0
+            } else {
+                open_count != close_count
+            };
+            if unbalanced {
                 issues.push(SanitizationIssue {
                     severity: Severity::Warning,
                     category: "delimiter_injection".to_string(),
@@ -306,9 +341,8 @@ impl PromptSanitizer {
     fn detect_variable_injection(text: &str) -> Vec<SanitizationIssue> {
         let mut issues = Vec::new();
 
-        static VAR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"\{\{([^}]+)\}\}|\$\{([^}]+)\}").unwrap()
-        });
+        static VAR_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"\{\{([^}]+)\}\}|\$\{([^}]+)\}").unwrap());
 
         for cap in VAR_REGEX.captures_iter(text) {
             let var_name = cap
@@ -376,27 +410,24 @@ impl PromptSanitizer {
                     severity: Severity::Critical,
                     category: "encoding_obfuscation".to_string(),
                     location: "RTL override".to_string(),
-                    description: format!(
-                        "{} character detected (U+{:04X})",
-                        name, ch as u32
-                    ),
+                    description: format!("{} character detected (U+{:04X})", name, ch as u32),
                     suggestion: "Remove RTL override characters".to_string(),
-                }));
+                });
             }
         }
 
         // Unicode homoglyphs (Cyrillic / full-width look-alikes)
         static HOMOGLYPHS: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"[\u{0400}-\u{04FF}\u{1D00}-\u{1D7F}\u{FF10}-\u{FF19}\u{FF21}-\u{FF3A}\u{FF41}-\u{FF5A]").unwrap()
+            Regex::new(r"[\u{0400}-\u{04FF}\u{1D00}-\u{1D7F}\u{FF10}-\u{FF19}\u{FF21}-\u{FF3A}\u{FF41}-\u{FF5A}]").unwrap()
         });
 
-        if HOMOGLYPHS.is_match(text).unwrap_or(false) {
+        if HOMOGLYPHS.is_match(text) {
             issues.push(SanitizationIssue {
                 severity: Severity::Warning,
                 category: "encoding_obfuscation".to_string(),
                 location: "homoglyphs".to_string(),
-                description:
-                    "Unicode homoglyph characters detected (possible spoofing)".to_string(),
+                description: "Unicode homoglyph characters detected (possible spoofing)"
+                    .to_string(),
                 suggestion: "Use standard ASCII characters for identifiers".to_string(),
             });
         }
@@ -406,13 +437,13 @@ impl PromptSanitizer {
             Regex::new(r"(?i)[a-z].*[\u{0400}-\u{04FF}]|[\u{0400}-\u{04FF}].*[a-z]").unwrap()
         });
 
-        if MIXED_SCRIPT.is_match(text).unwrap_or(false) {
+        if MIXED_SCRIPT.is_match(text) {
             issues.push(SanitizationIssue {
                 severity: Severity::Critical,
                 category: "encoding_obfuscation".to_string(),
                 location: "mixed-script".to_string(),
-                description:
-                    "Mixed Latin and Cyrillic scripts detected (homoglyph attack)".to_string(),
+                description: "Mixed Latin and Cyrillic scripts detected (homoglyph attack)"
+                    .to_string(),
                 suggestion: "Use a single script family for all text".to_string(),
             });
         }
@@ -434,7 +465,10 @@ mod tests {
     fn test_clean_prompt() {
         let sanitizer = PromptSanitizer::default();
         let result = sanitizer
-            .sanitize("You are a helpful coding assistant.", "Write a function to sort a list.")
+            .sanitize(
+                "You are a helpful coding assistant.",
+                "Write a function to sort a list.",
+            )
             .unwrap();
         assert!(matches!(result, SanitizationResult::Clean));
     }
@@ -578,7 +612,9 @@ mod tests {
     #[test]
     fn test_variable_injection_system_prompt() {
         let sanitizer = PromptSanitizer::default();
-        let result = sanitizer.sanitize("System: {{malicious_var}}", "user text").unwrap();
+        let result = sanitizer
+            .sanitize("System: {{malicious_var}}", "user text")
+            .unwrap();
         assert!(
             matches!(result, SanitizationResult::Suspicious(_)),
             "Expected Suspicious for variable injection in system prompt"
@@ -591,7 +627,7 @@ mod tests {
         let result = sanitizer.sanitize("Text with ${SHELL_EXEC}", "").unwrap();
         assert!(
             matches!(result, SanitizationResult::Suspicious(_)),
-            "Expected Suspicious for ${var} injection"
+            "Expected Suspicious for ${{var}} injection"
         );
     }
 
@@ -655,6 +691,7 @@ mod tests {
 
     // ── Plugin support ──────────────────────────────────────────────────────
 
+    #[derive(Debug)]
     struct DummyPlugin;
 
     impl SanitizerPlugin for DummyPlugin {

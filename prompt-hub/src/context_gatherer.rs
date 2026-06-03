@@ -114,6 +114,7 @@ impl ContextGatherer {
         );
 
         Ok(ProjectContext {
+            project_path: project_path.to_string_lossy().to_string(),
             language,
             framework,
             database,
@@ -245,9 +246,7 @@ async fn detect_styling(path: &Path) -> Option<String> {
         return Some("tailwind".to_string());
     }
 
-    if path.join("postcss.config.js").exists()
-        || path.join("postcss.config.ts").exists()
-    {
+    if path.join("postcss.config.js").exists() || path.join("postcss.config.ts").exists() {
         return Some("postcss".to_string());
     }
 
@@ -522,13 +521,13 @@ tokio = { version = "1", features = ["full"] }
     #[tokio::test]
     async fn test_detect_tailwind() {
         let tmp = TempDir::new().unwrap();
-        fs::write(tmp.path().join("package.json"), "{}
-").unwrap();
         fs::write(
-            tmp.path().join("tailwind.config.js"),
-            "module.exports = {}",
+            tmp.path().join("package.json"),
+            "{}
+",
         )
         .unwrap();
+        fs::write(tmp.path().join("tailwind.config.js"), "module.exports = {}").unwrap();
 
         let styling = detect_styling(tmp.path()).await;
         assert_eq!(styling, Some("tailwind".to_string()));
@@ -598,11 +597,7 @@ SECRET_TOKEN=shhh
     #[tokio::test]
     async fn test_detect_python_project() {
         let tmp = TempDir::new().unwrap();
-        fs::write(
-            tmp.path().join("requirements.txt"),
-            "fastapi\nuvicorn\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join("requirements.txt"), "fastapi\nuvicorn\n").unwrap();
 
         let ctx = ContextGatherer::gather(tmp.path()).await.unwrap();
         assert_eq!(ctx.language, "python");

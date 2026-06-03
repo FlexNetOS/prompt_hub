@@ -39,14 +39,12 @@ impl ShutdownCoordinator {
     pub async fn wait_for_signal(&self) {
         #[cfg(unix)]
         {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate(),
-            )
-            .expect("Failed to create SIGTERM handler");
-            let mut sigint = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::interrupt(),
-            )
-            .expect("Failed to create SIGINT handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("Failed to create SIGTERM handler");
+            let mut sigint =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+                    .expect("Failed to create SIGINT handler");
 
             tokio::select! {
                 _ = sigterm.recv() => { info!("Received SIGTERM"); }

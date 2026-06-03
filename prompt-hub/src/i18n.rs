@@ -113,12 +113,7 @@ impl I18nEngine {
     }
 
     /// Register a translation for a prompt in a specific locale.
-    pub fn register_translation(
-        &mut self,
-        prompt_id: &str,
-        locale: &str,
-        template: String,
-    ) {
+    pub fn register_translation(&mut self, prompt_id: &str, locale: &str, template: String) {
         self.translations
             .entry(locale.to_string())
             .or_default()

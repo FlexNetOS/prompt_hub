@@ -145,7 +145,12 @@ impl LearningEngine {
 
     /// Extract a normalized intent key from intent text.
     fn intent_key(intent: &str) -> String {
-        intent.to_lowercase().split_whitespace().next().unwrap_or("general").to_string()
+        intent
+            .to_lowercase()
+            .split_whitespace()
+            .next()
+            .unwrap_or("general")
+            .to_string()
     }
 
     /// Export all corrections for persistence.
@@ -231,8 +236,12 @@ mod tests {
     #[test]
     fn test_corrections_for_intent() {
         let mut engine = LearningEngine::new();
-        engine.corrections.push(make_correction("create login", "fb1"));
-        engine.corrections.push(make_correction("create signup", "fb2"));
+        engine
+            .corrections
+            .push(make_correction("create login", "fb1"));
+        engine
+            .corrections
+            .push(make_correction("create signup", "fb2"));
         engine.corrections.push(make_correction("fix bug", "fb3"));
 
         let login_corrections = engine.corrections_for_intent("login");
@@ -245,7 +254,7 @@ mod tests {
     #[test]
     fn test_weight_adjustment() {
         let mut engine = LearningEngine::new();
-        let correction = make_correction("create", "feedback");
+        let _correction = make_correction("create", "feedback");
 
         // Need to manually adjust weights since learn_from_feedback is async
         let key = "create".to_string();
@@ -264,10 +273,9 @@ mod tests {
         assert!(!engine.has_sufficient_data("create"));
 
         for i in 0..3 {
-            engine.corrections.push(make_correction(
-                "create api",
-                &format!("feedback {}", i),
-            ));
+            engine
+                .corrections
+                .push(make_correction("create api", &format!("feedback {}", i)));
         }
 
         assert!(engine.has_sufficient_data("create"));
@@ -291,10 +299,9 @@ mod tests {
         assert!(!engine.has_sufficient_data("create"));
 
         for i in 0..5 {
-            engine.corrections.push(make_correction(
-                "create api",
-                &format!("feedback {}", i),
-            ));
+            engine
+                .corrections
+                .push(make_correction("create api", &format!("feedback {}", i)));
         }
 
         assert!(engine.has_sufficient_data("create"));

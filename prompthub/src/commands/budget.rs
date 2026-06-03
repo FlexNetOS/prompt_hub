@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
-use prompt_hub::{HubConfig, hub::PromptHub};
 use anyhow::Result;
+use prompt_hub::{HubConfig, hub::PromptHub};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::info;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum BudgetCommand {
@@ -81,17 +81,15 @@ pub async fn run(cmd: BudgetCommand) -> Result<()> {
             println!("Budget Status:");
             println!("  Monthly budget: ${:.2}", budget.monthly_budget_usd);
             println!("  Current spend:  ${:.2}", budget.current_spend);
-            println!("  Remaining:      ${:.2}", budget.monthly_budget_usd - budget.current_spend);
-            println!("  Used:           {:.1}%", pct);
             println!(
-                "  Alert threshold: {:.0}%",
-                budget.alert_threshold * 100.0
+                "  Remaining:      ${:.2}",
+                budget.monthly_budget_usd - budget.current_spend
             );
+            println!("  Used:           {:.1}%", pct);
+            println!("  Alert threshold: {:.0}%", budget.alert_threshold * 100.0);
 
             if pct >= budget.alert_threshold * 100.0 {
-                println!(
-                    "  WARNING: Spend is at or above alert threshold!"
-                );
+                println!("  WARNING: Spend is at or above alert threshold!");
             } else {
                 println!("  Status: OK");
             }
@@ -106,9 +104,7 @@ pub async fn run(cmd: BudgetCommand) -> Result<()> {
             info!("Showing budget history for last {} months", months);
             println!("Budget history (last {} months):", months);
             println!("  No historical data recorded yet.");
-            println!(
-                "  History is tracked when budget checks are performed."
-            );
+            println!("  History is tracked when budget checks are performed.");
         }
     }
 

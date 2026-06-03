@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
-use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use anyhow::Result;
+use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use std::path::Path;
 use tracing::info;
 
@@ -23,9 +23,7 @@ pub async fn run(format: ExportFormat, file: &Path) -> Result<()> {
 
     info!(
         "Exporting {} prompts to {:?} in {:?} format",
-        results.total,
-        file,
-        format
+        results.total, file, format
     );
 
     match format {
@@ -36,9 +34,7 @@ pub async fn run(format: ExportFormat, file: &Path) -> Result<()> {
 
     println!(
         "Exported {} prompts to {:?} ({:?})",
-        results.total,
-        file,
-        format
+        results.total, file, format
     );
     Ok(())
 }
@@ -75,17 +71,7 @@ async fn export_markdown(prompts: &[Prompt], file: &Path) -> Result<()> {
 
     for (i, prompt) in prompts.iter().enumerate() {
         let md = format!(
-            "## {}. {} (v{})\n\n"
-            "- **ID:** {}\n"
-            "- **Domain:** {:?}\n"
-            "- **Status:** {:?}\n"
-            "- **Tags:** {:?}\n"
-            "- **Required vars:** {:?}\n"
-            "- **Created:** {}\n"
-            "- **Updated:** {}\n\n"
-            "### System Prompt\n\n```\n{}\n```\n\n"
-            "### User Template\n\n```\n{}\n```\n\n"
-            "---\n\n",
+            "## {}. {} (v{})\n\n- **ID:** {}\n- **Domain:** {:?}\n- **Status:** {:?}\n- **Tags:** {:?}\n- **Required vars:** {:?}\n- **Created:** {}\n- **Updated:** {}\n\n### System Prompt\n\n```\n{}\n```\n\n### User Template\n\n```\n{}\n```\n\n---\n\n",
             i + 1,
             prompt.name,
             prompt.version,
@@ -103,10 +89,6 @@ async fn export_markdown(prompts: &[Prompt], file: &Path) -> Result<()> {
     }
 
     f.flush().await?;
-    info!(
-        "Wrote {} prompts as Markdown to {:?}",
-        prompts.len(),
-        file
-    );
+    info!("Wrote {} prompts as Markdown to {:?}", prompts.len(), file);
     Ok(())
 }

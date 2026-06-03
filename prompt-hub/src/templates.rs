@@ -148,7 +148,10 @@ impl Default for TemplateRegistry {
             "base_implementer",
             include_str!("../../templates/base_implementer.md"),
         );
-        templates.insert("base_critic", include_str!("../../templates/base_critic.md"));
+        templates.insert(
+            "base_critic",
+            include_str!("../../templates/base_critic.md"),
+        );
         templates.insert(
             "base_reviewer",
             include_str!("../../templates/base_reviewer.md"),
@@ -190,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_lint_balanced() {
-        let issues = vec![]; // Balanced template has no issues
+        let issues: Vec<LintIssue> = vec![]; // Balanced template has no issues
         assert!(issues.is_empty());
     }
 }

@@ -2,13 +2,10 @@
 
 use crate::error::Result;
 use crate::hub::PromptHub;
-use crate::models::*;
-use chrono::Utc;
 use tracing::info;
-use uuid::Uuid;
 
 /// Seed the database with base templates on first init
-pub async fn seed_database(hub: &PromptHub) -> Result<()> {
+pub async fn seed_database(_hub: &PromptHub) -> Result<()> {
     info!("Checking seed data...");
     Ok(())
 }

@@ -1,0 +1,12 @@
+# Rust build artifacts
+/target
+
+# Local databases created by the CLI / tests
+*.db
+*.db-shm
+*.db-wal
+prompthub.db
+
+# Editor / OS
+*.rs.bk
+.DS_Store

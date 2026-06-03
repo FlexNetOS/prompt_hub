@@ -1,11 +1,18 @@
 #![forbid(unsafe_code)]
 
-use clap::{Parser, Subcommand, ValueEnum};
-use clap_complete::{generate, Shell};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{Shell, generate};
 use prompt_hub::models::*;
-use prompt_hub::search::SearchMode;
 use std::path::PathBuf;
 use uuid::Uuid;
+
+/// CLI-local mirror of `prompt_hub::SearchMode` so we can derive `ValueEnum`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum CliSearchMode {
+    Fast,
+    Smart,
+    Hybrid,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "prompthub")]
@@ -36,7 +43,7 @@ pub enum Commands {
 
     /// Get a prompt for a role and intent
     Get {
-        role: Role,
+        role: String,
         intent: String,
         version: Option<String>,
     },
@@ -57,7 +64,7 @@ pub enum Commands {
     Search {
         query: String,
         #[arg(short, long)]
-        mode: SearchMode,
+        mode: CliSearchMode,
         #[arg(short, long)]
         top_k: Option<usize>,
         #[arg(short, long)]
@@ -124,7 +131,10 @@ pub enum Commands {
     },
 
     /// Cache management
-    Cache { subcommand: CacheCommand },
+    Cache {
+        #[command(subcommand)]
+        subcommand: CacheCommand,
+    },
 
     /// Restore from backup
     Restore {
@@ -150,7 +160,10 @@ pub enum Commands {
     Lint { file: PathBuf },
 
     /// Plugin management
-    Plugin { subcommand: PluginCommand },
+    Plugin {
+        #[command(subcommand)]
+        subcommand: PluginCommand,
+    },
 
     /// Vibe Coding mode
     Vibe { request: String },
@@ -188,32 +201,41 @@ pub enum Commands {
     Feedback { correction: String },
 
     /// Budget management
-    Budget { subcommand: BudgetCommand },
+    Budget {
+        #[command(subcommand)]
+        subcommand: BudgetCommand,
+    },
 
     /// Voice input mode
     Voice { request: String },
 
     /// Onboard a new agent
-    Onboard { name: String, capabilities: Vec<String> },
+    Onboard {
+        name: String,
+        capabilities: Vec<String>,
+    },
 
     /// Heal a broken prompt
     Heal { id: Uuid },
 
     /// Suggest prompts for a task
-    Suggest { task: String, role: Role },
+    Suggest { task: String, role: String },
 
     /// Manage token quota
-    Quota { subcommand: QuotaCommand },
+    Quota {
+        #[command(subcommand)]
+        subcommand: QuotaCommand,
+    },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum CacheCommand {
     Clear,
     Status,
     Evict { key: String },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum PluginCommand {
     List,
     Install { path: PathBuf },
@@ -222,7 +244,7 @@ pub enum PluginCommand {
     Disable { name: String },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum BudgetCommand {
     Set {
         monthly_usd: f64,
@@ -240,7 +262,7 @@ pub enum BudgetCommand {
     },
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum QuotaCommand {
     Set { daily: u32, hourly: u32, burst: u32 },
     Check,
@@ -299,7 +321,7 @@ mod tests {
         match args.command {
             Commands::Search { query, mode, .. } => {
                 assert_eq!(query, "hello");
-                assert_eq!(mode, SearchMode::Hybrid);
+                assert_eq!(mode, CliSearchMode::Hybrid);
             }
             _ => panic!("Expected Search command"),
         }
@@ -329,4 +351,7 @@ mod tests {
     #[test]
     fn test_lineage_format_variants() {
         assert_eq!(format!("{:?}", LineageFormat::Text), "Text");
-        a
+        assert_eq!(format!("{:?}", LineageFormat::Json), "Json");
+        assert_eq!(format!("{:?}", LineageFormat::Dot), "Dot");
+    }
+}

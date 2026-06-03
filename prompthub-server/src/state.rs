@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
-use prompt_hub::hub::PromptHub;
 use prompt_hub::config::HubConfig;
+use prompt_hub::hub::PromptHub;
 use std::path::Path;
 use std::sync::Arc;
 

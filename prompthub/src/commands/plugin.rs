@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
-use prompt_hub::plugins::{PluginRegistry, load_static_plugins};
 use anyhow::Result;
-use std::path::Path;
+use prompt_hub::plugins::{PluginRegistry, load_static_plugins};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
@@ -59,10 +58,7 @@ pub async fn run(cmd: PluginCommand) -> Result<()> {
             if registry.list().iter().any(|(n, _, _)| *n == name.as_str()) {
                 println!("Plugin '{}' is enabled and ready", name);
             } else {
-                println!(
-                    "Plugin '{}' not found in registry. Install it first.",
-                    name
-                );
+                println!("Plugin '{}' not found in registry. Install it first.", name);
             }
         }
         PluginCommand::Disable { name } => {

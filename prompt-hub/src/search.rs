@@ -2,8 +2,12 @@
 
 use crate::error::{HubError, Result};
 use crate::models::*;
+// Re-export SearchMode publicly so `prompt_hub::search::SearchMode` resolves for
+// consumers (the CLI's search command) — `use models::*` only brings it in privately.
+pub use crate::models::SearchMode;
 use crate::storage::Storage;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
@@ -18,18 +22,28 @@ use uuid::Uuid;
 /// SearchEngine>` and call it concurrently from multiple tokio tasks.
 pub trait SearchEngine: Send + Sync {
     /// Execute a search query with optional filters and pagination.
-    async fn search(
-        &self,
-        query: &str,
-        filters: &SearchFilters,
-        pagination: &Pagination,
-    ) -> Result<Paginated<ScoredPrompt>>;
+    ///
+    /// Returns a boxed future so the trait stays `dyn`-compatible (an `async
+    /// fn` in a trait is not object-safe, but the hub needs `Arc<dyn
+    /// SearchEngine>`).
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a SearchFilters,
+        pagination: &'a Pagination,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>;
 
     /// Index (or re-index) a single prompt.
-    async fn index(&self, prompt: &Prompt) -> Result<()>;
+    fn index<'a>(
+        &'a self,
+        prompt: &'a Prompt,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>>;
 
     /// Remove a prompt from the index.
-    async fn remove(&self, prompt_id: Uuid) -> Result<()>;
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
 
     /// Human-readable engine name (for metrics / logging).
     fn name(&self) -> &'static str;
@@ -58,15 +72,30 @@ impl FastEngine {
     /// Filters are appended as `AND` clauses so the result is always a
     /// subset of the full-text match.
     fn build_fts_query(&self, query: &str, filters: &SearchFilters) -> String {
-        // Escape FTS5 special characters in the user query.
-        let escaped = query
-            .replace('"', "\"\"")
-            .replace('*', "\\*")
-            .replace('"', "\"\"");
-        let mut fts = format!("{}*", escaped);
+        // FTS5 has its own query grammar: bare characters like `-`, `*`, `:`
+        // and `"` are operators, and a query consisting solely of `*` is a
+        // syntax error. To safely full-text-match arbitrary user input we
+        // tokenize on non-alphanumeric characters and emit each token as a
+        // double-quoted FTS5 string literal (with internal `"` doubled),
+        // appending a `*` for prefix matching. Tokens are OR-ed together.
+        let term_tokens: Vec<String> = query
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|t| !t.is_empty())
+            .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+            .collect();
+
+        // Empty / punctuation-only queries produce no terms. Return an empty
+        // MATCH string (filter clauses are pointless without a base term) so
+        // the caller can short-circuit to an empty result set instead of
+        // emitting an invalid FTS5 expression.
+        if term_tokens.is_empty() {
+            return String::new();
+        }
+
+        let mut fts = term_tokens.join(" OR ");
 
         if let Some(ref domain) = filters.domain {
-            fts.push_str(&format!(" AND domain:{}', ", format!("{domain:?}")));
+            fts.push_str(&format!(" AND domain:'{}'", format!("{domain:?}")));
         }
         if !filters.tags.is_empty() {
             let tag_clause = filters
@@ -98,85 +127,109 @@ impl FastEngine {
 
 impl SearchEngine for FastEngine {
     #[instrument(skip(self, filters, pagination))]
-    async fn search(
-        &self,
-        query: &str,
-        filters: &SearchFilters,
-        pagination: &Pagination,
-    ) -> Result<Paginated<ScoredPrompt>> {
-        debug!(
-            "FAST search: '{}' page={} per_page={}",
-            query, pagination.page, pagination.per_page
-        );
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a SearchFilters,
+        pagination: &'a Pagination,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            debug!(
+                "FAST search: '{}' page={} per_page={}",
+                query, pagination.page, pagination.per_page
+            );
 
-        let fts_query = self.build_fts_query(query, filters);
-        let offset = (pagination.page.saturating_sub(1)) * pagination.per_page;
+            let fts_query = self.build_fts_query(query, filters);
+            let offset = (pagination.page.saturating_sub(1)) * pagination.per_page;
 
-        let conn = self.storage.acquire().await?;
+            // An empty/punctuation-only query yields no FTS5 terms. `prompts_fts
+            // MATCH ''` is a syntax error, so short-circuit to an empty result set.
+            if fts_query.trim().is_empty() {
+                return Ok(Paginated {
+                    items: Vec::new(),
+                    total: 0,
+                    page: pagination.page,
+                    per_page: pagination.per_page,
+                });
+            }
 
-        // Build the SQL with optional filter clauses on the prompt table.
-        let mut sql = String::from(
-            "SELECT p.id, p.name, p.version, p.status, p.system_prompt, p.user_template,
+            let conn = self.storage.acquire().await?;
+
+            // Build the SQL with optional filter clauses on the prompt table.
+            let mut sql = String::from(
+                "SELECT p.id, p.name, p.version, p.status, p.system_prompt, p.user_template,
                     p.required_vars, p.domain, p.tags, p.target_roles, p.metadata, p.metrics,
                     p.author_id, p.created_at, p.updated_at, p.deleted_at,
                     p.generation_params, p.locale, p.multimodal_config
              FROM prompts p
              JOIN prompts_fts fts ON p.rowid = fts.rowid
              WHERE prompts_fts MATCH ?1 AND p.deleted_at IS NULL",
-        );
+            );
 
-        let mut params_vec: Vec<libsql::Value> = vec![fts_query.into()];
+            let mut params_vec: Vec<libsql::Value> = vec![fts_query.into()];
 
-        if filters.domain.is_some() {
-            sql.push_str(" AND p.domain = ?");
-        }
-        if filters.status.is_some() {
-            sql.push_str(" AND p.status = ?");
-        }
+            if filters.domain.is_some() {
+                sql.push_str(" AND p.domain = ?");
+            }
+            if filters.status.is_some() {
+                sql.push_str(" AND p.status = ?");
+            }
 
-        sql.push_str(" ORDER BY rank LIMIT ? OFFSET ?");
-        params_vec.push((pagination.per_page as i64).into());
-        params_vec.push((offset as i64).into());
+            sql.push_str(" ORDER BY rank LIMIT ? OFFSET ?");
+            params_vec.push((pagination.per_page as i64).into());
+            params_vec.push((offset as i64).into());
 
-        let mut stmt = conn
-            .query(&sql, libsql::params_from_iter(params_vec))
-            .await
-            .map_err(|e| HubError::StorageError(format!("FTS5 search: {e}")))?;
+            let mut stmt = conn
+                .query(&sql, libsql::params_from_iter(params_vec))
+                .await
+                .map_err(|e| HubError::StorageError(format!("FTS5 search: {e}")))?;
 
-        let mut items = Vec::new();
-        while let Some(row) = stmt
-            .next()
-            .await
-            .map_err(|e| HubError::StorageError(format!("FTS5 row: {e}")))?
-        {
-            let prompt = self.storage.row_to_prompt(&row)?;
-            items.push(ScoredPrompt {
-                prompt,
-                score: 1.0, // BM25 rank would come from FTS5 rank column
-                matched_field: Some("name".to_string()),
-            });
-        }
+            let mut items = Vec::new();
+            while let Some(row) = stmt
+                .next()
+                .await
+                .map_err(|e| HubError::StorageError(format!("FTS5 row: {e}")))?
+            {
+                let prompt = self.storage.row_to_prompt(&row)?;
+                items.push(ScoredPrompt {
+                    prompt,
+                    score: 1.0, // BM25 rank would come from FTS5 rank column
+                    matched_field: Some("name".to_string()),
+                });
+            }
 
-        let total = items.len(); // Simplified — would use COUNT(*) in production
-        Ok(Paginated {
-            items,
-            total,
-            page: pagination.page,
-            per_page: pagination.per_page,
+            let total = items.len(); // Simplified — would use COUNT(*) in production
+            Ok(Paginated {
+                items,
+                total,
+                page: pagination.page,
+                per_page: pagination.per_page,
+            })
         })
     }
 
-    async fn index(&self, _prompt: &Prompt) -> Result<()> {
-        // FTS5 indexing is handled automatically by the storage layer via
-        // INSERT/UPDATE/DELETE triggers on the `prompts` table.
-        debug!("FAST index: FTS5 triggers handle indexing automatically");
-        Ok(())
+    fn index<'a>(
+        &'a self,
+        _prompt: &'a Prompt,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            // FTS5 indexing is handled automatically by the storage layer via
+            // INSERT/UPDATE/DELETE triggers on the `prompts` table.
+            debug!("FAST index: FTS5 triggers handle indexing automatically");
+            Ok(())
+        })
     }
 
-    async fn remove(&self, prompt_id: Uuid) -> Result<()> {
-        // The CASCADE DELETE trigger on the FTS table handles removal.
-        debug!("FAST remove: id={prompt_id} — handled by cascade trigger");
-        Ok(())
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            // The CASCADE DELETE trigger on the FTS table handles removal.
+            debug!("FAST remove: id={prompt_id} — handled by cascade trigger");
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -312,22 +365,24 @@ impl SmartEngine {
 
 impl SearchEngine for SmartEngine {
     #[instrument(skip(self, filters, pagination))]
-    async fn search(
-        &self,
-        query: &str,
-        filters: &SearchFilters,
-        pagination: &Pagination,
-    ) -> Result<Paginated<ScoredPrompt>> {
-        debug!("SMART search: '{}' filters={:?}", query, filters);
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a SearchFilters,
+        pagination: &'a Pagination,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            debug!("SMART search: '{}' filters={:?}", query, filters);
 
-        // Generate embedding for query (mock embedding when model unavailable)
-        let query_vec = self.mock_embed(query);
+            // Generate embedding for query (mock embedding when model unavailable)
+            let query_vec = self.mock_embed(query);
 
-        // Fetch prompts with their embeddings from the database
-        let conn = self.storage.acquire().await?;
+            // Fetch prompts with their embeddings from the database
+            let conn = self.storage.acquire().await?;
 
-        let mut sql = String::from(
-            "SELECT p.id, p.name, p.version, p.status, p.system_prompt, p.user_template,
+            let mut sql = String::from(
+                "SELECT p.id, p.name, p.version, p.status, p.system_prompt, p.user_template,
                     p.required_vars, p.domain, p.tags, p.target_roles, p.metadata, p.metrics,
                     p.author_id, p.created_at, p.updated_at, p.deleted_at,
                     p.generation_params, p.locale, p.multimodal_config,
@@ -335,70 +390,86 @@ impl SearchEngine for SmartEngine {
              FROM prompts p
              JOIN embeddings e ON p.id = e.prompt_id
              WHERE p.deleted_at IS NULL",
-        );
+            );
 
-        let mut params_vec: Vec<libsql::Value> = vec![];
+            let params_vec: Vec<libsql::Value> = vec![];
 
-        if filters.domain.is_some() {
-            sql.push_str(" AND p.domain = ?");
-        }
-        if filters.status.is_some() {
-            sql.push_str(" AND p.status = ?");
-        }
+            if filters.domain.is_some() {
+                sql.push_str(" AND p.domain = ?");
+            }
+            if filters.status.is_some() {
+                sql.push_str(" AND p.status = ?");
+            }
 
-        let mut stmt = conn
-            .query(&sql, libsql::params_from_iter(params_vec))
-            .await
-            .map_err(|e| HubError::StorageError(format!("Embedding search: {e}")))?;
+            let mut stmt = conn
+                .query(&sql, libsql::params_from_iter(params_vec))
+                .await
+                .map_err(|e| HubError::StorageError(format!("Embedding search: {e}")))?;
 
-        let mut scored: Vec<ScoredPrompt> = Vec::new();
-        while let Some(row) = stmt
-            .next()
-            .await
-            .map_err(|e| HubError::StorageError(format!("Embedding row: {e}")))?
-        {
-            let prompt = self.storage.row_to_prompt(&row)?;
-            // Parse embedding blob as f32 array (column index 20)
-            let embedding_bytes: Vec<u8> = row
-                .get(20)
-                .map_err(|e| HubError::StorageError(format!("Blob extract: {e}")))?;
-            let embedding = Self::bytes_to_f32_vec(&embedding_bytes);
-            let similarity = Self::cosine_similarity(&query_vec, &embedding);
-            scored.push(ScoredPrompt {
-                prompt,
-                score: similarity,
-                matched_field: Some("embedding".to_string()),
+            let mut scored: Vec<ScoredPrompt> = Vec::new();
+            while let Some(row) = stmt
+                .next()
+                .await
+                .map_err(|e| HubError::StorageError(format!("Embedding row: {e}")))?
+            {
+                let prompt = self.storage.row_to_prompt(&row)?;
+                // Parse embedding blob as f32 array (column index 19 — the 19
+                // prompt columns occupy indices 0..=18, e.embedding follows them)
+                let embedding_bytes: Vec<u8> = row
+                    .get(19)
+                    .map_err(|e| HubError::StorageError(format!("Blob extract: {e}")))?;
+                let embedding = Self::bytes_to_f32_vec(&embedding_bytes);
+                let similarity = Self::cosine_similarity(&query_vec, &embedding);
+                scored.push(ScoredPrompt {
+                    prompt,
+                    score: similarity,
+                    matched_field: Some("embedding".to_string()),
+                });
+            }
+
+            scored.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
-        }
 
-        scored.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+            let total = scored.len();
+            let start = (pagination.page.saturating_sub(1)) * pagination.per_page;
+            let items = scored
+                .into_iter()
+                .skip(start)
+                .take(pagination.per_page)
+                .collect();
 
-        let total = scored.len();
-        let start = (pagination.page.saturating_sub(1)) * pagination.per_page;
-        let items = scored.into_iter().skip(start).take(pagination.per_page).collect();
-
-        Ok(Paginated {
-            items,
-            total,
-            page: pagination.page,
-            per_page: pagination.per_page,
+            Ok(Paginated {
+                items,
+                total,
+                page: pagination.page,
+                per_page: pagination.per_page,
+            })
         })
     }
 
-    async fn index(&self, _prompt: &Prompt) -> Result<()> {
-        // Embedding generation is handled separately by an embedding pipeline.
-        debug!("SMART index: embeddings handled by pipeline");
-        Ok(())
+    fn index<'a>(
+        &'a self,
+        _prompt: &'a Prompt,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            // Embedding generation is handled separately by an embedding pipeline.
+            debug!("SMART index: embeddings handled by pipeline");
+            Ok(())
+        })
     }
 
-    async fn remove(&self, prompt_id: Uuid) -> Result<()> {
-        // Embeddings table has CASCADE DELETE.
-        debug!("SMART remove: id={prompt_id} — handled by cascade");
-        Ok(())
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Embeddings table has CASCADE DELETE.
+            debug!("SMART remove: id={prompt_id} — handled by cascade");
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -473,61 +544,78 @@ impl HybridEngine {
 
 impl SearchEngine for HybridEngine {
     #[instrument(skip(self, filters, pagination))]
-    async fn search(
-        &self,
-        query: &str,
-        filters: &SearchFilters,
-        pagination: &Pagination,
-    ) -> Result<Paginated<ScoredPrompt>> {
-        // Run both engines in parallel using tokio::join!
-        let (fast_result, smart_result) = tokio::join!(
-            self.fast.search(query, filters, pagination),
-            self.smart.search(query, filters, pagination),
-        );
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a SearchFilters,
+        pagination: &'a Pagination,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            // Run both engines in parallel using tokio::join!
+            let (fast_result, smart_result) = tokio::join!(
+                self.fast.search(query, filters, pagination),
+                self.smart.search(query, filters, pagination),
+            );
 
-        let fast = fast_result.unwrap_or_else(|e| {
-            warn!("FAST search error: {e}");
-            Paginated {
-                items: Vec::new(),
-                total: 0,
+            let fast = fast_result.unwrap_or_else(|e| {
+                warn!("FAST search error: {e}");
+                Paginated {
+                    items: Vec::new(),
+                    total: 0,
+                    page: pagination.page,
+                    per_page: pagination.per_page,
+                }
+            });
+
+            let smart = smart_result.unwrap_or_else(|e| {
+                warn!("SMART search error: {e}");
+                Paginated {
+                    items: Vec::new(),
+                    total: 0,
+                    page: pagination.page,
+                    per_page: pagination.per_page,
+                }
+            });
+
+            let merged = Self::merge_results(fast, smart);
+            let total = merged.len();
+            let start = (pagination.page.saturating_sub(1)) * pagination.per_page;
+            let items = merged
+                .into_iter()
+                .skip(start)
+                .take(pagination.per_page)
+                .collect();
+
+            Ok(Paginated {
+                items,
+                total,
                 page: pagination.page,
                 per_page: pagination.per_page,
-            }
-        });
-
-        let smart = smart_result.unwrap_or_else(|e| {
-            warn!("SMART search error: {e}");
-            Paginated {
-                items: Vec::new(),
-                total: 0,
-                page: pagination.page,
-                per_page: pagination.per_page,
-            }
-        });
-
-        let merged = Self::merge_results(fast, smart);
-        let total = merged.len();
-        let start = (pagination.page.saturating_sub(1)) * pagination.per_page;
-        let items = merged.into_iter().skip(start).take(pagination.per_page).collect();
-
-        Ok(Paginated {
-            items,
-            total,
-            page: pagination.page,
-            per_page: pagination.per_page,
+            })
         })
     }
 
-    async fn index(&self, prompt: &Prompt) -> Result<()> {
-        self.fast.index(prompt).await?;
-        self.smart.index(prompt).await?;
-        Ok(())
+    fn index<'a>(
+        &'a self,
+        prompt: &'a Prompt,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            self.fast.index(prompt).await?;
+            self.smart.index(prompt).await?;
+            Ok(())
+        })
     }
 
-    async fn remove(&self, prompt_id: Uuid) -> Result<()> {
-        self.fast.remove(prompt_id).await?;
-        self.smart.remove(prompt_id).await?;
-        Ok(())
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            self.fast.remove(prompt_id).await?;
+            self.smart.remove(prompt_id).await?;
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -578,70 +666,87 @@ impl Default for PluginEngine {
 
 #[cfg(feature = "plugins")]
 impl SearchEngine for PluginEngine {
-    async fn search(
-        &self,
-        query: &str,
-        filters: &SearchFilters,
-        pagination: &Pagination,
-    ) -> Result<Paginated<ScoredPrompt>> {
-        let mut all_results: Vec<ScoredPrompt> = Vec::new();
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a SearchFilters,
+        pagination: &'a Pagination,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let mut all_results: Vec<ScoredPrompt> = Vec::new();
 
-        for plugin in &self.plugins {
-            match plugin.search(query, filters, pagination).await {
-                Ok(paginated) => all_results.extend(paginated.items),
-                Err(e) => {
-                    warn!("Plugin '{}' search failed: {e}", plugin.name());
+            for plugin in &self.plugins {
+                match plugin.search(query, filters, pagination).await {
+                    Ok(paginated) => all_results.extend(paginated.items),
+                    Err(e) => {
+                        warn!("Plugin '{}' search failed: {e}", plugin.name());
+                    }
                 }
             }
-        }
 
-        // De-duplicate and re-rank.
-        let mut combined: HashMap<Uuid, ScoredPrompt> = HashMap::new();
-        for mut sp in all_results {
-            combined
-                .entry(sp.prompt.id)
-                .and_modify(|existing| {
-                    // Average scores for duplicate hits.
-                    existing.score = (existing.score + sp.score) / 2.0;
-                })
-                .or_insert(sp);
-        }
+            // De-duplicate and re-rank.
+            let mut combined: HashMap<Uuid, ScoredPrompt> = HashMap::new();
+            for mut sp in all_results {
+                combined
+                    .entry(sp.prompt.id)
+                    .and_modify(|existing| {
+                        // Average scores for duplicate hits.
+                        existing.score = (existing.score + sp.score) / 2.0;
+                    })
+                    .or_insert(sp);
+            }
 
-        let mut results: Vec<_> = combined.into_values().collect();
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+            let mut results: Vec<_> = combined.into_values().collect();
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
 
-        let total = results.len();
-        let start = (pagination.page.saturating_sub(1)) * pagination.per_page;
-        let items = results.into_iter().skip(start).take(pagination.per_page).collect();
+            let total = results.len();
+            let start = (pagination.page.saturating_sub(1)) * pagination.per_page;
+            let items = results
+                .into_iter()
+                .skip(start)
+                .take(pagination.per_page)
+                .collect();
 
-        Ok(Paginated {
-            items,
-            total,
-            page: pagination.page,
-            per_page: pagination.per_page,
+            Ok(Paginated {
+                items,
+                total,
+                page: pagination.page,
+                per_page: pagination.per_page,
+            })
         })
     }
 
-    async fn index(&self, prompt: &Prompt) -> Result<()> {
-        for plugin in &self.plugins {
-            if let Err(e) = plugin.index(prompt).await {
-                warn!("Plugin '{}' index failed: {e}", plugin.name());
+    fn index<'a>(
+        &'a self,
+        prompt: &'a Prompt,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            for plugin in &self.plugins {
+                if let Err(e) = plugin.index(prompt).await {
+                    warn!("Plugin '{}' index failed: {e}", plugin.name());
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn remove(&self, prompt_id: Uuid) -> Result<()> {
-        for plugin in &self.plugins {
-            if let Err(e) = plugin.remove(prompt_id).await {
-                warn!("Plugin '{}' remove failed: {e}", plugin.name());
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            for plugin in &self.plugins {
+                if let Err(e) = plugin.remove(prompt_id).await {
+                    warn!("Plugin '{}' remove failed: {e}", plugin.name());
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -698,14 +803,31 @@ mod tests {
     use super::*;
     use crate::storage::{Storage, StorageConfig};
 
-    /// Create an in-memory storage for tests.
+    /// Create a fresh, isolated storage for tests.
+    ///
+    /// NOTE: we cannot use libsql's `":memory:"` here. The connection pool
+    /// (`Storage::acquire`) calls `db.connect()` for every operation, and
+    /// libsql opens a brand-new *private* in-memory database on each
+    /// `sqlite3_open_v2(":memory:")` call. The schema created by the migration
+    /// connection in `Storage::new` is therefore invisible to the connection
+    /// used by `insert_prompt` / search (yielding "no such table: prompts").
+    /// A unique temp-file database is shared across all pooled connections, so
+    /// these end-to-end search tests exercise the real DB-backed code paths.
     async fn in_memory_storage() -> Arc<Storage> {
+        let db_path = std::env::temp_dir()
+            .join(format!("prompthub-test-{}.db", Uuid::new_v4()))
+            .to_string_lossy()
+            .into_owned();
         let config = StorageConfig {
-            db_path: ":memory:".to_string(),
+            db_path,
             max_connections: 2,
             ..Default::default()
         };
-        Arc::new(Storage::new(config).await.expect("Failed to create in-memory storage"))
+        Arc::new(
+            Storage::new(config)
+                .await
+                .expect("Failed to create test storage"),
+        )
     }
 
     // -- Cosine similarity --------------------------------------------------
@@ -770,7 +892,10 @@ mod tests {
         let v1 = engine.mock_embed("hello world");
         let v2 = engine.mock_embed("hello world");
         assert_eq!(v1.len(), 384);
-        assert_eq!(v1, v2, "mock_embed must be deterministic for the same input");
+        assert_eq!(
+            v1, v2,
+            "mock_embed must be deterministic for the same input"
+        );
     }
 
     #[tokio::test]
@@ -779,7 +904,10 @@ mod tests {
         let engine = SmartEngine::default_model(storage);
         let v1 = engine.mock_embed("hello");
         let v2 = engine.mock_embed("world");
-        assert_ne!(v1, v2, "different inputs should produce different embeddings");
+        assert_ne!(
+            v1, v2,
+            "different inputs should produce different embeddings"
+        );
     }
 
     #[tokio::test]
@@ -788,7 +916,10 @@ mod tests {
         let engine = SmartEngine::default_model(storage);
         let v = engine.mock_embed("range check");
         for &val in &v {
-            assert!(val >= -1.0 && val <= 1.0, "embedding values must be in [-1, 1]");
+            assert!(
+                val >= -1.0 && val <= 1.0,
+                "embedding values must be in [-1, 1]"
+            );
         }
     }
 
@@ -824,7 +955,10 @@ mod tests {
         let engine = SmartEngine::default_model(storage);
         let v = engine.mock_embed("cosine test");
         let sim = SmartEngine::cosine_similarity(&v, &v);
-        assert!((sim - 1.0).abs() < 0.001, "cosine similarity with self should be ~1.0");
+        assert!(
+            (sim - 1.0).abs() < 0.001,
+            "cosine similarity with self should be ~1.0"
+        );
     }
 
     // -- Hybrid merge -------------------------------------------------------
@@ -853,7 +987,7 @@ mod tests {
         let prompt = Prompt {
             id: prompt_id,
             name: "test".to_string(),
-            version: Version::new(1, 0, 0),
+            version: semver::Version::new(1, 0, 0),
             status: Status::Active,
             system_prompt: "sys".to_string(),
             user_template: "user".to_string(),
@@ -861,12 +995,12 @@ mod tests {
             domain: Domain::Coding,
             tags: vec![],
             target_roles: vec![],
-            metadata: PromptMetadata::default(),
-            author_id: Uuid::new_v4(),
+            metadata: PromptMeta::default(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             deleted_at: None,
             generation_params: None,
+            ..Default::default()
         };
 
         let sp_fast = ScoredPrompt {
@@ -904,7 +1038,7 @@ mod tests {
         let p1 = Prompt {
             id: Uuid::new_v4(),
             name: "p1".to_string(),
-            version: Version::new(1, 0, 0),
+            version: semver::Version::new(1, 0, 0),
             status: Status::Active,
             system_prompt: "sys".to_string(),
             user_template: "user".to_string(),
@@ -912,17 +1046,17 @@ mod tests {
             domain: Domain::Coding,
             tags: vec![],
             target_roles: vec![],
-            metadata: PromptMetadata::default(),
-            author_id: Uuid::new_v4(),
+            metadata: PromptMeta::default(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             deleted_at: None,
             generation_params: None,
+            ..Default::default()
         };
         let p2 = Prompt {
             id: Uuid::new_v4(),
             name: "p2".to_string(),
-            version: Version::new(1, 0, 0),
+            version: semver::Version::new(1, 0, 0),
             status: Status::Active,
             system_prompt: "sys2".to_string(),
             user_template: "user2".to_string(),
@@ -930,34 +1064,30 @@ mod tests {
             domain: Domain::Coding,
             tags: vec![],
             target_roles: vec![],
-            metadata: PromptMetadata::default(),
-            author_id: Uuid::new_v4(),
+            metadata: PromptMeta::default(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             deleted_at: None,
             generation_params: None,
+            ..Default::default()
         };
 
         let fast = Paginated {
-            items: vec![
-                ScoredPrompt {
-                    prompt: p1.clone(),
-                    score: 0.8,
-                    matched_field: None,
-                },
-            ],
+            items: vec![ScoredPrompt {
+                prompt: p1.clone(),
+                score: 0.8,
+                matched_field: None,
+            }],
             total: 1,
             page: 1,
             per_page: 20,
         };
         let smart = Paginated {
-            items: vec![
-                ScoredPrompt {
-                    prompt: p2.clone(),
-                    score: 0.95,
-                    matched_field: None,
-                },
-            ],
+            items: vec![ScoredPrompt {
+                prompt: p2.clone(),
+                score: 0.95,
+                matched_field: None,
+            }],
             total: 1,
             page: 1,
             per_page: 20,
@@ -994,7 +1124,10 @@ mod tests {
     fn test_recency_decay_now() {
         let now = chrono::Utc::now();
         let decay = FastEngine::recency_decay(now);
-        assert!(decay > 0.95 && decay <= 1.0, "decay should be near 1.0 for current time");
+        assert!(
+            decay > 0.95 && decay <= 1.0,
+            "decay should be near 1.0 for current time"
+        );
     }
 
     #[test]
@@ -1060,7 +1193,10 @@ mod tests {
         let paginated = result.unwrap();
         // With a seeded DB the engine should query real rows, not return Vec::new()
         assert!(
-            paginated.items.iter().any(|s| s.prompt.name == "rust_helper"),
+            paginated
+                .items
+                .iter()
+                .any(|s| s.prompt.name == "rust_helper"),
             "FAST search should find the inserted prompt via FTS5"
         );
     }
@@ -1071,12 +1207,19 @@ mod tests {
         let engine = FastEngine::new(storage);
 
         let result = engine
-            .search("nonexistent_query_xyz", &SearchFilters::default(), &Pagination::default())
+            .search(
+                "nonexistent_query_xyz",
+                &SearchFilters::default(),
+                &Pagination::default(),
+            )
             .await;
 
         assert!(result.is_ok());
         let paginated = result.unwrap();
-        assert!(paginated.items.is_empty(), "Search on empty DB should return no results");
+        assert!(
+            paginated.items.is_empty(),
+            "Search on empty DB should return no results"
+        );
     }
 
     // -- SMART search (real database-backed) --------------------------------
@@ -1092,19 +1235,12 @@ mod tests {
 
         // Insert a matching embedding blob for the prompt
         let embedding_vec = vec![0.1_f32; 384];
-        let embedding_bytes: Vec<u8> = embedding_vec
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes: Vec<u8> = embedding_vec.iter().flat_map(|f| f.to_le_bytes()).collect();
 
         let conn = storage.acquire().await.unwrap();
         conn.execute(
-            "INSERT INTO embeddings (prompt_id, embedding, model_name) VALUES (?1, ?2, ?3);",
-            libsql::params!(
-                prompt.id.to_string(),
-                embedding_bytes,
-                "all-MiniLM-L6-v2"
-            ),
+            "INSERT INTO embeddings (prompt_id, embedding) VALUES (?1, ?2);",
+            libsql::params!(prompt.id.to_string(), embedding_bytes),
         )
         .await
         .unwrap();
@@ -1118,7 +1254,10 @@ mod tests {
         let paginated = result.unwrap();
         // With a seeded embedding the engine should find the prompt
         assert!(
-            paginated.items.iter().any(|s| s.prompt.name == "smart_test"),
+            paginated
+                .items
+                .iter()
+                .any(|s| s.prompt.name == "smart_test"),
             "SMART search should find the prompt via embedding similarity"
         );
     }
@@ -1129,12 +1268,19 @@ mod tests {
         let engine = SmartEngine::default_model(storage);
 
         let result = engine
-            .search("anything", &SearchFilters::default(), &Pagination::default())
+            .search(
+                "anything",
+                &SearchFilters::default(),
+                &Pagination::default(),
+            )
             .await;
 
         assert!(result.is_ok());
         let paginated = result.unwrap();
-        assert!(paginated.items.is_empty(), "SMART search with no embeddings should return empty");
+        assert!(
+            paginated.items.is_empty(),
+            "SMART search with no embeddings should return empty"
+        );
     }
 
     // -- Hybrid search ------------------------------------------------------
@@ -1150,19 +1296,12 @@ mod tests {
 
         // Also insert an embedding so SMART returns results
         let embedding_vec = vec![0.2_f32; 384];
-        let embedding_bytes: Vec<u8> = embedding_vec
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes: Vec<u8> = embedding_vec.iter().flat_map(|f| f.to_le_bytes()).collect();
 
         let conn = storage.acquire().await.unwrap();
         conn.execute(
-            "INSERT INTO embeddings (prompt_id, embedding, model_name) VALUES (?1, ?2, ?3);",
-            libsql::params!(
-                prompt.id.to_string(),
-                embedding_bytes,
-                "all-MiniLM-L6-v2"
-            ),
+            "INSERT INTO embeddings (prompt_id, embedding) VALUES (?1, ?2);",
+            libsql::params!(prompt.id.to_string(), embedding_bytes),
         )
         .await
         .unwrap();
@@ -1178,7 +1317,10 @@ mod tests {
         let paginated = result.unwrap();
         // Hybrid should aggregate from FAST and/or SMART — at least one result
         assert!(
-            paginated.items.iter().any(|s| s.prompt.name == "hybrid_test"),
+            paginated
+                .items
+                .iter()
+                .any(|s| s.prompt.name == "hybrid_test"),
             "Hybrid search should aggregate results from sub-engines"
         );
     }
@@ -1192,7 +1334,7 @@ mod tests {
         let prompt = Prompt {
             id: Uuid::new_v4(),
             name: "test".to_string(),
-            version: Version::new(1, 0, 0),
+            version: semver::Version::new(1, 0, 0),
             status: Status::Active,
             system_prompt: "sys".to_string(),
             user_template: "user".to_string(),
@@ -1200,12 +1342,12 @@ mod tests {
             domain: Domain::Coding,
             tags: vec!["test".to_string()],
             target_roles: vec![Role::Orchestrator],
-            metadata: PromptMetadata::default(),
-            author_id: Uuid::new_v4(),
+            metadata: PromptMeta::default(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             deleted_at: None,
             generation_params: None,
+            ..Default::default()
         };
         assert!(engine.index(&prompt).await.is_ok());
         assert!(engine.remove(prompt.id).await.is_ok());
@@ -1218,7 +1360,7 @@ mod tests {
         let prompt = Prompt {
             id: Uuid::new_v4(),
             name: "hybrid-test".to_string(),
-            version: Version::new(1, 0, 0),
+            version: semver::Version::new(1, 0, 0),
             status: Status::Active,
             system_prompt: "sys".to_string(),
             user_template: "user".to_string(),
@@ -1226,12 +1368,12 @@ mod tests {
             domain: Domain::Coding,
             tags: vec![],
             target_roles: vec![],
-            metadata: PromptMetadata::default(),
-            author_id: Uuid::new_v4(),
+            metadata: PromptMeta::default(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             deleted_at: None,
             generation_params: None,
+            ..Default::default()
         };
         assert!(engine.index(&prompt).await.is_ok());
         assert!(engine.remove(prompt.id).await.is_ok());

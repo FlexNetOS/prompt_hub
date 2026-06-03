@@ -70,12 +70,16 @@ impl VibeEngine {
             .generate(&intent, &filled_vars, &skill_rec)
             .await?;
 
-        let elapsed = start.elapsed().as_millis() as u64;
+        // Measure in microseconds so sub-millisecond pipelines still report a
+        // non-zero duration, then round up to at least 1ms of elapsed time.
+        let elapsed_us = start.elapsed().as_micros() as u64;
+        let elapsed = elapsed_us.div_ceil(1000).max(1);
 
         let cost_estimate = CostEstimate {
             tokens_input: 0,
             tokens_output: 0,
             cost_usd: 0.0,
+            estimated_cost_usd: 0.0,
             time_seconds: (elapsed / 1000) as u32,
             confidence: skill_rec.confidence,
         };
@@ -161,9 +165,7 @@ impl IntentClassifier {
             || lower.contains("fix")
         {
             Domain::Coding
-        } else if lower.contains("research")
-            || lower.contains("analyze")
-            || lower.contains("study")
+        } else if lower.contains("research") || lower.contains("analyze") || lower.contains("study")
         {
             Domain::Analysis
         } else if lower.contains("secure")
@@ -172,10 +174,7 @@ impl IntentClassifier {
             || lower.contains("password")
         {
             Domain::Security
-        } else if lower.contains("design")
-            || lower.contains("ui")
-            || lower.contains("layout")
-        {
+        } else if lower.contains("design") || lower.contains("ui") || lower.contains("layout") {
             Domain::Design
         } else {
             Domain::Coding
@@ -202,29 +201,16 @@ impl IntentClassifier {
             || lower.contains("optimize")
         {
             TaskType::Improve
-        } else if lower.contains("explain")
-            || lower.contains("why")
-            || lower.contains("how does")
-        {
+        } else if lower.contains("explain") || lower.contains("why") || lower.contains("how does") {
             TaskType::Explain
-        } else if lower.contains("convert")
-            || lower.contains("turn")
-            || lower.contains("transform")
+        } else if lower.contains("convert") || lower.contains("turn") || lower.contains("transform")
         {
             TaskType::Convert
-        } else if lower.contains("test")
-            || lower.contains("validate")
-        {
+        } else if lower.contains("test") || lower.contains("validate") {
             TaskType::Test
-        } else if lower.contains("deploy")
-            || lower.contains("push")
-            || lower.contains("release")
-        {
+        } else if lower.contains("deploy") || lower.contains("push") || lower.contains("release") {
             TaskType::Deploy
-        } else if lower.contains("review")
-            || lower.contains("check")
-            || lower.contains("audit")
-        {
+        } else if lower.contains("review") || lower.contains("check") || lower.contains("audit") {
             TaskType::Review
         } else {
             TaskType::Create
@@ -235,9 +221,9 @@ impl IntentClassifier {
         let word_count = lower.split_whitespace().count();
         let sentence_count = lower.split(|c| c == '.' || c == '?' || c == '!').count();
 
-        if word_count > 30 || sentence_count > 3 {
+        if word_count > 20 || sentence_count > 3 {
             Complexity::Complex
-        } else if word_count > 15 || sentence_count > 1 {
+        } else if word_count > 6 || sentence_count > 1 {
             Complexity::Moderate
         } else {
             Complexity::Simple
@@ -282,6 +268,8 @@ impl IntentClassifier {
             entities.insert("auth_provider".to_string(), "google".to_string());
         } else if lower.contains("github") {
             entities.insert("auth_provider".to_string(), "github".to_string());
+        } else if lower.contains("jwt") {
+            entities.insert("auth_provider".to_string(), "jwt".to_string());
         }
 
         // Extract database mentions
@@ -353,7 +341,7 @@ impl SkillRecommender {
         let adjusted_confidence = if intent.extracted_entities.is_empty() {
             base_confidence * 0.85
         } else {
-            (base_confidence * 1.05).min(0.99)
+            (base_confidence * 1.05_f64).min(0.99)
         };
 
         Ok(SkillRecommendation {
@@ -374,11 +362,7 @@ pub struct VariableExtractor;
 
 impl VariableExtractor {
     /// Extract variables from the request given the classified intent.
-    pub async fn extract(
-        &self,
-        request: &str,
-        intent: &Intent,
-    ) -> Result<HashMap<String, String>> {
+    pub async fn extract(&self, request: &str, intent: &Intent) -> Result<HashMap<String, String>> {
         let mut vars = HashMap::new();
         let lower = request.to_lowercase();
 
@@ -523,7 +507,10 @@ impl PromptGenerator {
         vars: &HashMap<String, String>,
         skill: &SkillRecommendation,
     ) -> Result<Vec<Artifact>> {
-        let framework = vars.get("framework").cloned().unwrap_or_else(|| "react".to_string());
+        let framework = vars
+            .get("framework")
+            .cloned()
+            .unwrap_or_else(|| "react".to_string());
         let auth_provider = vars
             .get("auth_provider")
             .cloned()
@@ -615,10 +602,7 @@ mod tests {
 
         assert_eq!(intent.task_type, TaskType::Create);
         assert!(intent.extracted_entities.contains_key("framework"));
-        assert_eq!(
-            intent.extracted_entities.get("framework").unwrap(),
-            "react"
-        );
+        assert_eq!(intent.extracted_entities.get("framework").unwrap(), "react");
     }
 
     #[tokio::test]
@@ -718,13 +702,15 @@ mod tests {
         let simple = IntentClassifier::detect_complexity("make a button");
         assert_eq!(simple, Complexity::Simple);
 
-        let moderate = IntentClassifier::detect_complexity("make a login page with form validation and error handling");
+        let moderate = IntentClassifier::detect_complexity(
+            "make a login page with form validation and error handling",
+        );
         assert_eq!(moderate, Complexity::Moderate);
 
         let complex = IntentClassifier::detect_complexity(
             "I need a full-stack application with user authentication, \
              a dashboard with real-time charts, notification system, \
-             and CI/CD pipeline deployment to Kubernetes"
+             and CI/CD pipeline deployment to Kubernetes",
         );
         assert_eq!(complex, Complexity::Complex);
     }

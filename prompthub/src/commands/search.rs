@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
-use prompt_hub::{HubConfig, hub::PromptHub, models::*};
-use prompt_hub::search::SearchMode;
 use anyhow::Result;
+use prompt_hub::search::SearchMode;
+use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use std::path::Path;
 use tracing::info;
 

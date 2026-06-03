@@ -1,6 +1,6 @@
 use chrono::Utc;
-use proptest::prelude::*;
 use prompt_hub::models::*;
+use proptest::prelude::*;
 use uuid::Uuid;
 
 #[test]
@@ -122,33 +122,36 @@ fn test_prompt_metrics_default() {
     let metrics = PromptMetrics::default();
     assert_eq!(metrics.usage_count, 0);
     assert_eq!(metrics.success_rate, 0.0);
-    assert!(metrics.rating.is_none());
+    assert_eq!(metrics.cost_estimate_usd, 0.0);
 }
 
 #[test]
 fn test_lock_token_creation() {
     let token = LockToken {
-        token: "test-token-123".to_string(),
+        id: Uuid::new_v4(),
         prompt_id: Uuid::new_v4(),
-        owner: AgentIdentity::default(),
+        agent_id: Uuid::new_v4(),
+        token_hash: "test-token-123".to_string(),
         expires_at: Utc::now(),
+        created_at: Utc::now(),
     };
-    assert_eq!(token.token, "test-token-123");
+    assert_eq!(token.token_hash, "test-token-123");
 }
 
 #[test]
 fn test_audit_entry_creation() {
     let entry = AuditEntry {
-        id: Uuid::new_v4(),
-        prompt_id: Uuid::new_v4(),
-        action: AuditAction::Created,
-        actor: AgentIdentity::default(),
+        id: 0,
         timestamp: Utc::now(),
-        details: Some("Created initial version".to_string()),
-        before_hash: None,
-        after_hash: Some("abc123".to_string()),
+        agent_id: Uuid::new_v4(),
+        action: "Created".to_string(),
+        prompt_id: Some(Uuid::new_v4()),
+        diff_hash: String::new(),
+        before_json: None,
+        after_json: Some("abc123".to_string()),
+        ip_address: None,
     };
-    assert!(matches!(entry.action, AuditAction::Created));
+    assert_eq!(entry.action, "Created");
 }
 
 #[test]
@@ -203,10 +206,9 @@ fn test_confidence_score_default() {
 #[test]
 fn test_user_input_default() {
     let ui = UserInput::default();
-    match ui {
-        UserInput::Text(s) => assert!(s.is_empty()),
-        _ => panic!("Expected Text variant"),
-    }
+    assert_eq!(ui.input_type, InputType::Text);
+    assert!(ui.extracted_text.is_empty());
+    assert!(ui.raw_data.is_empty());
 }
 
 #[test]
@@ -303,12 +305,35 @@ fn test_file_entry_creation() {
 #[test]
 fn test_artifact_variants() {
     let artifacts = vec![
-        Artifact::Prompt { system: "sys".to_string(), user: "user".to_string() },
-        Artifact::Code { path: "p".to_string(), content: "c".to_string(), language: "rust".to_string() },
-        Artifact::Config { path: "p".to_string(), content: "c".to_string(), format: "toml".to_string() },
-        Artifact::Test { path: "p".to_string(), content: "c".to_string(), framework: "tokio".to_string() },
-        Artifact::Migration { path: "p".to_string(), content: "c".to_string(), database: "sqlite".to_string() },
-        Artifact::Documentation { title: "t".to_string(), content: "c".to_string(), format: "md".to_string() },
+        Artifact::Prompt {
+            system: "sys".to_string(),
+            user: "user".to_string(),
+        },
+        Artifact::Code {
+            path: "p".to_string(),
+            content: "c".to_string(),
+            language: "rust".to_string(),
+        },
+        Artifact::Config {
+            path: "p".to_string(),
+            content: "c".to_string(),
+            format: "toml".to_string(),
+        },
+        Artifact::Test {
+            path: "p".to_string(),
+            content: "c".to_string(),
+            framework: "tokio".to_string(),
+        },
+        Artifact::Migration {
+            path: "p".to_string(),
+            content: "c".to_string(),
+            database: "sqlite".to_string(),
+        },
+        Artifact::Documentation {
+            title: "t".to_string(),
+            content: "c".to_string(),
+            format: "md".to_string(),
+        },
     ];
     assert_eq!(artifacts.len(), 6);
 }

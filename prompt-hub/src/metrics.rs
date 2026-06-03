@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use crate::models::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::info;
 
@@ -76,8 +75,10 @@ impl MetricsCollector {
 
     /// Record embedding generation latency in milliseconds.
     pub fn record_embedding_generation(&self, ms: u64) {
-        self.embedding_generation_ms.fetch_add(ms, Ordering::Relaxed);
-        self.embedding_generation_count.fetch_add(1, Ordering::Relaxed);
+        self.embedding_generation_ms
+            .fetch_add(ms, Ordering::Relaxed);
+        self.embedding_generation_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record database query latency in milliseconds.
@@ -119,7 +120,8 @@ impl MetricsCollector {
     /// Record a completed privacy scan.
     pub fn record_privacy_scan(&self, issues_found: u64) {
         self.privacy_scans.fetch_add(1, Ordering::Relaxed);
-        self.privacy_issues_found.fetch_add(issues_found, Ordering::Relaxed);
+        self.privacy_issues_found
+            .fetch_add(issues_found, Ordering::Relaxed);
     }
 
     /// Record a quality gate run.
@@ -159,11 +161,7 @@ impl MetricsCollector {
     pub fn get_avg_search_latency(&self) -> u64 {
         let total = self.search_latency_ms.load(Ordering::Relaxed);
         let count = self.search_latency_count.load(Ordering::Relaxed);
-        if count > 0 {
-            total / count
-        } else {
-            0
-        }
+        if count > 0 { total / count } else { 0 }
     }
 
     /// Get total number of blocked sanitization attempts.
@@ -225,22 +223,14 @@ impl MetricsCollector {
     pub fn get_avg_embedding_latency(&self) -> u64 {
         let total = self.embedding_generation_ms.load(Ordering::Relaxed);
         let count = self.embedding_generation_count.load(Ordering::Relaxed);
-        if count > 0 {
-            total / count
-        } else {
-            0
-        }
+        if count > 0 { total / count } else { 0 }
     }
 
     /// Get average DB query latency.
     pub fn get_avg_db_latency(&self) -> u64 {
         let total = self.db_query_latency_ms.load(Ordering::Relaxed);
         let count = self.db_query_latency_count.load(Ordering::Relaxed);
-        if count > 0 {
-            total / count
-        } else {
-            0
-        }
+        if count > 0 { total / count } else { 0 }
     }
 
     /// Report all metrics as a formatted summary string.

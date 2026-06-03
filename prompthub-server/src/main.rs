@@ -1,12 +1,13 @@
 #![forbid(unsafe_code)]
+// WIP server: some handlers/specs are scaffolded ahead of being wired into routes.
+#![allow(dead_code)]
 
 use anyhow::Result;
 use axum::serve;
 use clap::Parser;
 use prompt_hub::config::HubConfig;
-use std::path::Path;
 use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::info;
 
 mod middleware;
 mod openapi;
@@ -58,7 +59,10 @@ async fn main() -> Result<()> {
     #[cfg(not(debug_assertions))]
     subscriber.json().init();
 
-    info!(version = env!("CARGO_PKG_VERSION"), "Starting prompthub-server");
+    info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "Starting prompthub-server"
+    );
 
     // Load configuration
     let config = HubConfig::load().unwrap_or_default();

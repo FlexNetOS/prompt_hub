@@ -1,12 +1,112 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result};
+use crate::error::Result;
 use crate::models::*;
-use petgraph::graph::DiGraph;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// Minimal directed-graph implementation
+// ---------------------------------------------------------------------------
+//
+// `petgraph` is an optional dependency that is not enabled in any build
+// configuration, so this module ships a small self-contained directed graph
+// that provides exactly the surface the swarm logic needs (node/edge
+// insertion, counts, and topological-sort-based cycle detection).
+
+/// Index of a node within a [`DiGraph`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeIndex(usize);
+
+impl NodeIndex {
+    /// Return the underlying index value.
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
+/// A minimal directed graph with node weights of type `N` and edge weights of
+/// type `E`.
+#[derive(Debug, Clone, Default)]
+pub struct DiGraph<N, E> {
+    nodes: Vec<N>,
+    edges: Vec<(NodeIndex, NodeIndex, E)>,
+}
+
+impl<N, E> DiGraph<N, E> {
+    /// Create an empty graph.
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+
+    /// Add a node, returning its index.
+    pub fn add_node(&mut self, weight: N) -> NodeIndex {
+        let idx = NodeIndex(self.nodes.len());
+        self.nodes.push(weight);
+        idx
+    }
+
+    /// Add a directed edge from `a` to `b`.
+    pub fn add_edge(&mut self, a: NodeIndex, b: NodeIndex, weight: E) {
+        self.edges.push((a, b, weight));
+    }
+
+    /// Number of nodes in the graph.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Number of edges in the graph.
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// Perform a topological sort (Kahn's algorithm).
+    ///
+    /// Returns `Ok` with the nodes in topological order, or `Err(cycle)` with
+    /// the index of a node that participates in a cycle.
+    pub fn toposort(&self) -> std::result::Result<Vec<NodeIndex>, NodeIndex> {
+        let n = self.nodes.len();
+        let mut in_degree = vec![0usize; n];
+        for (_, to, _) in &self.edges {
+            in_degree[to.0] += 1;
+        }
+
+        let mut queue: Vec<NodeIndex> = (0..n)
+            .filter(|&i| in_degree[i] == 0)
+            .map(NodeIndex)
+            .collect();
+        let mut order = Vec::with_capacity(n);
+
+        while let Some(node) = queue.pop() {
+            order.push(node);
+            for (from, to, _) in &self.edges {
+                if from.0 == node.0 {
+                    in_degree[to.0] -= 1;
+                    if in_degree[to.0] == 0 {
+                        queue.push(*to);
+                    }
+                }
+            }
+        }
+
+        if order.len() == n {
+            Ok(order)
+        } else {
+            // Some node still has a non-zero in-degree: it is part of a cycle.
+            let stuck = in_degree
+                .iter()
+                .position(|&d| d > 0)
+                .map(NodeIndex)
+                .unwrap_or(NodeIndex(0));
+            Err(stuck)
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Swarm bundle generation
@@ -113,7 +213,10 @@ pub fn generate_full_handoff_chain(roles: &[Role]) -> String {
     }
 
     let mut sections = Vec::new();
-    sections.push(format!("# Swarm Workflow Handoff Chain\n\nRoles: {}\n", roles.len()));
+    sections.push(format!(
+        "# Swarm Workflow Handoff Chain\n\nRoles: {}\n",
+        roles.len()
+    ));
 
     for window in roles.windows(2) {
         sections.push(generate_handoff_template(&window[0], &window[1]));
@@ -219,7 +322,13 @@ pub fn validate_swarm_roles(roles: &[Role]) -> Result<Vec<Conflict>> {
                     "Custom role name cannot be empty".to_string(),
                 ));
             }
-            let reserved = ["Orchestrator", "Architect", "Implementer", "Critic", "Reviewer"];
+            let reserved = [
+                "Orchestrator",
+                "Architect",
+                "Implementer",
+                "Critic",
+                "Reviewer",
+            ];
             if reserved.contains(&name.as_str()) {
                 conflicts.push(Conflict::Custom(format!(
                     "Custom role name '{name}' conflicts with reserved role"
@@ -240,8 +349,12 @@ pub fn validate_swarm_roles(roles: &[Role]) -> Result<Vec<Conflict>> {
 /// Validates:
 /// * Non-empty role set.
 /// * Role compatibility with the target domain.
-/// * Graph acyclicity (uses petgraph cycle detection).
-pub fn check_consistency(roles: &[Role], domain: &Domain, graph: &DiGraph<Role, ()>) -> Vec<Conflict> {
+/// * Graph acyclicity (topological-sort cycle detection).
+pub fn check_consistency(
+    roles: &[Role],
+    domain: &Domain,
+    graph: &DiGraph<Role, ()>,
+) -> Vec<Conflict> {
     let mut conflicts = Vec::new();
 
     if roles.is_empty() {
@@ -250,11 +363,11 @@ pub fn check_consistency(roles: &[Role], domain: &Domain, graph: &DiGraph<Role, 
     }
 
     // Check for cycles in the dependency graph.
-    if let Some(cycle) = petgraph::algo::toposort(graph, None).err() {
+    if let Err(cycle) = graph.toposort() {
         conflicts.push(Conflict::CircularDependency);
         warn!(
             "Cycle detected in role dependency graph at node index {:?}",
-            cycle.node_id()
+            cycle.index()
         );
     }
 
@@ -272,7 +385,11 @@ pub fn check_consistency(roles: &[Role], domain: &Domain, graph: &DiGraph<Role, 
             .iter()
             .collect();
             let present: HashSet<_> = roles.iter().collect();
-            let missing: Vec<_> = standard_roles.difference(&present).cloned().cloned().collect();
+            let missing: Vec<_> = standard_roles
+                .difference(&present)
+                .cloned()
+                .cloned()
+                .collect();
             if !missing.is_empty() {
                 debug!("Missing standard roles for Coding domain: {:?}", missing);
             }
@@ -305,24 +422,21 @@ fn suggest_evolution(roles: &[Role], _domain: &Domain) -> Vec<String> {
 
     // Suggest adding a Reviewer if Critic is present but Reviewer is not.
     if role_set.contains(&Role::Critic) && !role_set.contains(&Role::Reviewer) {
-        suggestions.push(
-            "Consider adding a Reviewer role after Critic for final validation.".to_string(),
-        );
+        suggestions
+            .push("Consider adding a Reviewer role after Critic for final validation.".to_string());
     }
 
     // Suggest adding an Architect if Orchestrator is present but Architect is not.
     if role_set.contains(&Role::Orchestrator) && !role_set.contains(&Role::Architect) {
         suggestions.push(
-            "Consider adding an Architect role to translate orchestration into design."
-                .to_string(),
+            "Consider adding an Architect role to translate orchestration into design.".to_string(),
         );
     }
 
     // Suggest adding metrics collection if not already configured.
     if role_set.contains(&Role::Reviewer) {
-        suggestions.push(
-            "Enable metrics collection for Reviewer sign-off quality tracking.".to_string(),
-        );
+        suggestions
+            .push("Enable metrics collection for Reviewer sign-off quality tracking.".to_string());
     }
 
     suggestions
@@ -344,10 +458,7 @@ pub async fn reconfigure_swarm(
     domain: Domain,
     workflow_id: Uuid,
 ) -> Result<SwarmBundle> {
-    info!(
-        "Reconfiguring swarm: remove {:?}, add {:?}",
-        remove, add
-    );
+    info!("Reconfiguring swarm: remove {:?}, add {:?}", remove, add);
 
     let mut new_roles: Vec<_> = current
         .into_iter()
@@ -439,7 +550,8 @@ impl SwarmRoleRegistry {
         roles.insert(
             Role::Critic,
             RoleMetadata {
-                description: "Reviews implementation against design, identifies issues.".to_string(),
+                description: "Reviews implementation against design, identifies issues."
+                    .to_string(),
                 required_capabilities: vec![Capability::Read, Capability::Write],
                 max_parallel_agents: 2,
             },
@@ -521,7 +633,9 @@ mod tests {
         let conflicts = validate_swarm_roles(&[Role::Orchestrator]).unwrap();
         // Only Orchestrator, no other standard roles — should pass required checks.
         assert!(
-            conflicts.iter().all(|c| !matches!(c, Conflict::MissingRole)),
+            conflicts
+                .iter()
+                .all(|c| !matches!(c, Conflict::MissingRole)),
             "Orchestrator should satisfy required role check"
         );
     }
@@ -529,19 +643,27 @@ mod tests {
     #[test]
     fn test_validate_duplicate_roles() {
         let conflicts = validate_swarm_roles(&[Role::Orchestrator, Role::Orchestrator]).unwrap();
-        assert!(conflicts.iter().any(|c| matches!(c, Conflict::DuplicateRole(Role::Orchestrator))));
+        assert!(
+            conflicts
+                .iter()
+                .any(|c| matches!(c, Conflict::DuplicateRole(Role::Orchestrator)))
+        );
     }
 
     #[test]
     fn test_validate_critic_without_implementer() {
         let conflicts = validate_swarm_roles(&[Role::Orchestrator, Role::Critic]).unwrap();
-        assert!(conflicts.iter().any(|c| matches!(c, Conflict::CapabilityMissing)));
+        assert!(
+            conflicts
+                .iter()
+                .any(|c| matches!(c, Conflict::CapabilityMissing))
+        );
     }
 
     #[test]
     fn test_validate_custom_role_empty_name() {
-        let conflicts = validate_swarm_roles(&[Role::Orchestrator, Role::Custom("".to_string())])
-            .unwrap();
+        let conflicts =
+            validate_swarm_roles(&[Role::Orchestrator, Role::Custom("".to_string())]).unwrap();
         assert!(conflicts.iter().any(|c| matches!(c, Conflict::Custom(_))));
     }
 
@@ -572,7 +694,12 @@ mod tests {
             &graph,
         );
         // Valid DAG with standard roles should have no conflicts.
-        assert!(conflicts.is_empty() || conflicts.iter().all(|c| !matches!(c, Conflict::MissingRole)));
+        assert!(
+            conflicts.is_empty()
+                || conflicts
+                    .iter()
+                    .all(|c| !matches!(c, Conflict::MissingRole))
+        );
     }
 
     // -- Handoff templates --------------------------------------------------
@@ -592,11 +719,7 @@ mod tests {
 
     #[test]
     fn test_generate_full_handoff_chain() {
-        let roles = vec![
-            Role::Orchestrator,
-            Role::Architect,
-            Role::Implementer,
-        ];
+        let roles = vec![Role::Orchestrator, Role::Architect, Role::Implementer];
         let chain = generate_full_handoff_chain(&roles);
         assert!(chain.contains("Orchestrator"));
         assert!(chain.contains("Architect"));
@@ -634,12 +757,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_bundle_single_role() {
-        let bundle = generate_swarm_bundle(
-            vec![Role::Orchestrator],
-            Domain::Coding,
-            Uuid::new_v4(),
-        )
-        .await;
+        let bundle =
+            generate_swarm_bundle(vec![Role::Orchestrator], Domain::Coding, Uuid::new_v4()).await;
         assert!(bundle.is_ok());
     }
 

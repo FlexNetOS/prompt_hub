@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use crate::error::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Instant;
@@ -139,9 +138,18 @@ impl ProviderHealthMonitor {
         let providers = self.providers.read().unwrap();
         let records: Vec<ProviderHealthRecord> = providers.values().cloned().collect();
 
-        let healthy = records.iter().filter(|r| r.status == HealthStatus::Healthy).count();
-        let degraded = records.iter().filter(|r| r.status == HealthStatus::Degraded).count();
-        let unhealthy = records.iter().filter(|r| r.status == HealthStatus::Unhealthy).count();
+        let healthy = records
+            .iter()
+            .filter(|r| r.status == HealthStatus::Healthy)
+            .count();
+        let degraded = records
+            .iter()
+            .filter(|r| r.status == HealthStatus::Degraded)
+            .count();
+        let unhealthy = records
+            .iter()
+            .filter(|r| r.status == HealthStatus::Unhealthy)
+            .count();
 
         let overall = if unhealthy > 0 {
             HealthStatus::Degraded

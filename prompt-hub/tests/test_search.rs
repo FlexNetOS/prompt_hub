@@ -1,8 +1,36 @@
-use prompt_hub::search::{FastEngine, HybridEngine, Pagination, ScoredPrompt, SearchEngine, SearchFilters, SearchMode, SmartEngine};
+use std::sync::Arc;
+
+use prompt_hub::models::{
+    Domain, Pagination, Prompt, ScoredPrompt, SearchFilters, SearchMode, Status,
+};
+use prompt_hub::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
+use prompt_hub::storage::{Storage, StorageConfig};
+
+/// Create an in-memory storage for tests.
+async fn in_memory_storage() -> Arc<Storage> {
+    let config = StorageConfig {
+        db_path: ":memory:".to_string(),
+        max_connections: 2,
+        ..Default::default()
+    };
+    Arc::new(
+        Storage::new(config)
+            .await
+            .expect("Failed to create in-memory storage"),
+    )
+}
+
+/// Build a minimal prompt for index/remove smoke tests.
+fn sample_prompt(name: &str) -> Prompt {
+    let mut prompt = Prompt::new(name, "test content for indexing");
+    prompt.domain = Domain::Coding;
+    prompt
+}
 
 #[tokio::test]
 async fn test_fast_search_empty() {
-    let engine = FastEngine::new();
+    let storage = in_memory_storage().await;
+    let engine = FastEngine::new(storage);
     let result = engine
         .search("test", &SearchFilters::default(), &Pagination::default())
         .await;
@@ -12,7 +40,8 @@ async fn test_fast_search_empty() {
 
 #[tokio::test]
 async fn test_smart_search_empty() {
-    let engine = SmartEngine::new();
+    let storage = in_memory_storage().await;
+    let engine = SmartEngine::default_model(storage);
     let result = engine
         .search("test", &SearchFilters::default(), &Pagination::default())
         .await;
@@ -22,7 +51,8 @@ async fn test_smart_search_empty() {
 
 #[tokio::test]
 async fn test_hybrid_search_empty() {
-    let engine = HybridEngine::new();
+    let storage = in_memory_storage().await;
+    let engine = HybridEngine::default_engines(storage);
     let result = engine
         .search("test", &SearchFilters::default(), &Pagination::default())
         .await;
@@ -31,46 +61,53 @@ async fn test_hybrid_search_empty() {
 
 #[tokio::test]
 async fn test_fast_engine_index_and_remove() {
-    let engine = FastEngine::new();
-    let id = uuid::Uuid::new_v4();
+    let storage = in_memory_storage().await;
+    let engine = FastEngine::new(storage);
+    let prompt = sample_prompt("fast-index");
 
-    assert!(engine.index(id, "test content for indexing").await.is_ok());
-    assert!(engine.remove(id).await.is_ok());
+    assert!(engine.index(&prompt).await.is_ok());
+    assert!(engine.remove(prompt.id).await.is_ok());
 }
 
 #[tokio::test]
 async fn test_smart_engine_index_and_remove() {
-    let engine = SmartEngine::new();
-    let id = uuid::Uuid::new_v4();
+    let storage = in_memory_storage().await;
+    let engine = SmartEngine::default_model(storage);
+    let prompt = sample_prompt("smart-index");
 
-    assert!(engine.index(id, "test content for indexing").await.is_ok());
-    assert!(engine.remove(id).await.is_ok());
+    assert!(engine.index(&prompt).await.is_ok());
+    assert!(engine.remove(prompt.id).await.is_ok());
 }
 
 #[tokio::test]
 async fn test_hybrid_engine_index_and_remove() {
-    let engine = HybridEngine::new();
-    let id = uuid::Uuid::new_v4();
+    let storage = in_memory_storage().await;
+    let engine = HybridEngine::default_engines(storage);
+    let prompt = sample_prompt("hybrid-index");
 
-    assert!(engine.index(id, "test content for indexing").await.is_ok());
-    assert!(engine.remove(id).await.is_ok());
+    assert!(engine.index(&prompt).await.is_ok());
+    assert!(engine.remove(prompt.id).await.is_ok());
 }
 
 #[tokio::test]
 async fn test_search_with_filters() {
-    let engine = FastEngine::new();
+    let storage = in_memory_storage().await;
+    let engine = FastEngine::new(storage);
     let filters = SearchFilters {
-        domain: Some("coding".to_string()),
+        domain: Some(Domain::Coding),
         tags: vec!["rust".to_string()],
         ..SearchFilters::default()
     };
-    let result = engine.search("rust", &filters, &Pagination::default()).await;
+    let result = engine
+        .search("rust", &filters, &Pagination::default())
+        .await;
     assert!(result.is_ok());
 }
 
 #[tokio::test]
 async fn test_search_with_pagination() {
-    let engine = FastEngine::new();
+    let storage = in_memory_storage().await;
+    let engine = FastEngine::new(storage);
     let pagination = Pagination {
         page: 2,
         per_page: 10,
@@ -109,21 +146,22 @@ fn test_pagination_default() {
 
 #[test]
 fn test_scored_prompt_creation() {
+    let mut prompt = Prompt::new("test-prompt", "system prompt body");
+    prompt.domain = Domain::Coding;
+    prompt.status = Status::Active;
     let sp = ScoredPrompt {
-        id: uuid::Uuid::new_v4(),
-        name: "test-prompt".to_string(),
+        prompt,
         score: 0.95,
-        version: "1.0.0".to_string(),
-        domain: "coding".to_string(),
-        status: "active".to_string(),
+        matched_field: Some("name".to_string()),
     };
-    assert_eq!(sp.name, "test-prompt");
+    assert_eq!(sp.prompt.name, "test-prompt");
     assert!(sp.score > 0.9);
 }
 
 #[tokio::test]
 async fn test_fast_search_concurrent() {
-    let engine = FastEngine::new();
+    let storage = in_memory_storage().await;
+    let engine = FastEngine::new(storage);
 
     // Run multiple searches concurrently
     let handles: Vec<_> = (0..5)
@@ -145,9 +183,9 @@ async fn test_fast_search_concurrent() {
 
 #[tokio::test]
 async fn test_all_engines_return_empty_for_empty_query() {
-    let fast = FastEngine::new();
-    let smart = SmartEngine::new();
-    let hybrid = HybridEngine::new();
+    let fast = FastEngine::new(in_memory_storage().await);
+    let smart = SmartEngine::default_model(in_memory_storage().await);
+    let hybrid = HybridEngine::default_engines(in_memory_storage().await);
 
     let query = "";
 

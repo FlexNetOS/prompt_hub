@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use crate::error::{HubError, Result};
+use crate::error::Result;
 use crate::models::*;
 use tracing::{info, instrument};
 use uuid::Uuid;
@@ -34,10 +34,7 @@ impl EvolutionEngine {
 
         // Blend system prompts if they differ
         if parent_a.system_prompt != parent_b.system_prompt {
-            child.system_prompt = format!(
-                "{}\n{}",
-                parent_a.system_prompt, parent_b.system_prompt
-            );
+            child.system_prompt = format!("{}\n{}", parent_a.system_prompt, parent_b.system_prompt);
         }
 
         // Merge tags from both parents
@@ -179,11 +176,12 @@ impl EvolutionEngine {
     /// Elitism: select the top-k fittest prompts from the pool.
     pub fn select_elite(pool: &[Prompt], count: usize) -> Vec<Prompt> {
         let mut scored: Vec<_> = pool.iter().map(|p| (Self::fitness(p), p)).collect();
-        scored.sort_by(|a, b| {
-            b.0.partial_cmp(&a.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        scored.into_iter().take(count).map(|(_, p)| p.clone()).collect()
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored
+            .into_iter()
+            .take(count)
+            .map(|(_, p)| p.clone())
+            .collect()
     }
 }
 
@@ -211,6 +209,7 @@ mod tests {
                 avg_tokens: 500,
                 avg_latency_ms: 120,
                 last_used: Some(Utc::now()),
+                cost_estimate_usd: 0.0,
             },
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -247,6 +246,7 @@ mod tests {
                 avg_tokens: 800,
                 avg_latency_ms: 200,
                 last_used: Some(Utc::now()),
+                cost_estimate_usd: 0.0,
             },
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -317,7 +317,11 @@ mod tests {
     fn test_fitness() {
         let p = test_prompt();
         let f = EvolutionEngine::fitness(&p);
-        assert!(f > 0.0 && f <= 1.0, "fitness should be in (0, 1], got {}", f);
+        assert!(
+            f > 0.0 && f <= 1.0,
+            "fitness should be in (0, 1], got {}",
+            f
+        );
     }
 
     #[test]
@@ -325,7 +329,10 @@ mod tests {
         let mut p = test_prompt();
         p.metrics.avg_tokens = 0;
         let f = EvolutionEngine::fitness(&p);
-        assert!(f > 0.0 && f <= 1.0, "fitness with zero tokens should still be valid");
+        assert!(
+            f > 0.0 && f <= 1.0,
+            "fitness with zero tokens should still be valid"
+        );
     }
 
     #[test]

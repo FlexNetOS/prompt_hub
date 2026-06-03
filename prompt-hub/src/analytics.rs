@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use crate::error::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{info, instrument, warn};
@@ -118,10 +117,7 @@ impl Analytics {
 
         // Store event by day
         let day_key = "current".to_string();
-        self.daily_events
-            .entry(day_key)
-            .or_default()
-            .push(event);
+        self.daily_events.entry(day_key).or_default().push(event);
     }
 
     /// Generate a usage report.
@@ -136,7 +132,7 @@ impl Analytics {
         let failures = self.failure_count.load(Ordering::SeqCst);
         let total = successes + failures;
         let success_rate = if total > 0 {
-            (successes as f64 / total as f64) * 100.0
+            (successes as f64 * 100.0) / total as f64
         } else {
             0.0
         };
@@ -167,7 +163,7 @@ impl Analytics {
         let failures = self.failure_count.load(Ordering::SeqCst);
         let total = successes + failures;
         if total > 0 {
-            (successes as f64 / total as f64) * 100.0
+            (successes as f64 * 100.0) / total as f64
         } else {
             0.0
         }
@@ -215,8 +211,7 @@ impl Analytics {
 
     /// Get total number of requests.
     pub fn total_requests(&self) -> u64 {
-        self.success_count.load(Ordering::SeqCst)
-            + self.failure_count.load(Ordering::SeqCst)
+        self.success_count.load(Ordering::SeqCst) + self.failure_count.load(Ordering::SeqCst)
     }
 
     /// Reset all analytics data.

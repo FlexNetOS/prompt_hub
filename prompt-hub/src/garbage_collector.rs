@@ -66,7 +66,7 @@ impl GarbageCollector {
         }
 
         let start = std::time::Instant::now();
-        let mut errors = Vec::new();
+        let errors = Vec::new();
 
         // Phase 1: Purge soft-deleted prompts
         let purged = self.purge_soft_deleted()?;
@@ -111,25 +111,21 @@ impl GarbageCollector {
 
         // In production this would execute DELETE statements
         let purged: u64 = 0;
-        self.prompts_purged
-            .fetch_add(purged, Ordering::SeqCst);
+        self.prompts_purged.fetch_add(purged, Ordering::SeqCst);
         Ok(purged)
     }
 
     /// Clean up orphaned embedding vectors.
     #[instrument(skip(self))]
     pub fn clean_orphaned_embeddings(&self) -> Result<u64> {
-        let retention_days = self
-            .retention_policy
-            .get_period(&DataType::EmbeddingVector);
+        let retention_days = self.retention_policy.get_period(&DataType::EmbeddingVector);
         info!(
             "Cleaning orphaned embeddings older than {} days",
             retention_days
         );
 
         let cleaned: u64 = 0;
-        self.embeddings_cleaned
-            .fetch_add(cleaned, Ordering::SeqCst);
+        self.embeddings_cleaned.fetch_add(cleaned, Ordering::SeqCst);
         Ok(cleaned)
     }
 
@@ -164,7 +160,10 @@ impl GarbageCollector {
     /// Load configuration.
     pub fn configure(&self, config: &GcConfig) {
         self.set_enabled(config.enabled);
-        info!("GC configured: enabled={}, dry_run={}", config.enabled, config.dry_run);
+        info!(
+            "GC configured: enabled={}, dry_run={}",
+            config.enabled, config.dry_run
+        );
     }
 }
 

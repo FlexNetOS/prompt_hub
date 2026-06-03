@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// OpenAPI tag constants for grouping endpoints in the generated spec.
 #[cfg(feature = "utoipa")]

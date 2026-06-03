@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::error::{HubError, Result};
-use crate::models::{AuditEntry, Pagination, Paginated};
+use crate::models::{AuditEntry, Paginated, Pagination};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use tracing::{info, instrument, warn};
@@ -239,7 +239,7 @@ mod tests {
         let ts = Utc::now();
         let hash = SqliteAuditLogger::compute_diff_hash(&before, &after, &ts.to_rfc3339());
         let entry = AuditEntry {
-            id: Uuid::new_v4(),
+            id: 1,
             timestamp: ts,
             agent_id: Uuid::new_v4(),
             action: "UPDATE".to_string(),
@@ -259,7 +259,7 @@ mod tests {
         let ts = Utc::now();
         let hash = SqliteAuditLogger::compute_diff_hash(&before, &after, &ts.to_rfc3339());
         let mut entry = AuditEntry {
-            id: Uuid::new_v4(),
+            id: 2,
             timestamp: ts,
             agent_id: Uuid::new_v4(),
             action: "UPDATE".to_string(),
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn test_anonymize_entry_preserves_hash_fields() {
         let mut entry = AuditEntry {
-            id: Uuid::new_v4(),
+            id: 3,
             timestamp: Utc::now(),
             agent_id: Uuid::new_v4(),
             action: "CREATE".to_string(),
@@ -307,11 +307,7 @@ mod tests {
         SqliteAuditLogger::anonymize_entry(&mut entry);
 
         assert!(entry.ip_address.is_none(), "IP address must be cleared");
-        assert_eq!(
-            entry.agent_id,
-            Uuid::nil(),
-            "Agent ID must be set to nil"
-        );
+        assert_eq!(entry.agent_id, Uuid::nil(), "Agent ID must be set to nil");
         // Hash-chain fields must be untouched
         assert_eq!(entry.before_json, original_before);
         assert_eq!(entry.after_json, original_after);
@@ -323,7 +319,7 @@ mod tests {
     #[test]
     fn test_soc2_evidence_summary() {
         let entry = AuditEntry {
-            id: Uuid::new_v4(),
+            id: 4,
             timestamp: Utc::now(),
             agent_id: Uuid::new_v4(),
             action: "UPDATE".to_string(),
@@ -342,7 +338,7 @@ mod tests {
     #[test]
     fn test_validate_soc2_schema_valid() {
         let entry = AuditEntry {
-            id: Uuid::new_v4(),
+            id: 5,
             timestamp: Utc::now(),
             agent_id: Uuid::new_v4(),
             action: "CREATE".to_string(),
@@ -358,7 +354,7 @@ mod tests {
     #[test]
     fn test_validate_soc2_schema_bad_hash_length() {
         let entry = AuditEntry {
-            id: Uuid::new_v4(),
+            id: 6,
             timestamp: Utc::now(),
             agent_id: Uuid::new_v4(),
             action: "CREATE".to_string(),
@@ -376,7 +372,7 @@ mod tests {
     #[test]
     fn test_validate_soc2_schema_empty_action() {
         let entry = AuditEntry {
-            id: Uuid::new_v4(),
+            id: 7,
             timestamp: Utc::now(),
             agent_id: Uuid::new_v4(),
             action: "".to_string(),

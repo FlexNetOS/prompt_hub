@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
+use anyhow::Result;
 use prompt_hub::{HubConfig, hub::PromptHub};
 use std::path::Path;
-use anyhow::Result;
 use tracing::info;
 
 pub async fn run(path: Option<&Path>) -> Result<()> {

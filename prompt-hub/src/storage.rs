@@ -4,11 +4,11 @@ use crate::error::{HubError, Result};
 use crate::models::*;
 use chrono::{DateTime, Utc};
 use libsql::{Builder, Connection, Database, params};
-use std::collections::HashMap;
+use semver::Version;
 use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 /// Storage configuration for the libsql-backed prompt database.
@@ -43,7 +43,15 @@ impl Default for StorageConfig {
 /// (`PooledConnection`) to automatically return permits when done.
 #[derive(Debug, Clone)]
 pub struct Storage {
-    db: Database,
+    #[allow(dead_code)]
+    db: Arc<Database>,
+    /// Shared connection opened (and migrated) at construction. Reused for
+    /// every pooled `acquire()`. Reusing one connection — rather than opening
+    /// a fresh one per acquire — is required for `:memory:` databases, where
+    /// each new connection would otherwise get its own private, empty database
+    /// (no migrated tables). libsql `Connection` is internally synchronized and
+    /// cheap to clone (it shares the underlying handle).
+    conn: Connection,
     config: StorageConfig,
     semaphore: Arc<Semaphore>,
 }
@@ -83,13 +91,14 @@ impl Storage {
             .connect()
             .map_err(|e| HubError::StorageError(format!("Failed to connect: {e}")))?;
 
-        // Enable WAL mode for better read concurrency
+        // Enable WAL mode for better read concurrency. `PRAGMA journal_mode`
+        // RETURNS the resulting mode as a row, so it must go through `query`,
+        // not `execute` (which errors with "Execute returned rows"). In-memory
+        // databases ignore WAL and report "memory" — harmless.
         if config.wal_mode {
-            conn.execute("PRAGMA journal_mode = WAL;", params!())
+            conn.query("PRAGMA journal_mode = WAL;", params!())
                 .await
-                .map_err(|e| {
-                    HubError::StorageError(format!("Failed to set WAL mode: {e}"))
-                })?;
+                .map_err(|e| HubError::StorageError(format!("Failed to set WAL mode: {e}")))?;
             debug!("WAL mode enabled");
         }
 
@@ -106,9 +115,7 @@ impl Storage {
         // Balanced durability: WAL + NORMAL is safe for most use cases
         conn.execute("PRAGMA synchronous = NORMAL;", params!())
             .await
-            .map_err(|e| {
-                HubError::StorageError(format!("Failed to set synchronous: {e}"))
-            })?;
+            .map_err(|e| HubError::StorageError(format!("Failed to set synchronous: {e}")))?;
         debug!("synchronous=NORMAL set");
 
         // Run all pending migrations
@@ -125,7 +132,8 @@ impl Storage {
         );
 
         Ok(Self {
-            db,
+            db: Arc::new(db),
+            conn,
             config: config.clone(),
             semaphore: Arc::new(Semaphore::new(config.max_connections)),
         })
@@ -143,10 +151,9 @@ impl Storage {
             .await
             .map_err(|e| HubError::StorageError(format!("Pool semaphore error: {e}")))?;
 
-        let conn = self
-            .db
-            .connect()
-            .map_err(|e| HubError::StorageError(format!("Connection failed: {e}")))?;
+        // Reuse the shared, already-migrated connection. Opening a fresh
+        // connection here would yield an empty private database for `:memory:`.
+        let conn = self.conn.clone();
 
         Ok(PooledConnection {
             _permit: permit,
@@ -174,24 +181,58 @@ impl Storage {
         .map_err(|e| HubError::StorageError(format!("Migration table creation: {e}")))?;
 
         let migrations: Vec<(i64, &str, &str)> = vec![
-            (1, "0001_initial.sql", include_str!("../../migrations/0001_initial.sql")),
-            (2, "0002_audit.sql", include_str!("../../migrations/0002_audit.sql")),
-            (3, "0003_locks.sql", include_str!("../../migrations/0003_locks.sql")),
-            (4, "0004_swarm_state.sql", include_str!("../../migrations/0004_swarm_state.sql")),
-            (5, "0005_backup_meta.sql", include_str!("../../migrations/0005_backup_meta.sql")),
-            (6, "0006_plugins.sql", include_str!("../../migrations/0006_plugins.sql")),
-            (7, "0007_soft_delete.sql", include_str!("../../migrations/0007_soft_delete.sql")),
-            (8, "0008_generation_params.sql", include_str!("../../migrations/0008_generation_params.sql")),
-            (9, "0009_config.sql", include_str!("../../migrations/0009_config.sql")),
+            (
+                1,
+                "0001_initial.sql",
+                include_str!("../../migrations/0001_initial.sql"),
+            ),
+            (
+                2,
+                "0002_audit.sql",
+                include_str!("../../migrations/0002_audit.sql"),
+            ),
+            (
+                3,
+                "0003_locks.sql",
+                include_str!("../../migrations/0003_locks.sql"),
+            ),
+            (
+                4,
+                "0004_swarm_state.sql",
+                include_str!("../../migrations/0004_swarm_state.sql"),
+            ),
+            (
+                5,
+                "0005_backup_meta.sql",
+                include_str!("../../migrations/0005_backup_meta.sql"),
+            ),
+            (
+                6,
+                "0006_plugins.sql",
+                include_str!("../../migrations/0006_plugins.sql"),
+            ),
+            (
+                7,
+                "0007_soft_delete.sql",
+                include_str!("../../migrations/0007_soft_delete.sql"),
+            ),
+            (
+                8,
+                "0008_generation_params.sql",
+                include_str!("../../migrations/0008_generation_params.sql"),
+            ),
+            (
+                9,
+                "0009_config.sql",
+                include_str!("../../migrations/0009_config.sql"),
+            ),
         ];
 
         for (id, name, sql) in migrations {
             let already_applied = conn
                 .query("SELECT 1 FROM _migrations WHERE id = ?1", params!(id))
                 .await
-                .map_err(|e| {
-                    HubError::StorageError(format!("Migration check query: {e}"))
-                })?
+                .map_err(|e| HubError::StorageError(format!("Migration check query: {e}")))?
                 .next()
                 .await
                 .map_err(|e| HubError::StorageError(format!("Migration check row: {e}")))?
@@ -203,17 +244,15 @@ impl Storage {
                 // Wrap each migration in a transaction for atomicity
                 conn.execute("BEGIN IMMEDIATE;", params!())
                     .await
-                    .map_err(|e| {
-                        HubError::StorageError(format!("Migration begin: {e}"))
-                    })?;
+                    .map_err(|e| HubError::StorageError(format!("Migration begin: {e}")))?;
 
-                conn.execute(sql, params!())
-                    .await
-                    .map_err(|e| {
-                        HubError::StorageError(format!(
-                            "Migration {name} SQL failed: {e}"
-                        ))
-                    })?;
+                // `execute_batch` runs ALL statements in a migration file (most
+                // migrations are multi-statement: table + indexes) and treats a
+                // comments-only file (e.g. the 0008 version marker) as a no-op,
+                // unlike `execute`, which runs one statement and errors on empty.
+                conn.execute_batch(sql).await.map_err(|e| {
+                    HubError::StorageError(format!("Migration {name} SQL failed: {e}"))
+                })?;
 
                 conn.execute(
                     "INSERT INTO _migrations (id, name) VALUES (?1, ?2);",
@@ -221,16 +260,12 @@ impl Storage {
                 )
                 .await
                 .map_err(|e| {
-                    HubError::StorageError(format!(
-                        "Migration record insert for {name}: {e}"
-                    ))
+                    HubError::StorageError(format!("Migration record insert for {name}: {e}"))
                 })?;
 
                 conn.execute("COMMIT;", params!())
                     .await
-                    .map_err(|e| {
-                        HubError::StorageError(format!("Migration commit: {e}"))
-                    })?;
+                    .map_err(|e| HubError::StorageError(format!("Migration commit: {e}")))?;
 
                 info!("Applied migration: {name}");
             } else {
@@ -263,13 +298,13 @@ impl Storage {
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19);",
                 params!(
                     prompt.id.to_string(),
-                    &prompt.name,
+                    prompt.name.clone(),
                     prompt.version.to_string(),
-                    serde_json::to_string(&prompt.status).unwrap_or_default(),
-                    &prompt.system_prompt,
-                    &prompt.user_template,
+                    serde_json::to_value(&prompt.status).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
+                    prompt.system_prompt.clone(),
+                    prompt.user_template.clone(),
                     serde_json::to_string(&prompt.required_vars).unwrap_or_else(|_| "[]".to_string()),
-                    serde_json::to_string(&prompt.domain).unwrap_or_default(),
+                    serde_json::to_value(&prompt.domain).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
                     serde_json::to_string(&prompt.tags).unwrap_or_else(|_| "[]".to_string()),
                     serde_json::to_string(&prompt.target_roles).unwrap_or_else(|_| "[]".to_string()),
                     serde_json::to_string(&prompt.metadata).unwrap_or_else(|_| "{}".to_string()),
@@ -333,8 +368,6 @@ impl Storage {
         }
     }
 
-    /// Update an existing prompt within a transaction.
-    #[instrument(skip(self, prompt))]
     /// Update a prompt by id with a patch — only modifies provided fields.
     #[instrument(skip(self, patch))]
     pub async fn update_prompt(&self, id: Uuid, patch: &PromptPatch) -> Result<()> {
@@ -367,7 +400,12 @@ impl Storage {
             }
             if let Some(domain) = &patch.domain {
                 sets.push("domain = ?".to_string());
-                params_vec.push(serde_json::to_string(domain).unwrap_or_default());
+                params_vec.push(
+                    serde_json::to_value(domain)
+                        .ok()
+                        .and_then(|v| v.as_str().map(String::from))
+                        .unwrap_or_default(),
+                );
             }
             if let Some(tags) = &patch.tags {
                 sets.push("tags = ?".to_string());
@@ -379,7 +417,12 @@ impl Storage {
             }
             if let Some(status) = &patch.status {
                 sets.push("status = ?".to_string());
-                params_vec.push(serde_json::to_string(status).unwrap_or_default());
+                params_vec.push(
+                    serde_json::to_value(status)
+                        .ok()
+                        .and_then(|v| v.as_str().map(String::from))
+                        .unwrap_or_default(),
+                );
             }
             if let Some(generation_params) = &patch.generation_params {
                 sets.push("generation_params = ?".to_string());
@@ -403,7 +446,7 @@ impl Storage {
                 id
             );
 
-            conn.execute(&sql, params!())
+            conn.execute(&sql, libsql::params_from_iter(params_vec))
                 .await
                 .map_err(|e| HubError::StorageError(format!("Update prompt: {e}")))?;
 
@@ -480,16 +523,17 @@ impl Storage {
             .execute(
                 "UPDATE prompts SET author_id = ?1, updated_at = ?2
                  WHERE id = ?3 AND deleted_at IS NULL;",
-                params!(new_owner_id.to_string(), Utc::now().to_rfc3339(), id.to_string()),
+                params!(
+                    new_owner_id.to_string(),
+                    Utc::now().to_rfc3339(),
+                    id.to_string()
+                ),
             )
             .await
             .map_err(|e| HubError::StorageError(format!("Transfer ownership: {e}")))?;
 
         if rows == 0 {
-            return Err(HubError::NotFound(format!(
-                "Prompt {} not found",
-                id
-            )));
+            return Err(HubError::NotFound(format!("Prompt {} not found", id)));
         }
 
         info!(
@@ -595,12 +639,24 @@ impl Storage {
 
         if let Some(d) = domain {
             conditions.push("domain = ?".to_string());
-            query_params.push(serde_json::to_string(d).unwrap_or_default().into());
+            query_params.push(
+                serde_json::to_value(d)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default()
+                    .into(),
+            );
         }
 
         if let Some(s) = status {
             conditions.push("status = ?".to_string());
-            query_params.push(serde_json::to_string(s).unwrap_or_default().into());
+            query_params.push(
+                serde_json::to_value(s)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default()
+                    .into(),
+            );
         }
 
         let where_clause = conditions.join(" AND ");
@@ -613,9 +669,7 @@ impl Storage {
              WHERE {}
              ORDER BY updated_at DESC
              LIMIT {} OFFSET {};",
-            where_clause,
-            limit,
-            offset
+            where_clause, limit, offset
         );
 
         let mut stmt = conn
@@ -648,12 +702,24 @@ impl Storage {
 
         if let Some(d) = domain {
             conditions.push("domain = ?".to_string());
-            query_params.push(serde_json::to_string(d).unwrap_or_default().into());
+            query_params.push(
+                serde_json::to_value(d)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default()
+                    .into(),
+            );
         }
 
         if let Some(s) = status {
             conditions.push("status = ?".to_string());
-            query_params.push(serde_json::to_string(s).unwrap_or_default().into());
+            query_params.push(
+                serde_json::to_value(s)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default()
+                    .into(),
+            );
         }
 
         let where_clause = conditions.join(" AND ");
@@ -669,9 +735,9 @@ impl Storage {
             .await
             .map_err(|e| HubError::StorageError(format!("Count row: {e}")))?
         {
-            let count: i64 = row.get(0).map_err(|e| {
-                HubError::StorageError(format!("Count extract: {e}"))
-            })?;
+            let count: i64 = row
+                .get(0)
+                .map_err(|e| HubError::StorageError(format!("Count extract: {e}")))?;
             Ok(count)
         } else {
             Ok(0)
@@ -715,7 +781,11 @@ impl Storage {
             prompts.push(self.row_to_prompt(&row)?);
         }
 
-        debug!("FTS search for '{}' returned {} results", query, prompts.len());
+        debug!(
+            "FTS search for '{}' returned {} results",
+            query,
+            prompts.len()
+        );
         Ok(prompts)
     }
 
@@ -745,8 +815,7 @@ impl Storage {
              WHERE {}
              ORDER BY updated_at DESC
              LIMIT {};",
-            where_clause,
-            limit
+            where_clause, limit
         );
 
         let mut stmt = conn
@@ -804,9 +873,9 @@ impl Storage {
             .await
             .map_err(|e| HubError::StorageError(format!("Rowid fetch: {e}")))?
         {
-            let id: i64 = row.get(0).map_err(|e| {
-                HubError::StorageError(format!("Extract rowid: {e}"))
-            })?;
+            let id: i64 = row
+                .get(0)
+                .map_err(|e| HubError::StorageError(format!("Extract rowid: {e}")))?;
             Ok(id)
         } else {
             Ok(0)
@@ -963,9 +1032,9 @@ impl Storage {
             params!(
                 entry.timestamp.to_rfc3339(),
                 entry.agent_id.to_string(),
-                &entry.action,
+                entry.action.clone(),
                 entry.prompt_id.map(|p| p.to_string()),
-                &entry.diff_hash,
+                entry.diff_hash.clone(),
                 entry.before_json.as_deref(),
                 entry.after_json.as_deref(),
                 entry.ip_address.as_deref(),
@@ -985,8 +1054,8 @@ impl Storage {
             .query(
                 "SELECT id, timestamp, agent_id, action, prompt_id, diff_hash,
                         before_json, after_json, ip_address
-                 FROM audit_log WHERE prompt_id = ?1 ORDER BY timestamp DESC LIMIT {};",
-                params!(prompt_id.to_string()),
+                 FROM audit_log WHERE prompt_id = ?1 ORDER BY timestamp DESC LIMIT ?2;",
+                params!(prompt_id.to_string(), limit as i64),
             )
             .await
             .map_err(|e| HubError::StorageError(format!("Audit log query: {e}")))?;
@@ -1012,13 +1081,13 @@ impl Storage {
             "INSERT INTO audit_log (agent_id, action, prompt_id, diff_hash, before_json, after_json, ip_address, timestamp)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);",
             params!(
-                entry.actor.id.to_string(),
-                serde_json::to_string(&entry.action).unwrap_or_default(),
-                entry.prompt_id.to_string(),
-                entry.before_hash.clone().unwrap_or_default(),
-                entry.details.clone().unwrap_or_default(),
-                entry.after_hash.clone().unwrap_or_default(),
-                "", // ip_address
+                entry.agent_id.to_string(),
+                entry.action.clone(),
+                entry.prompt_id.map(|p| p.to_string()),
+                entry.diff_hash.clone(),
+                entry.before_json.as_deref(),
+                entry.after_json.as_deref(),
+                entry.ip_address.as_deref(),
                 entry.timestamp.to_rfc3339(),
             ),
         ).await.map_err(|e| HubError::StorageError(format!("Audit log: {e}")))?;
@@ -1027,49 +1096,81 @@ impl Storage {
 
     /// Fetch paginated audit trail for a specific prompt.
     #[instrument(skip(self))]
-    pub async fn fetch_audit_trail(&self, prompt_id: Uuid, page: usize, per_page: usize) -> Result<Paginated<AuditEntry>> {
+    pub async fn fetch_audit_trail(
+        &self,
+        prompt_id: Uuid,
+        page: usize,
+        per_page: usize,
+    ) -> Result<Paginated<AuditEntry>> {
         let conn = self.acquire().await?;
         let offset = (page.saturating_sub(1)) * per_page;
 
         // Count total
-        let mut count_rows = conn.query(
-            "SELECT COUNT(*) FROM audit_log WHERE prompt_id = ?1",
-            params!(prompt_id.to_string()),
-        ).await.map_err(|e| HubError::StorageError(format!("Audit count: {e}")))?;
-        let total = if let Some(row) = count_rows.next().await.map_err(|e| HubError::StorageError(format!("Audit count row: {e}")))? {
+        let mut count_rows = conn
+            .query(
+                "SELECT COUNT(*) FROM audit_log WHERE prompt_id = ?1",
+                params!(prompt_id.to_string()),
+            )
+            .await
+            .map_err(|e| HubError::StorageError(format!("Audit count: {e}")))?;
+        let total = if let Some(row) = count_rows
+            .next()
+            .await
+            .map_err(|e| HubError::StorageError(format!("Audit count row: {e}")))?
+        {
             row.get::<i64>(0).unwrap_or(0) as usize
-        } else { 0 };
+        } else {
+            0
+        };
 
         // Fetch entries
         let mut rows = conn.query(
-            "SELECT agent_id, action, prompt_id, before_json, after_json, timestamp FROM audit_log
+            "SELECT id, agent_id, action, prompt_id, diff_hash, before_json, after_json, ip_address, timestamp FROM audit_log
              WHERE prompt_id = ?1 ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3",
             params!(prompt_id.to_string(), per_page as i64, offset as i64),
         ).await.map_err(|e| HubError::StorageError(format!("Audit query: {e}")))?;
 
         let mut items = Vec::new();
-        while let Some(row) = rows.next().await.map_err(|e| HubError::StorageError(format!("Audit row: {e}")))? {
-            let actor_id = Uuid::parse_str(row.get_str(0).unwrap_or("")).unwrap_or_else(|_| Uuid::nil());
-            let action_str = row.get_str(1).unwrap_or("");
-            let pid = Uuid::parse_str(row.get_str(2).unwrap_or("")).unwrap_or_else(|_| Uuid::nil());
-            let before = row.get_str(3).map(|s| s.to_string());
-            let after = row.get_str(4).map(|s| s.to_string());
-            let ts = row.get_str(5).and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|d| d.with_timezone(&Utc)).unwrap_or_else(|| Utc::now());
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| HubError::StorageError(format!("Audit row: {e}")))?
+        {
+            let id = row.get::<i64>(0).unwrap_or(0);
+            let agent_id =
+                Uuid::parse_str(row.get_str(1).unwrap_or("")).unwrap_or_else(|_| Uuid::nil());
+            let action = row.get_str(2).unwrap_or("").to_string();
+            let pid = Uuid::parse_str(row.get_str(3).unwrap_or("")).ok();
+            let diff_hash = row.get_str(4).unwrap_or("").to_string();
+            let before = row.get_str(5).ok().map(|s| s.to_string());
+            let after = row.get_str(6).ok().map(|s| s.to_string());
+            let ip_address = row.get_str(7).ok().map(|s| s.to_string());
+            let ts = row
+                .get_str(8)
+                .ok()
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| d.with_timezone(&Utc))
+                .unwrap_or_else(Utc::now);
 
             items.push(AuditEntry {
-                id: Uuid::nil(), // Simplified — SQLite autoincrement id not mapped
-                prompt_id: pid,
-                action: serde_json::from_str(action_str).unwrap_or(AuditAction::Created),
-                actor: AgentIdentity { id: actor_id, name: "unknown".to_string(), capabilities: Vec::new(), token_hash: String::new(), specialization_score: 0.0 },
+                id,
                 timestamp: ts,
-                details: before.clone(),
-                before_hash: before,
-                after_hash: after,
+                agent_id,
+                action,
+                prompt_id: pid,
+                diff_hash,
+                before_json: before,
+                after_json: after,
+                ip_address,
             });
         }
 
-        Ok(Paginated { items, total, page, per_page })
+        Ok(Paginated {
+            items,
+            total,
+            page,
+            per_page,
+        })
     }
 
     // ────────────────────────── Config KV ──────────────────────────
@@ -1079,10 +1180,7 @@ impl Storage {
         let conn = self.acquire().await?;
 
         let mut stmt = conn
-            .query(
-                "SELECT value FROM config WHERE key = ?1;",
-                params!(key),
-            )
+            .query("SELECT value FROM config WHERE key = ?1;", params!(key))
             .await
             .map_err(|e| HubError::StorageError(format!("Get config: {e}")))?;
 
@@ -1207,7 +1305,9 @@ impl Storage {
     /// Health check: execute a simple query to verify connectivity.
     pub async fn health_check(&self) -> Result<bool> {
         let conn = self.acquire().await?;
-        conn.execute("SELECT 1;", params!())
+        // `SELECT 1` returns a row, so it must go through `query`, not
+        // `execute` (which errors with "Execute returned rows").
+        conn.query("SELECT 1;", params!())
             .await
             .map_err(|e| HubError::StorageError(format!("Health check: {e}")))?;
         Ok(true)
@@ -1217,19 +1317,18 @@ impl Storage {
 
     /// Convert a libsql row into a `Prompt`.
     pub(crate) fn row_to_prompt(&self, row: &libsql::Row) -> Result<Prompt> {
-        let get_str = |idx: usize| -> String {
-            row.get_str(idx).unwrap_or("").to_string()
-        };
+        let get_str = |idx: i32| -> String { row.get_str(idx).unwrap_or("").to_string() };
 
         let parse_json = |s: String| -> serde_json::Value {
             serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)
         };
 
-        let parse_datetime = |idx: usize| -> DateTime<Utc> {
+        let parse_datetime = |idx: i32| -> DateTime<Utc> {
             row.get_str(idx)
+                .ok()
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now())
+                .unwrap_or_else(Utc::now)
         };
 
         let id_str = get_str(0);
@@ -1242,8 +1341,7 @@ impl Storage {
             id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::nil()),
             name: get_str(1),
             version: Version::parse(&version_str).unwrap_or_else(|_| Version::new(0, 0, 0)),
-            status: serde_json::from_str(&format!("\"{status_str}\""))
-                .unwrap_or(Status::Draft),
+            status: serde_json::from_str(&format!("\"{status_str}\"")).unwrap_or(Status::Draft),
             system_prompt: get_str(4),
             user_template: get_str(5),
             required_vars: parse_json(get_str(6))
@@ -1254,8 +1352,7 @@ impl Storage {
                         .collect()
                 })
                 .unwrap_or_default(),
-            domain: serde_json::from_str(&format!("\"{domain_str}\""))
-                .unwrap_or(Domain::General),
+            domain: serde_json::from_str(&format!("\"{domain_str}\"")).unwrap_or(Domain::General),
             tags: parse_json(get_str(8))
                 .as_array()
                 .map(|a| {
@@ -1264,22 +1361,8 @@ impl Storage {
                         .collect()
                 })
                 .unwrap_or_default(),
-            target_roles: parse_json(get_str(9))
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            metadata: parse_json(get_str(10))
-                .as_object()
-                .map(|o| {
-                    o.iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            target_roles: serde_json::from_str(&get_str(9)).unwrap_or_default(),
+            metadata: serde_json::from_str(&get_str(10)).unwrap_or_default(),
             metrics: serde_json::from_str(&get_str(11)).unwrap_or_default(),
             author: AgentIdentity {
                 id: Uuid::parse_str(&author_id_str).unwrap_or_else(|_| Uuid::nil()),
@@ -1292,29 +1375,31 @@ impl Storage {
             updated_at: parse_datetime(14),
             deleted_at: row
                 .get_str(15)
+                .ok()
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc)),
             generation_params: row
                 .get_str(16)
+                .ok()
                 .and_then(|s| serde_json::from_str(s).ok()),
-            locale: row.get_str(17).map(|s| s.to_string()),
+            locale: row.get_str(17).ok().map(|s| s.to_string()),
             multimodal: row
                 .get_str(18)
+                .ok()
                 .and_then(|s| serde_json::from_str(s).ok()),
         })
     }
 
     /// Convert a libsql row into a `VersionRecord`.
     fn row_to_version(&self, row: &libsql::Row) -> Result<VersionRecord> {
-        let get_str = |idx: usize| -> String {
-            row.get_str(idx).unwrap_or("").to_string()
-        };
+        let get_str = |idx: i32| -> String { row.get_str(idx).unwrap_or("").to_string() };
 
-        let parse_dt = |idx: usize| -> DateTime<Utc> {
+        let parse_dt = |idx: i32| -> DateTime<Utc> {
             row.get_str(idx)
+                .ok()
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now())
+                .unwrap_or_else(Utc::now)
         };
 
         Ok(VersionRecord {
@@ -1323,9 +1408,8 @@ impl Storage {
                 .map_err(|e| HubError::StorageError(format!("Version id: {e}")))?,
             prompt_id: Uuid::parse_str(&get_str(1))
                 .map_err(|e| HubError::SerdeError(format!("Version prompt_id: {e}")))?,
-            parent_id: row.get_str(2).and_then(|s| Uuid::parse_str(s).ok()),
-            version: Version::parse(&get_str(3))
-                .unwrap_or_else(|_| Version::new(0, 0, 0)),
+            parent_id: row.get_str(2).ok().and_then(|s| Uuid::parse_str(s).ok()),
+            version: Version::parse(&get_str(3)).unwrap_or_else(|_| Version::new(0, 0, 0)),
             changelog: get_str(4),
             diff: get_str(5),
             created_at: parse_dt(6),
@@ -1334,15 +1418,14 @@ impl Storage {
 
     /// Convert a libsql row into an `AuditEntry`.
     fn row_to_audit_entry(&self, row: &libsql::Row) -> Result<AuditEntry> {
-        let get_str = |idx: usize| -> String {
-            row.get_str(idx).unwrap_or("").to_string()
-        };
+        let get_str = |idx: i32| -> String { row.get_str(idx).unwrap_or("").to_string() };
 
-        let parse_dt = |idx: usize| -> DateTime<Utc> {
+        let parse_dt = |idx: i32| -> DateTime<Utc> {
             row.get_str(idx)
+                .ok()
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now())
+                .unwrap_or_else(Utc::now)
         };
 
         Ok(AuditEntry {
@@ -1353,26 +1436,23 @@ impl Storage {
             agent_id: Uuid::parse_str(&get_str(2))
                 .map_err(|e| HubError::SerdeError(format!("Audit agent_id: {e}")))?,
             action: get_str(3),
-            prompt_id: row.get_str(4).and_then(|s| Uuid::parse_str(s).ok()),
+            prompt_id: row.get_str(4).ok().and_then(|s| Uuid::parse_str(s).ok()),
             diff_hash: get_str(5),
-            before_json: row.get_str(5).map(|s| s.to_string()),
-            after_json: row.get_str(6).map(|s| s.to_string()),
-            ip_address: row.get_str(8).map(|s| s.to_string()),
+            before_json: row.get_str(6).ok().map(|s| s.to_string()),
+            after_json: row.get_str(7).ok().map(|s| s.to_string()),
+            ip_address: row.get_str(8).ok().map(|s| s.to_string()),
         })
     }
 
     /// Convert a libsql row into `PromptMetrics`.
     fn row_to_metrics(&self, row: &libsql::Row) -> Result<PromptMetrics> {
-        let get_i64 = |idx: usize| -> i64 {
-            row.get::<i64>(idx).unwrap_or(0)
-        };
+        let get_i64 = |idx: i32| -> i64 { row.get::<i64>(idx).unwrap_or(0) };
 
-        let get_f64 = |idx: usize| -> f64 {
-            row.get::<f64>(idx).unwrap_or(0.0)
-        };
+        let get_f64 = |idx: i32| -> f64 { row.get::<f64>(idx).unwrap_or(0.0) };
 
         let last_used = row
             .get_str(4)
+            .ok()
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|d| d.with_timezone(&Utc));
 
@@ -1398,7 +1478,9 @@ mod tests {
             max_connections: 2,
             ..Default::default()
         };
-        Storage::new(config).await.expect("Failed to create in-memory storage")
+        Storage::new(config)
+            .await
+            .expect("Failed to create in-memory storage")
     }
 
     /// Create a minimal test prompt.
@@ -1431,25 +1513,34 @@ mod tests {
         assert_eq!(fetched.id, prompt.id);
         assert_eq!(fetched.tags, vec!["test", "unit"]);
         assert_eq!(fetched.domain, Domain::Coding);
-        assert_eq!(fetched.status, Status::Active);
+        assert_eq!(fetched.status, Status::Draft);
     }
 
     #[tokio::test]
     async fn test_get_nonexistent() {
         let storage = in_memory_storage().await;
-        let result = storage.get_prompt(Uuid::new_v4()).await.expect("query failed");
+        let result = storage
+            .get_prompt(Uuid::new_v4())
+            .await
+            .expect("query failed");
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn test_update_prompt() {
         let storage = in_memory_storage().await;
-        let mut prompt = test_prompt("original");
+        let prompt = test_prompt("original");
         storage.insert_prompt(&prompt).await.unwrap();
 
-        prompt.name = "updated".to_string();
-        prompt.system_prompt = "Updated system prompt.".to_string();
-        storage.update_prompt(&prompt).await.expect("update failed");
+        let patch = PromptPatch {
+            name: Some("updated".to_string()),
+            system_prompt: Some("Updated system prompt.".to_string()),
+            ..Default::default()
+        };
+        storage
+            .update_prompt(prompt.id, &patch)
+            .await
+            .expect("update failed");
 
         let fetched = storage.get_prompt(prompt.id).await.unwrap().unwrap();
         assert_eq!(fetched.name, "updated");
@@ -1462,10 +1553,16 @@ mod tests {
         let prompt = test_prompt("to_delete");
         storage.insert_prompt(&prompt).await.unwrap();
 
-        storage.delete_prompt(prompt.id).await.expect("delete failed");
+        storage
+            .delete_prompt(prompt.id)
+            .await
+            .expect("delete failed");
 
         let fetched = storage.get_prompt(prompt.id).await.unwrap();
-        assert!(fetched.is_none(), "Soft-deleted prompt should not be returned");
+        assert!(
+            fetched.is_none(),
+            "Soft-deleted prompt should not be returned"
+        );
     }
 
     #[tokio::test]
@@ -1590,7 +1687,10 @@ mod tests {
         assert_eq!(lock.agent_id, agent_id);
 
         // Releasing should succeed
-        storage.release_lock(lock.id).await.expect("release lock failed");
+        storage
+            .release_lock(lock.id)
+            .await
+            .expect("release lock failed");
     }
 
     #[tokio::test]
@@ -1623,20 +1723,15 @@ mod tests {
         storage.insert_prompt(&prompt).await.unwrap();
 
         let entry = AuditEntry {
-            id: Uuid::new_v4(),
-            prompt_id: prompt.id,
-            action: AuditAction::Created,
-            actor: AgentIdentity {
-                id: Uuid::new_v4(),
-                name: "test-agent".to_string(),
-                capabilities: Vec::new(),
-                token_hash: String::new(),
-                specialization_score: 0.0,
-            },
+            id: 0,
             timestamp: Utc::now(),
-            details: Some("Prompt created".to_string()),
-            before_hash: None,
-            after_hash: Some("{\"name\":\"audited\"}".to_string()),
+            agent_id: Uuid::new_v4(),
+            action: "Created".to_string(),
+            prompt_id: Some(prompt.id),
+            diff_hash: String::new(),
+            before_json: None,
+            after_json: Some("{\"name\":\"audited\"}".to_string()),
+            ip_address: None,
         };
 
         storage.log_audit(&entry).await.expect("log_audit failed");
@@ -1644,8 +1739,8 @@ mod tests {
         let logs = storage.fetch_audit_trail(prompt.id, 1, 10).await.unwrap();
         assert_eq!(logs.items.len(), 1);
         assert_eq!(logs.total, 1);
-        assert_eq!(logs.items[0].action, AuditAction::Created);
-        assert_eq!(logs.items[0].prompt_id, prompt.id);
+        assert_eq!(logs.items[0].action, "Created");
+        assert_eq!(logs.items[0].prompt_id, Some(prompt.id));
     }
 
     #[tokio::test]
@@ -1658,20 +1753,15 @@ mod tests {
         // Insert 5 audit entries
         for i in 0..5 {
             let entry = AuditEntry {
-                id: Uuid::new_v4(),
-                prompt_id: prompt.id,
-                action: AuditAction::Updated,
-                actor: AgentIdentity {
-                    id: agent_id,
-                    name: "test-agent".to_string(),
-                    capabilities: Vec::new(),
-                    token_hash: String::new(),
-                    specialization_score: 0.0,
-                },
+                id: 0,
                 timestamp: Utc::now(),
-                details: Some(format!("Update #{}", i)),
-                before_hash: Some(format!("before-{}", i)),
-                after_hash: Some(format!("after-{}", i)),
+                agent_id,
+                action: "Updated".to_string(),
+                prompt_id: Some(prompt.id),
+                diff_hash: format!("diff-{}", i),
+                before_json: Some(format!("before-{}", i)),
+                after_json: Some(format!("after-{}", i)),
+                ip_address: None,
             };
             storage.log_audit(&entry).await.expect("log_audit failed");
         }
@@ -1695,7 +1785,10 @@ mod tests {
         assert_eq!(page3.page, 3);
 
         // Non-existent prompt should return empty
-        let empty = storage.fetch_audit_trail(Uuid::new_v4(), 1, 10).await.unwrap();
+        let empty = storage
+            .fetch_audit_trail(Uuid::new_v4(), 1, 10)
+            .await
+            .unwrap();
         assert_eq!(empty.items.len(), 0);
         assert_eq!(empty.total, 0);
     }
@@ -1707,10 +1800,7 @@ mod tests {
         let value = storage.get_config("test_key").await.unwrap();
         assert!(value.is_none());
 
-        storage
-            .set_config("test_key", "test_value")
-            .await
-            .unwrap();
+        storage.set_config("test_key", "test_value").await.unwrap();
 
         let value = storage.get_config("test_key").await.unwrap();
         assert_eq!(value, Some("test_value".to_string()));
@@ -1766,9 +1856,7 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..5 {
             let s = storage.clone();
-            handles.push(tokio::spawn(async move {
-                s.health_check().await.is_ok()
-            }));
+            handles.push(tokio::spawn(async move { s.health_check().await.is_ok() }));
         }
 
         for h in handles {

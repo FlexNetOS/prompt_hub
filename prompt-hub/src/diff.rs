@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use crate::error::Result;
 use tracing::{info, instrument};
 
 /// Prompt diff engine for comparing prompt versions.
@@ -14,7 +13,11 @@ pub struct PromptDiff;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffLine {
     /// Line present in both versions
-    Context { line_no_a: usize, line_no_b: usize, content: String },
+    Context {
+        line_no_a: usize,
+        line_no_b: usize,
+        content: String,
+    },
     /// Line removed (present in old, absent in new)
     Removed { line_no: usize, content: String },
     /// Line added (absent in old, present in new)
@@ -49,7 +52,13 @@ impl PromptDiff {
 
     /// Compute a line-based diff between two prompt texts.
     #[instrument(skip(self), fields(old_len = old_text.len(), new_len = new_text.len()))]
-    pub fn compute(&self, old_text: &str, new_text: &str, old_ver: &str, new_ver: &str) -> DiffResult {
+    pub fn compute(
+        &self,
+        old_text: &str,
+        new_text: &str,
+        old_ver: &str,
+        new_ver: &str,
+    ) -> DiffResult {
         let old_lines: Vec<&str> = old_text.lines().collect();
         let new_lines: Vec<&str> = new_text.lines().collect();
 
@@ -80,9 +89,10 @@ impl PromptDiff {
                 old_idx += 1;
                 new_idx += 1;
                 lcs_pos += 1;
-            } else if lcs_pos < lcs_indices.len()
-                && old_idx < old_lines.len()
-                && (new_idx >= new_lines.len() || old_idx < lcs_indices[lcs_pos].0)
+            } else if old_idx < old_lines.len()
+                && (lcs_pos >= lcs_indices.len()
+                    || new_idx >= new_lines.len()
+                    || old_idx < lcs_indices[lcs_pos].0)
             {
                 // Line removed
                 lines.push(DiffLine::Removed {
@@ -178,10 +188,7 @@ impl PromptDiff {
     }
 
     /// Compute longest common subsequence (Myers algorithm simplified).
-    fn longest_common_subsequence<T: Eq>(
-        a: &[T],
-        b: &[T],
-    ) -> (Vec<(usize, usize)>, usize) {
+    fn longest_common_subsequence<T: Eq>(a: &[T], b: &[T]) -> (Vec<(usize, usize)>, usize) {
         let m = a.len();
         let n = b.len();
 
@@ -207,7 +214,10 @@ impl PromptDiff {
                 lcs.push((i, j));
                 i += 1;
                 j += 1;
-            } else if i + 1 <= m && dp.get(i + 1).and_then(|row| row.get(j)).unwrap_or(&0) >= dp.get(i).and_then(|row| row.get(j + 1)).unwrap_or(&0) {
+            } else if i + 1 <= m
+                && dp.get(i + 1).and_then(|row| row.get(j)).unwrap_or(&0)
+                    >= dp.get(i).and_then(|row| row.get(j + 1)).unwrap_or(&0)
+            {
                 i += 1;
             } else {
                 j += 1;
@@ -256,7 +266,7 @@ mod tests {
         let diff = PromptDiff::new();
         let result = diff.compute("A\nB\nC", "A\nX\nC\nD", "v1", "v2");
         assert!(result.additions > 0 || result.deletions > 0);
-        assert_eq!(result.unchanged, 1); // "A" and "C" match but B is replaced
+        assert_eq!(result.unchanged, 2); // "A" and "C" match but B is replaced
     }
 
     #[test]

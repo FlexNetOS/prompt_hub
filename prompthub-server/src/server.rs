@@ -1,16 +1,16 @@
 #![forbid(unsafe_code)]
 
 use axum::{
+    Router,
     middleware::from_fn,
     routing::{delete, get, post},
-    Router,
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tower::{timeout::TimeoutLayer, ServiceBuilder};
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::compression::CompressionLayer;
-use tracing::{info, instrument};
+use tower_http::timeout::TimeoutLayer;
+use tracing::instrument;
 
 use crate::middleware;
 use crate::routes;
@@ -29,17 +29,6 @@ pub fn create_router(state: AppState) -> Router {
     );
 
     let state_arc = Arc::new(state);
-
-    // Middleware stack (applied outer -> inner)
-    let middleware = ServiceBuilder::new()
-        .layer(CompressionLayer::new())
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
-        .layer(GovernorLayer::new(&governor_conf))
-        .layer(from_fn(middleware::error_handler))
-        .layer(from_fn(middleware::request_timing))
-        .layer(middleware::create_request_id_layer())
-        .layer(middleware::create_cors_layer())
-        .layer(middleware::create_trace_layer());
 
     Router::new()
         // Prompt CRUD
@@ -65,5 +54,22 @@ pub fn create_router(state: AppState) -> Router {
         .route("/docs", get(routes::swagger_ui))
         // State
         .with_state(state_arc)
-        .layer(middleware)
+        // Middleware — applied directly on the Router (not bundled in a
+        // ServiceBuilder) so the `from_fn` layers satisfy axum's Service bounds.
+        // axum applies layers bottom-up: the LAST `.layer` is the OUTERMOST, so
+        // this order preserves outer→inner = Compression, Timeout, Governor,
+        // error_handler, request_timing, request_id, cors, trace.
+        .layer(middleware::create_trace_layer())
+        .layer(middleware::create_cors_layer())
+        .layer(middleware::create_request_id_layer())
+        .layer(from_fn(middleware::request_timing))
+        .layer(from_fn(middleware::error_handler))
+        .layer(GovernorLayer {
+            config: governor_conf,
+        })
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(30),
+        ))
+        .layer(CompressionLayer::new())
 }

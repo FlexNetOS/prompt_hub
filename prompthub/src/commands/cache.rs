@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
-use prompt_hub::{HubConfig, hub::PromptHub};
 use anyhow::Result;
+use prompt_hub::{HubConfig, hub::PromptHub};
 use std::path::Path;
 use tracing::info;
 

@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
-use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use anyhow::Result;
+use prompt_hub::{HubConfig, hub::PromptHub, models::*};
 use std::path::Path;
 use tracing::info;
 
@@ -35,17 +35,16 @@ pub async fn run(
     );
 
     if filtered.is_empty() {
-        println!("No prompts found (domain={:?}, status={:?})", domain, status);
+        println!(
+            "No prompts found (domain={:?}, status={:?})",
+            domain, status
+        );
     } else {
         println!("Found {} prompts:", filtered.len());
         for p in &filtered {
             println!(
                 "  - {} (v{}): {:?} [{:?}] - tags: {:?}",
-                p.name,
-                p.version,
-                p.domain,
-                p.status,
-                p.tags
+                p.name, p.version, p.domain, p.status, p.tags
             );
         }
     }

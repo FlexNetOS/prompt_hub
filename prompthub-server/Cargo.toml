@@ -33,7 +33,7 @@ prompt-hub = { path = "../prompt-hub" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tower = { workspace = true }
-tower-http = { workspace = true }
+tower-http = { workspace = true, features = ["timeout"] }
 tower-governor = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }

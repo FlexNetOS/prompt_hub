@@ -139,7 +139,10 @@ impl RetentionPolicy {
             }
         }
 
-        info!("Loaded retention config with {} overrides", config.overrides.len());
+        info!(
+            "Loaded retention config with {} overrides",
+            config.overrides.len()
+        );
         Ok(())
     }
 
@@ -260,7 +263,10 @@ mod tests {
 
     #[test]
     fn test_data_type_from_string() {
-        assert!(matches!(data_type_from_string("AuditLog"), Some(DataType::AuditLog)));
+        assert!(matches!(
+            data_type_from_string("AuditLog"),
+            Some(DataType::AuditLog)
+        ));
         assert!(data_type_from_string("UnknownType").is_none());
     }
 

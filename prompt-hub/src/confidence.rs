@@ -1,6 +1,5 @@
 #![forbid(unsafe_code)]
 
-use crate::error::Result;
 use crate::models::{ConfidenceScore, Intent, ProjectContext};
 use tracing::instrument;
 
@@ -61,6 +60,7 @@ impl ConfidenceScorer {
             skill_match: self.skill_match,
             historical_success: self.historical_success,
             overall,
+            score: overall,
             requires_confirmation: overall < 0.80,
         }
     }
@@ -79,7 +79,7 @@ impl ConfidenceScorer {
         // Adjust clarity based on complexity alignment
         let clarity = if intent.task_type == crate::models::TaskType::Create {
             // Create tasks are usually clearer
-            (clarity * 1.05).min(0.99)
+            (clarity * 1.05_f64).min(0.99)
         } else {
             clarity
         };

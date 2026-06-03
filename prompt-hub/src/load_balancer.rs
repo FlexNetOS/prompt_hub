@@ -16,7 +16,10 @@ pub struct LoadBalancer {
 }
 
 /// A provider entry with routing metadata.
-#[derive(Debug, Clone)]
+///
+/// Not `Clone`: it holds atomic counters for interior mutability behind
+/// shared references, and atomics intentionally do not implement `Clone`.
+#[derive(Debug)]
 pub struct ProviderEntry {
     pub name: String,
     pub url: String,
@@ -67,7 +70,10 @@ impl LoadBalancer {
             request_count: AtomicU64::new(0),
             error_count: AtomicU64::new(0),
         });
-        info!("Added provider '{}' to load balancer (weight={})", name, weight);
+        info!(
+            "Added provider '{}' to load balancer (weight={})",
+            name, weight
+        );
     }
 
     /// Select a provider for the next request.
@@ -122,9 +128,7 @@ impl LoadBalancer {
     pub fn record_latency(&self, name: &str, latency_ms: u64) {
         for provider in &self.providers {
             if provider.name == name {
-                provider
-                    .latency_ms
-                    .store(latency_ms, Ordering::SeqCst);
+                provider.latency_ms.store(latency_ms, Ordering::SeqCst);
             }
         }
     }
@@ -166,9 +170,7 @@ impl LoadBalancer {
     }
 
     fn round_robin<'a>(&self, healthy: &[&'a ProviderEntry]) -> Option<&'a ProviderEntry> {
-        let idx = self
-            .round_robin_idx
-            .fetch_add(1, Ordering::SeqCst) as usize;
+        let idx = self.round_robin_idx.fetch_add(1, Ordering::SeqCst) as usize;
         healthy.get(idx % healthy.len()).copied()
     }
 
@@ -178,9 +180,7 @@ impl LoadBalancer {
             return healthy.first().copied();
         }
         // Simple weighted selection based on accumulated weights
-        let idx = self
-            .round_robin_idx
-            .fetch_add(1, Ordering::SeqCst) as usize;
+        let idx = self.round_robin_idx.fetch_add(1, Ordering::SeqCst) as usize;
         let mut cursor = (idx as u32) % total_weight;
         for provider in healthy {
             if cursor < provider.weight {
@@ -192,7 +192,10 @@ impl LoadBalancer {
     }
 
     fn least_latency<'a>(&self, healthy: &[&'a ProviderEntry]) -> Option<&'a ProviderEntry> {
-        healthy.iter().min_by_key(|p| p.latency_ms.load(Ordering::SeqCst)).copied()
+        healthy
+            .iter()
+            .min_by_key(|p| p.latency_ms.load(Ordering::SeqCst))
+            .copied()
     }
 }
 

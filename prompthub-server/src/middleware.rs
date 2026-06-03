@@ -1,12 +1,6 @@
 #![forbid(unsafe_code)]
 
-use axum::{
-    body::Body,
-    extract::Request,
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
+use axum::{body::Body, extract::Request, http::StatusCode, middleware::Next, response::Response};
 use std::time::Instant;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -34,10 +28,9 @@ pub fn create_cors_layer() -> CorsLayer {
 ///
 /// Uses `tracing` to emit spans for every request with method, URI, status
 /// code, and latency.
-pub fn create_trace_layer(
-) -> TraceLayer<
-    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
-> {
+pub fn create_trace_layer()
+-> TraceLayer<tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>>
+{
     TraceLayer::new_for_http()
 }
 
@@ -164,19 +157,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_request_timing_ok() {
-        use axum::{middleware::from_fn, Router};
+        use axum::{Router, middleware::from_fn};
 
         let app = Router::new()
             .route("/test", axum::routing::get(ok_handler))
             .layer(from_fn(request_timing));
 
         let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/test")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/test").body(Body::empty()).unwrap())
             .await
             .unwrap();
 
@@ -185,7 +173,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_handler_converts_500() {
-        use axum::{middleware::from_fn, Router};
+        use axum::{Router, middleware::from_fn};
 
         let app = Router::new()
             .route("/error", axum::routing::get(err_handler))
@@ -205,9 +193,6 @@ mod tests {
 
         // Verify the body is JSON
         let headers = response.headers();
-        assert_eq!(
-            headers.get("content-type").unwrap(),
-            "application/json"
-        );
+        assert_eq!(headers.get("content-type").unwrap(), "application/json");
     }
 }

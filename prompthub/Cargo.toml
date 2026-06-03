@@ -18,7 +18,7 @@ path = "src/main.rs"
 [features]
 default = ["prompt-hub/handlebars"]
 smart = ["prompt-hub/smart"]
-tui = ["prompt-hub/tui", "dep:ratatui", "dep:dialoguer", "dep:console", "dep:comfy-table", "dep:syntect"]
+tui = ["dep:ratatui", "dep:dialoguer", "dep:console", "dep:comfy-table", "dep:syntect"]
 otel = ["prompt-hub/otel"]
 sqlcipher = ["prompt-hub/sqlcipher"]
 tls = ["prompt-hub/tls"]

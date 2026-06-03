@@ -1,9 +1,9 @@
 #![forbid(unsafe_code)]
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Serialize;
 
@@ -57,16 +57,13 @@ impl ErrorResponse {
 
 impl IntoResponse for ErrorResponse {
     fn into_response(self) -> Response {
-        let status =
-            StatusCode::from_u16(self.code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let status = StatusCode::from_u16(self.code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         (status, Json(self)).into_response()
     }
 }
 
 /// Helper: wrap serialisable data in a success envelope with HTTP 200.
-pub fn success<T: Serialize>(
-    data: T,
-) -> (StatusCode, Json<ApiResponse<T>>) {
+pub fn success<T: Serialize>(data: T) -> (StatusCode, Json<ApiResponse<T>>) {
     (
         StatusCode::OK,
         Json(ApiResponse {
@@ -81,9 +78,6 @@ pub fn success<T: Serialize>(
 ///
 /// The status code is used both as the HTTP status and embedded in the JSON
 /// body so that generic log parsers can extract it without header inspection.
-pub fn error(
-    status: StatusCode,
-    message: impl Into<String>,
-) -> (StatusCode, Json<ErrorResponse>) {
+pub fn error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
     (status, Json(ErrorResponse::new(message, status.as_u16())))
 }

@@ -3,9 +3,8 @@
 use crate::error::{HubError, Result};
 use crate::models::*;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
-use tracing::{debug, error, info, instrument, warn};
+use tokio::sync::{RwLock, broadcast};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -31,13 +30,23 @@ pub enum SyncEvent {
     /// An agent left the swarm (heartbeat timeout or explicit disconnect).
     AgentLeft { agent_id: Uuid },
     /// Prompt ownership was transferred between agents.
-    OwnershipTransferred { prompt_id: Uuid, from: Uuid, to: Uuid },
+    OwnershipTransferred {
+        prompt_id: Uuid,
+        from: Uuid,
+        to: Uuid,
+    },
     /// A pattern was shared between agents.
     PatternShared { pattern_id: Uuid, from_agent: Uuid },
     /// Heartbeat from an agent (used for liveness detection).
-    Heartbeat { agent_id: Uuid, timestamp: chrono::DateTime<chrono::Utc> },
+    Heartbeat {
+        agent_id: Uuid,
+        timestamp: chrono::DateTime<chrono::Utc>,
+    },
     /// A split-brain condition was detected and resolved.
-    SplitBrainResolved { partition_id: Uuid, resolution: SplitBrainResolution },
+    SplitBrainResolved {
+        partition_id: Uuid,
+        resolution: SplitBrainResolution,
+    },
 }
 
 /// Resolution strategy for a detected split-brain condition.
@@ -86,9 +95,14 @@ impl SyncManager {
     /// channel is closed.
     #[instrument(skip(self))]
     pub fn broadcast(&self, event: SyncEvent) -> Result<usize> {
-        self.event_tx
-            .send(event)
-            .map_err(|e| HubError::SyncError(format!("Broadcast failed: {e}")))
+        // `broadcast::Sender::send` only errors when there are zero active
+        // receivers. That is not a failure for us — an event with no current
+        // subscribers is simply delivered to nobody. Report 0 subscribers
+        // instead of surfacing an error.
+        match self.event_tx.send(event) {
+            Ok(n) => Ok(n),
+            Err(_) => Ok(0),
+        }
     }
 
     /// Number of active subscribers.
@@ -305,7 +319,7 @@ impl SplitBrainDetector {
 /// TTL and are automatically released when the owning agent times out.
 #[derive(Debug)]
 pub struct LockManager {
-    locks: RwLock<HashMap<Uuid, LockRecord>>,
+    locks: RwLock<HashMap<Uuid, LockToken>>,
 }
 
 impl LockManager {
@@ -323,7 +337,7 @@ impl LockManager {
         prompt_id: Uuid,
         agent_id: Uuid,
         ttl_seconds: u64,
-    ) -> Result<LockRecord> {
+    ) -> Result<LockToken> {
         let mut locks = self.locks.write().await;
 
         if let Some(existing) = locks.get(&prompt_id) {
@@ -341,7 +355,7 @@ impl LockManager {
             );
         }
 
-        let lock = LockRecord {
+        let lock = LockToken {
             id: Uuid::new_v4(),
             prompt_id,
             agent_id,
@@ -384,7 +398,7 @@ impl LockManager {
     }
 
     /// Get the lock record for a prompt (if any).
-    pub async fn get_lock(&self, prompt_id: Uuid) -> Option<LockRecord> {
+    pub async fn get_lock(&self, prompt_id: Uuid) -> Option<LockToken> {
         let locks = self.locks.read().await;
         locks.get(&prompt_id).cloned()
     }
@@ -566,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_sync_manager_default() {
-        let manager = SyncManager::default();
+        let _manager = SyncManager::default();
         assert_eq!(SyncManager::HEARTBEAT_INTERVAL_SECS, 30);
         assert_eq!(SyncManager::AGENT_TIMEOUT_SECS, 90);
         assert_eq!(SyncManager::MAX_MISSED_HEARTBEATS, 3);
@@ -716,9 +730,18 @@ mod tests {
         let manager = LockManager::new();
         let agent_id = Uuid::new_v4();
 
-        manager.acquire_lock(Uuid::new_v4(), agent_id, 60).await.unwrap();
-        manager.acquire_lock(Uuid::new_v4(), agent_id, 60).await.unwrap();
-        manager.acquire_lock(Uuid::new_v4(), agent_id, 60).await.unwrap();
+        manager
+            .acquire_lock(Uuid::new_v4(), agent_id, 60)
+            .await
+            .unwrap();
+        manager
+            .acquire_lock(Uuid::new_v4(), agent_id, 60)
+            .await
+            .unwrap();
+        manager
+            .acquire_lock(Uuid::new_v4(), agent_id, 60)
+            .await
+            .unwrap();
 
         let count = manager.release_all_for_agent(agent_id).await;
         assert_eq!(count, 3);
@@ -730,7 +753,10 @@ mod tests {
         let agent_id = Uuid::new_v4();
 
         // Lock with 0s TTL → immediately expired.
-        manager.acquire_lock(Uuid::new_v4(), agent_id, 0).await.unwrap();
+        manager
+            .acquire_lock(Uuid::new_v4(), agent_id, 0)
+            .await
+            .unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         let cleaned = manager.cleanup_expired().await;
@@ -756,7 +782,10 @@ mod tests {
         let agent_id = Uuid::new_v4();
 
         assert_eq!(manager.active_lock_count().await, 0);
-        manager.acquire_lock(Uuid::new_v4(), agent_id, 60).await.unwrap();
+        manager
+            .acquire_lock(Uuid::new_v4(), agent_id, 60)
+            .await
+            .unwrap();
         assert_eq!(manager.active_lock_count().await, 1);
     }
 
@@ -843,12 +872,18 @@ mod tests {
         let resolution = SplitBrainResolution::KeepPartition {
             winning_partition: Uuid::new_v4(),
         };
-        assert!(matches!(resolution, SplitBrainResolution::KeepPartition { .. }));
+        assert!(matches!(
+            resolution,
+            SplitBrainResolution::KeepPartition { .. }
+        ));
 
         let resolution = SplitBrainResolution::MergePartitions {
             merged_from: vec![Uuid::new_v4()],
         };
-        assert!(matches!(resolution, SplitBrainResolution::MergePartitions { .. }));
+        assert!(matches!(
+            resolution,
+            SplitBrainResolution::MergePartitions { .. }
+        ));
 
         let resolution = SplitBrainResolution::ManualInterventionRequired {
             reason: "test".to_string(),

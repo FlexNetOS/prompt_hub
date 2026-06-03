@@ -3,10 +3,9 @@
 use crate::error::{HubError, Result};
 use crate::models::{AgentIdentity, Capability, Prompt};
 use argon2::{
-    password_hash::{rand_core::OsRng, SaltString},
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
+    password_hash::{SaltString, rand_core::OsRng},
 };
-use std::collections::HashSet;
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
@@ -75,7 +74,9 @@ impl RbacAuthManager {
         let parsed_hash =
             PasswordHash::new(hash).map_err(|e| HubError::AuthError(format!("Parse hash: {e}")))?;
         let argon2 = Argon2::default();
-        Ok(argon2.verify_password(token.as_bytes(), &parsed_hash).is_ok())
+        Ok(argon2
+            .verify_password(token.as_bytes(), &parsed_hash)
+            .is_ok())
     }
 
     // ── Capability helpers ──────────────────────────────────────────────────
@@ -83,8 +84,7 @@ impl RbacAuthManager {
     /// Returns `true` if `identity` holds `cap` **or** the blanket `Admin`
     /// capability.
     pub fn has_capability(identity: &AgentIdentity, cap: Capability) -> bool {
-        identity.capabilities.contains(&cap)
-            || identity.capabilities.contains(&Capability::Admin)
+        identity.capabilities.contains(&cap) || identity.capabilities.contains(&Capability::Admin)
     }
 
     /// Check that `identity` is authorised to perform `action`.
@@ -186,10 +186,7 @@ pub fn create_bootstrap_admin() -> (AgentIdentity, String) {
     let token = Uuid::new_v4().to_string();
     let token_hash = RbacAuthManager::hash_token(&token).unwrap_or_default();
 
-    let mut capabilities = HashSet::new();
-    capabilities.insert(Capability::Read);
-    capabilities.insert(Capability::Write);
-    capabilities.insert(Capability::Admin);
+    let capabilities = vec![Capability::Read, Capability::Write, Capability::Admin];
 
     let identity = AgentIdentity {
         id: Uuid::new_v4(),
@@ -241,8 +238,7 @@ mod tests {
 
     #[test]
     fn test_authorize_read() {
-        let mut caps = HashSet::new();
-        caps.insert(Capability::Read);
+        let caps = vec![Capability::Read];
         let identity = AgentIdentity {
             id: Uuid::new_v4(),
             name: "reader".to_string(),
@@ -257,8 +253,7 @@ mod tests {
 
     #[test]
     fn test_admin_has_all_capabilities() {
-        let mut caps = HashSet::new();
-        caps.insert(Capability::Admin);
+        let caps = vec![Capability::Admin];
         let admin = AgentIdentity {
             id: Uuid::new_v4(),
             name: "admin".to_string(),
@@ -276,8 +271,7 @@ mod tests {
 
     #[test]
     fn test_writer_can_lock_and_evolve() {
-        let mut caps = HashSet::new();
-        caps.insert(Capability::Write);
+        let caps = vec![Capability::Write];
         let identity = AgentIdentity {
             id: Uuid::new_v4(),
             name: "writer".to_string(),
@@ -294,8 +288,7 @@ mod tests {
 
     #[test]
     fn test_transfer_ownership_ok() {
-        let mut admin_caps = HashSet::new();
-        admin_caps.insert(Capability::Admin);
+        let admin_caps = vec![Capability::Admin];
         let admin = AgentIdentity {
             id: Uuid::new_v4(),
             name: "admin".to_string(),
@@ -306,14 +299,14 @@ mod tests {
         let from = AgentIdentity {
             id: Uuid::new_v4(),
             name: "from".to_string(),
-            capabilities: HashSet::new(),
+            capabilities: Vec::new(),
             token_hash: "hash".to_string(),
             specialization_score: 0.5,
         };
         let to = AgentIdentity {
             id: Uuid::new_v4(),
             name: "to".to_string(),
-            capabilities: HashSet::new(),
+            capabilities: Vec::new(),
             token_hash: "hash".to_string(),
             specialization_score: 0.5,
         };
@@ -322,8 +315,7 @@ mod tests {
 
     #[test]
     fn test_transfer_ownership_same_owner() {
-        let mut admin_caps = HashSet::new();
-        admin_caps.insert(Capability::Admin);
+        let admin_caps = vec![Capability::Admin];
         let admin = AgentIdentity {
             id: Uuid::new_v4(),
             name: "admin".to_string(),
@@ -334,7 +326,7 @@ mod tests {
         let owner = AgentIdentity {
             id: Uuid::new_v4(),
             name: "owner".to_string(),
-            capabilities: HashSet::new(),
+            capabilities: Vec::new(),
             token_hash: "hash".to_string(),
             specialization_score: 0.5,
         };
@@ -345,8 +337,7 @@ mod tests {
 
     #[test]
     fn test_transfer_ownership_non_admin_fails() {
-        let mut read_caps = HashSet::new();
-        read_caps.insert(Capability::Read);
+        let read_caps = vec![Capability::Read];
         let non_admin = AgentIdentity {
             id: Uuid::new_v4(),
             name: "reader".to_string(),
@@ -357,14 +348,14 @@ mod tests {
         let from = AgentIdentity {
             id: Uuid::new_v4(),
             name: "from".to_string(),
-            capabilities: HashSet::new(),
+            capabilities: Vec::new(),
             token_hash: "hash".to_string(),
             specialization_score: 0.5,
         };
         let to = AgentIdentity {
             id: Uuid::new_v4(),
             name: "to".to_string(),
-            capabilities: HashSet::new(),
+            capabilities: Vec::new(),
             token_hash: "hash".to_string(),
             specialization_score: 0.5,
         };
@@ -381,7 +372,10 @@ mod tests {
         let task_success = 1.0;
         let new_score = RbacAuthManager::update_specialization_score(current, task_success);
         // 0.9 * 0.5 + 0.1 * 1.0 = 0.45 + 0.1 = 0.55
-        assert!((new_score - 0.55).abs() < 0.001, "EMA update incorrect: {new_score}");
+        assert!(
+            (new_score - 0.55).abs() < 0.001,
+            "EMA update incorrect: {new_score}"
+        );
     }
 
     #[test]
@@ -438,8 +432,7 @@ mod tests {
 
     #[test]
     fn test_swarm_only_capability() {
-        let mut caps = HashSet::new();
-        caps.insert(Capability::SwarmOnly);
+        let caps = vec![Capability::SwarmOnly];
         let identity = AgentIdentity {
             id: Uuid::new_v4(),
             name: "swarm".to_string(),
@@ -450,7 +443,10 @@ mod tests {
         // SwarmOnly does not grant Read/Write/Admin
         assert!(RbacAuthManager::authorize_action(&identity, Action::Read).is_err());
         // But has_capability should work for SwarmOnly specifically
-        assert!(RbacAuthManager::has_capability(&identity, Capability::SwarmOnly));
+        assert!(RbacAuthManager::has_capability(
+            &identity,
+            Capability::SwarmOnly
+        ));
     }
 
     // ── Send / Sync ─────────────────────────────────────────────────────────

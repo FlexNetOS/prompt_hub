@@ -54,11 +54,21 @@ impl PrivacyScanner {
             info!("No privacy issues found");
         }
 
+        let risk_level = if secrets_found > 0 {
+            "high"
+        } else if pii_found > 0 {
+            "medium"
+        } else {
+            "low"
+        }
+        .to_string();
+
         Ok(PrivacyReport {
             issues,
             sanitized: false,
             secrets_found,
             pii_found,
+            risk_level,
         })
     }
 
@@ -70,19 +80,20 @@ impl PrivacyScanner {
         static PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
             vec![
                 (
-                    Regex::new(r"(?i)(api[_-]?key\s*[:=]\s*)['\"]?[a-zA-Z0-9_\-]{20,}['\"]?").unwrap(),
+                    Regex::new(r#"(?i)(api[_-]?key\s*[:=]\s*)['"]?[a-zA-Z0-9_\-]{20,}['"]?"#)
+                        .unwrap(),
                     "${1}[REDACTED]",
                 ),
                 (
-                    Regex::new(r"(?i)(password\s*[:=]\s*)['\"]?[^\s'\"]+['\"]?").unwrap(),
+                    Regex::new(r#"(?i)(password\s*[:=]\s*)['"]?[^\s'"]+['"]?"#).unwrap(),
                     "${1}[REDACTED]",
                 ),
                 (
-                    Regex::new(r"(?i)(secret\s*[:=]\s*)['\"]?[a-zA-Z0-9_\-]{10,}['\"]?").unwrap(),
+                    Regex::new(r#"(?i)(secret\s*[:=]\s*)['"]?[a-zA-Z0-9_\-]{10,}['"]?"#).unwrap(),
                     "${1}[REDACTED]",
                 ),
                 (
-                    Regex::new(r"(?i)(token\s*[:=]\s*)['\"]?[a-zA-Z0-9_\-\.]{10,}['\"]?").unwrap(),
+                    Regex::new(r#"(?i)(token\s*[:=]\s*)['"]?[a-zA-Z0-9_\-\.]{10,}['"]?"#).unwrap(),
                     "${1}[REDACTED]",
                 ),
                 (
@@ -115,11 +126,11 @@ impl SecretDetector {
         static SECRET_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
             vec![
                 (
-                    Regex::new(r"(?i)(api[_-]?key|apikey)\s*[:=]\s*['\"]?[a-zA-Z0-9_\-]{16,}").unwrap(),
+                    Regex::new(r#"(?i)(api[_-]?key|apikey)\s*[:=]\s*['"]?[a-zA-Z0-9_\-]{16,}"#).unwrap(),
                     "api_key",
                 ),
                 (
-                    Regex::new(r"(?i)(aws_access_key_id|aws_secret_access_key)\s*[:=]\s*['\"]?[A-Z0-9]{20}").unwrap(),
+                    Regex::new(r#"(?i)(aws_access_key_id|aws_secret_access_key)\s*[:=]\s*['"]?[A-Z0-9]{20}"#).unwrap(),
                     "aws_credential",
                 ),
                 (
@@ -131,7 +142,7 @@ impl SecretDetector {
                     "github_oauth",
                 ),
                 (
-                    Regex::new(r"sk-[a-zA-Z0-9]{48}").unwrap(),
+                    Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(),
                     "openai_api_key",
                 ),
                 (
@@ -139,7 +150,7 @@ impl SecretDetector {
                     "bearer_token",
                 ),
                 (
-                    Regex::new(r"(?i)private[_-]?key\s*[:=]\s*['\"]?[a-zA-Z0-9+/=]{20,}").unwrap(),
+                    Regex::new(r#"(?i)private[_-]?key\s*[:=]\s*['"]?[a-zA-Z0-9+/=]{20,}"#).unwrap(),
                     "private_key",
                 ),
             ]
@@ -176,9 +187,8 @@ impl PiiDetector {
         }
 
         // Phone (US format: 123-456-7890, 123.456.7890, 1234567890)
-        static PHONE_RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b").unwrap()
-        });
+        static PHONE_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b").unwrap());
         for mat in PHONE_RE.find_iter(text) {
             issues.push(PrivacyIssue::Pii {
                 type_: "phone".to_string(),
@@ -187,9 +197,8 @@ impl PiiDetector {
         }
 
         // SSN (US format: 123-45-6789)
-        static SSN_RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap()
-        });
+        static SSN_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap());
         for mat in SSN_RE.find_iter(text) {
             issues.push(PrivacyIssue::Pii {
                 type_: "ssn".to_string(),
@@ -198,9 +207,8 @@ impl PiiDetector {
         }
 
         // Credit card (simplified pattern: 16 digits in groups of 4)
-        static CC_RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b").unwrap()
-        });
+        static CC_RE: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b").unwrap());
         for mat in CC_RE.find_iter(text) {
             issues.push(PrivacyIssue::Pii {
                 type_: "credit_card".to_string(),
@@ -362,7 +370,9 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            issues.iter().any(|i| matches!(i, PrivacyIssue::Secret { key } if key.contains("bearer"))),
+            issues
+                .iter()
+                .any(|i| matches!(i, PrivacyIssue::Secret { key } if key.contains("bearer"))),
             "Should detect bearer token"
         );
     }

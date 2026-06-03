@@ -3,6 +3,18 @@
 use crate::models::*;
 use tracing::instrument;
 
+/// A rich image placeholder descriptor used by the multimodal engine.
+///
+/// The canonical [`MultimodalConfig`] stores only placeholder *ids*
+/// (`Vec<String>`); this type carries the additional metadata the engine
+/// needs to validate and render an individual placeholder.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ImagePlaceholder {
+    pub id: String,
+    pub description: String,
+    pub mime_type: String,
+}
+
 /// Multi-modal prompt support engine for image placeholders and MIME validation.
 #[derive(Debug, Clone, Default)]
 pub struct MultimodalEngine;
@@ -22,27 +34,17 @@ pub const SUPPORTED_IMAGE_TYPES: &[&str] = &[
 pub const MAX_IMAGE_SIZE_BYTES: usize = 10 * 1024 * 1024;
 
 impl MultimodalEngine {
-    /// Render image placeholders in a template with their descriptions.
+    /// Render image placeholders in a template.
     ///
-    /// Replaces `{{placeholder_id}}` markers with `[Image: description]`.
-    ///
-    /// # Example
-    /// ```
-    /// let config = MultimodalConfig {
-    ///     image_placeholders: vec![
-    ///         ImagePlaceholder { id: "hero".to_string(), description: "Hero banner".to_string(), mime_type: "image/png".to_string() },
-    ///     ],
-    /// };
-    /// let result = MultimodalEngine::render_placeholders("Show {{hero}} here", &config);
-    /// assert!(result.contains("Hero banner"));
-    /// ```
+    /// Replaces `{{placeholder_id}}` markers with `[Image: placeholder_id]`
+    /// for every placeholder id declared in the config.
     #[instrument]
     pub fn render_placeholders(template: &str, config: &MultimodalConfig) -> String {
         let mut result = template.to_string();
 
-        for placeholder in &config.image_placeholders {
-            let marker = format!("{{{{{}}}}}", placeholder.id);
-            let replacement = format!("[Image: {}]", placeholder.description);
+        for id in &config.image_placeholders {
+            let marker = format!("{{{{{}}}}}", id);
+            let replacement = format!("[Image: {}]", id);
             result = result.replace(&marker, &replacement);
         }
 
@@ -122,11 +124,8 @@ impl MultimodalEngine {
         config: &MultimodalConfig,
     ) -> Result<(), Vec<String>> {
         let referenced = Self::extract_placeholder_ids(template);
-        let defined: std::collections::HashSet<_> = config
-            .image_placeholders
-            .iter()
-            .map(|p| p.id.clone())
-            .collect();
+        let defined: std::collections::HashSet<_> =
+            config.image_placeholders.iter().cloned().collect();
 
         let missing: Vec<_> = referenced
             .into_iter()
@@ -148,48 +147,33 @@ mod tests {
     #[test]
     fn test_render_placeholders() {
         let config = MultimodalConfig {
-            image_placeholders: vec![
-                ImagePlaceholder {
-                    id: "hero".to_string(),
-                    description: "Hero banner".to_string(),
-                    mime_type: "image/png".to_string(),
-                },
-            ],
+            supports_images: true,
+            image_placeholders: vec!["hero".to_string()],
+            ..Default::default()
         };
         let result = MultimodalEngine::render_placeholders("Show {{hero}} here", &config);
-        assert!(result.contains("Hero banner"));
+        assert!(result.contains("[Image: hero]"));
         assert!(!result.contains("{{hero}}"));
     }
 
     #[test]
     fn test_render_multiple_placeholders() {
         let config = MultimodalConfig {
-            image_placeholders: vec![
-                ImagePlaceholder {
-                    id: "header".to_string(),
-                    description: "Header image".to_string(),
-                    mime_type: "image/jpeg".to_string(),
-                },
-                ImagePlaceholder {
-                    id: "footer".to_string(),
-                    description: "Footer logo".to_string(),
-                    mime_type: "image/png".to_string(),
-                },
-            ],
+            supports_images: true,
+            image_placeholders: vec!["header".to_string(), "footer".to_string()],
+            ..Default::default()
         };
         let result =
             MultimodalEngine::render_placeholders("{{header}} content {{footer}}", &config);
-        assert!(result.contains("Header image"));
-        assert!(result.contains("Footer logo"));
+        assert!(result.contains("[Image: header]"));
+        assert!(result.contains("[Image: footer]"));
         assert!(!result.contains("{{header}}"));
         assert!(!result.contains("{{footer}}"));
     }
 
     #[test]
     fn test_render_no_placeholders() {
-        let config = MultimodalConfig {
-            image_placeholders: vec![],
-        };
+        let config = MultimodalConfig::default();
         let template = "Just plain text without any markers.";
         let result = MultimodalEngine::render_placeholders(template, &config);
         assert_eq!(result, template);
@@ -245,7 +229,9 @@ mod tests {
     fn test_file_size_validation() {
         assert!(MultimodalEngine::validate_file_size(1024));
         assert!(MultimodalEngine::validate_file_size(MAX_IMAGE_SIZE_BYTES));
-        assert!(!MultimodalEngine::validate_file_size(MAX_IMAGE_SIZE_BYTES + 1));
+        assert!(!MultimodalEngine::validate_file_size(
+            MAX_IMAGE_SIZE_BYTES + 1
+        ));
     }
 
     #[test]
@@ -305,22 +291,16 @@ mod tests {
     #[test]
     fn test_validate_template_references_ok() {
         let config = MultimodalConfig {
-            image_placeholders: vec![
-                ImagePlaceholder {
-                    id: "hero".to_string(),
-                    description: "Hero".to_string(),
-                    mime_type: "image/png".to_string(),
-                },
-            ],
+            supports_images: true,
+            image_placeholders: vec!["hero".to_string()],
+            ..Default::default()
         };
         assert!(MultimodalEngine::validate_template_references("Show {{hero}}", &config).is_ok());
     }
 
     #[test]
     fn test_validate_template_references_missing() {
-        let config = MultimodalConfig {
-            image_placeholders: vec![],
-        };
+        let config = MultimodalConfig::default();
         let result = MultimodalEngine::validate_template_references("Show {{hero}}", &config);
         assert!(result.is_err());
         let missing = result.unwrap_err();

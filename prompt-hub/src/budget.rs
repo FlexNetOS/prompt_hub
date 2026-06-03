@@ -54,7 +54,9 @@ impl BudgetTracker {
     #[instrument(skip(self), fields(amount = amount_usd))]
     pub fn record_spend(&self, amount_usd: f64) -> BudgetAlert {
         let micros = (amount_usd * 1_000_000.0) as u64;
-        let previous = self.current_spend_micros.fetch_add(micros, Ordering::SeqCst);
+        let previous = self
+            .current_spend_micros
+            .fetch_add(micros, Ordering::SeqCst);
         let total = previous + micros;
         let budget = self.monthly_budget_usd.load(Ordering::SeqCst);
 
@@ -69,10 +71,11 @@ impl BudgetTracker {
             warn!("Budget 100% exceeded: {}%", percent);
             return BudgetAlert::HundredPercent;
         }
-        if percent >= alert_threshold
-            && !self.eighty_percent_alerted.swap(true, Ordering::SeqCst)
-        {
-            warn!("Budget {}% threshold crossed: {}%", alert_threshold, percent);
+        if percent >= alert_threshold && !self.eighty_percent_alerted.swap(true, Ordering::SeqCst) {
+            warn!(
+                "Budget {}% threshold crossed: {}%",
+                alert_threshold, percent
+            );
             return BudgetAlert::EightyPercent;
         }
         if percent >= 50 && !self.fifty_percent_alerted.swap(true, Ordering::SeqCst) {

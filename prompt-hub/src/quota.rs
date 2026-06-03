@@ -66,7 +66,10 @@ impl QuotaEnforcer {
         // Check burst first (most restrictive)
         let burst_current = self.burst_used.load(Ordering::SeqCst);
         if burst_current + tokens > burst_limit {
-            warn!("Burst quota exceeded: {}/{} (request: {})", burst_current, burst_limit, tokens);
+            warn!(
+                "Burst quota exceeded: {}/{} (request: {})",
+                burst_current, burst_limit, tokens
+            );
             return Ok(QuotaStatus::BurstExceeded);
         }
 
@@ -119,7 +122,8 @@ impl QuotaEnforcer {
     /// Update quota configuration.
     pub fn configure(&self, config: &QuotaConfig) {
         self.daily_limit.store(config.daily_limit, Ordering::SeqCst);
-        self.hourly_limit.store(config.hourly_limit, Ordering::SeqCst);
+        self.hourly_limit
+            .store(config.hourly_limit, Ordering::SeqCst);
         self.burst_limit.store(config.burst_limit, Ordering::SeqCst);
     }
 
@@ -187,7 +191,10 @@ mod tests {
     #[test]
     fn test_quota_blocks_burst_exceeded() {
         let q = QuotaEnforcer::new(1000, 500, 100);
-        assert_eq!(q.check_and_consume(101).unwrap(), QuotaStatus::BurstExceeded);
+        assert_eq!(
+            q.check_and_consume(101).unwrap(),
+            QuotaStatus::BurstExceeded
+        );
     }
 
     #[test]
@@ -200,7 +207,10 @@ mod tests {
     #[test]
     fn test_quota_blocks_hourly_exceeded() {
         let q = QuotaEnforcer::new(1000, 100, 200);
-        assert_eq!(q.check_and_consume(101).unwrap(), QuotaStatus::HourlyExceeded);
+        assert_eq!(
+            q.check_and_consume(101).unwrap(),
+            QuotaStatus::HourlyExceeded
+        );
     }
 
     #[test]

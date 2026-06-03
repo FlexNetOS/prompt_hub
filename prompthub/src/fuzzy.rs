@@ -31,7 +31,9 @@ impl FuzzyPromptFinder {
             .iter()
             .filter(|p| {
                 p.name.to_lowercase().contains(&query_lower)
-                    || p.tags.iter().any(|t| t.to_lowercase().contains(&query_lower))
+                    || p.tags
+                        .iter()
+                        .any(|t| t.to_lowercase().contains(&query_lower))
                     || p.system_prompt.to_lowercase().contains(&query_lower)
                     || p.user_template.to_lowercase().contains(&query_lower)
             })
@@ -39,7 +41,11 @@ impl FuzzyPromptFinder {
     }
 
     /// Find prompts with a minimum score threshold
-    pub fn find_with_threshold<'a>(prompts: &'a [Prompt], query: &str, threshold: f64) -> Vec<(&'a Prompt, f64)> {
+    pub fn find_with_threshold<'a>(
+        prompts: &'a [Prompt],
+        query: &str,
+        threshold: f64,
+    ) -> Vec<(&'a Prompt, f64)> {
         if query.is_empty() || threshold <= 0.0 {
             return prompts.iter().map(|p| (p, 1.0)).collect();
         }
@@ -51,7 +57,10 @@ impl FuzzyPromptFinder {
                 if p.name.to_lowercase().contains(&query_lower) {
                     score += 0.5;
                 }
-                if p.tags.iter().any(|t| t.to_lowercase().contains(&query_lower)) {
+                if p.tags
+                    .iter()
+                    .any(|t| t.to_lowercase().contains(&query_lower))
+                {
                     score += 0.3;
                 }
                 if p.system_prompt.to_lowercase().contains(&query_lower) {
@@ -109,11 +118,14 @@ mod tests {
     #[test]
     fn test_fuzzy_find_by_name() {
         let prompts = vec![
-            create_test_prompt("error-handler", vec!["rust", "error"], "Handle errors gracefully."),
+            create_test_prompt(
+                "error-handler",
+                vec!["rust", "error"],
+                "Handle errors gracefully.",
+            ),
             create_test_prompt("logger-config", vec!["config"], "Configure logging."),
         ];
-        let finder = FuzzyPromptFinder::new();
-        let results = finder.find(&prompts, "error");
+        let results = FuzzyPromptFinder::find(&prompts, "error");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "error-handler");
     }
@@ -124,8 +136,7 @@ mod tests {
             create_test_prompt("a", vec!["rust"], "system"),
             create_test_prompt("b", vec!["python"], "system"),
         ];
-        let finder = FuzzyPromptFinder::new();
-        let results = finder.find(&prompts, "rust");
+        let results = FuzzyPromptFinder::find(&prompts, "rust");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "a");
     }
@@ -136,24 +147,21 @@ mod tests {
             create_test_prompt("a", vec![], "sys"),
             create_test_prompt("b", vec![], "sys"),
         ];
-        let finder = FuzzyPromptFinder::new();
-        let results = finder.find(&prompts, "");
+        let results = FuzzyPromptFinder::find(&prompts, "");
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_fuzzy_find_no_match() {
         let prompts = vec![create_test_prompt("a", vec![], "system")];
-        let finder = FuzzyPromptFinder::new();
-        let results = finder.find(&prompts, "xyz-nonexistent");
+        let results = FuzzyPromptFinder::find(&prompts, "xyz-nonexistent");
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_fuzzy_find_case_insensitive() {
         let prompts = vec![create_test_prompt("ErrorHandler", vec![], "system")];
-        let finder = FuzzyPromptFinder::new();
-        let results = finder.find(&prompts, "error");
+        let results = FuzzyPromptFinder::find(&prompts, "error");
         assert_eq!(results.len(), 1);
     }
 
@@ -163,8 +171,7 @@ mod tests {
             create_test_prompt("error-handler", vec!["rust", "error"], "Handle errors."),
             create_test_prompt("other", vec!["misc"], "Unrelated prompt."),
         ];
-        let finder = FuzzyPromptFinder::new();
-        let results = finder.find_with_threshold(&prompts, "error", 0.4);
+        let results = FuzzyPromptFinder::find_with_threshold(&prompts, "error", 0.4);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.name, "error-handler");
     }

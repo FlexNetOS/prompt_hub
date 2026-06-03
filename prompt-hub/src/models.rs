@@ -27,7 +27,7 @@ impl Default for Status {
 }
 
 /// Domain classification for prompts
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum)]
 pub enum Domain {
     Coding,
     DevOps,
@@ -37,6 +37,7 @@ pub enum Domain {
     DataScience,
     Testing,
     Documentation,
+    Writing,
     General,
 }
 
@@ -46,8 +47,12 @@ impl Default for Domain {
     }
 }
 
-/// Role classification for intent
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum)]
+/// Role classification for intent.
+///
+/// Note: this enum carries a data-bearing `Custom(String)` variant, so it
+/// intentionally does NOT derive `clap::ValueEnum` (which requires all-unit
+/// variants) nor `Copy`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Role {
     Architect,
     Developer,
@@ -59,6 +64,8 @@ pub enum Role {
     Reviewer,
     Implementer,
     Refiner,
+    Critic,
+    Custom(String),
 }
 
 impl Default for Role {
@@ -133,8 +140,11 @@ impl Default for EvolutionStrategy {
 // Identity and metadata types
 // ─────────────────────────────────────────────
 
-/// Identity of an agent in the swarm
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Identity of an agent in the swarm.
+///
+/// Holds a floating-point `specialization_score`, so it cannot derive
+/// `Eq`/`Hash`; it is never used as a map key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentIdentity {
     pub id: Uuid,
     pub name: String,
@@ -155,8 +165,11 @@ impl Default for AgentIdentity {
     }
 }
 
-/// Metadata associated with a prompt
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Metadata associated with a prompt.
+///
+/// Holds a floating-point `success_rate` and a `HashMap`, so it cannot derive
+/// `Eq`/`Hash`; it is never used as a map key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PromptMeta {
     pub description: Option<String>,
     pub usage_count: u64,
@@ -179,15 +192,18 @@ impl Default for PromptMeta {
     }
 }
 
-/// Metrics for prompt performance
+/// Metrics for prompt performance.
+///
+/// Shaped to match the `metrics` table (migration 0001):
+/// `usage_count, success_rate, avg_tokens, avg_latency_ms, last_used, cost_estimate_usd`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PromptMetrics {
     pub usage_count: u64,
     pub success_rate: f64,
-    pub avg_latency_ms: f64,
-    pub token_usage_total: u64,
+    pub avg_tokens: u64,
+    pub avg_latency_ms: u64,
     pub last_used: Option<DateTime<Utc>>,
-    pub rating: Option<f64>,
+    pub cost_estimate_usd: f64,
 }
 
 impl Default for PromptMetrics {
@@ -195,10 +211,10 @@ impl Default for PromptMetrics {
         Self {
             usage_count: 0,
             success_rate: 0.0,
-            avg_latency_ms: 0.0,
-            token_usage_total: 0,
+            avg_tokens: 0,
+            avg_latency_ms: 0,
             last_used: None,
-            rating: None,
+            cost_estimate_usd: 0.0,
         }
     }
 }
@@ -269,6 +285,21 @@ pub enum Capability {
     SwarmOnly,
     Automation,
     Execute,
+}
+
+/// Health status for plugins, providers, and subsystem checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HealthStatus {
+    Healthy,
+    Degraded,
+    Unhealthy,
+    Unknown,
+}
+
+impl Default for HealthStatus {
+    fn default() -> Self {
+        HealthStatus::Unknown
+    }
 }
 
 /// Conflict types for swarm validation
@@ -441,26 +472,42 @@ pub struct VersionRecord {
 // Supporting types
 // ─────────────────────────────────────────────
 
-/// Lock token for editing a prompt
+/// Lock token for editing a prompt.
+///
+/// Shaped to match the `locks` table (migration 0003):
+/// `id, prompt_id, agent_id, token_hash, expires_at, created_at`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockToken {
-    pub token: String,
-    pub prompt_id: Uuid,
-    pub owner: AgentIdentity,
-    pub expires_at: DateTime<Utc>,
-}
-
-/// Audit entry for tracking changes
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditEntry {
+    /// Lock row id (primary key).
     pub id: Uuid,
     pub prompt_id: Uuid,
-    pub action: AuditAction,
-    pub actor: AgentIdentity,
+    /// Id of the agent holding the lock (compared against `AgentIdentity::id`).
+    pub agent_id: Uuid,
+    /// Hash of the opaque lock token handed back to the holder.
+    pub token_hash: String,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Audit entry for tracking changes.
+///
+/// Shaped to match the `audit_log` table (migration 0002):
+/// `id, timestamp, agent_id, action, prompt_id, diff_hash, before_json, after_json, ip_address`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEntry {
+    /// Autoincrement row id.
+    pub id: i64,
     pub timestamp: DateTime<Utc>,
-    pub details: Option<String>,
-    pub before_hash: Option<String>,
-    pub after_hash: Option<String>,
+    /// Id of the agent that performed the action.
+    pub agent_id: Uuid,
+    /// Action name (stored as free-form text in the audit log).
+    pub action: String,
+    pub prompt_id: Option<Uuid>,
+    /// Hash of the before→after diff for tamper-evidence.
+    pub diff_hash: String,
+    pub before_json: Option<String>,
+    pub after_json: Option<String>,
+    pub ip_address: Option<String>,
 }
 
 /// Type of audit action
@@ -479,16 +526,22 @@ pub enum AuditAction {
     Reviewed,
 }
 
-/// Swarm bundle for role-based prompt distribution
+/// Swarm bundle for role-based prompt distribution.
+///
+/// A bundle ties a workflow to a set of per-role prompts plus the consistency
+/// and evolution analysis produced when the bundle was generated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwarmBundle {
-    pub id: Uuid,
-    pub name: String,
-    pub domain: Domain,
-    pub prompts: Vec<Prompt>,
+    /// Workflow this bundle belongs to.
+    pub workflow_id: Uuid,
+    /// Prompt text keyed by role.
+    pub role_prompts: HashMap<Role, String>,
+    /// Standardized handoff template between roles.
     pub handoff_template: String,
-    pub target_roles: Vec<Role>,
-    pub created_at: DateTime<Utc>,
+    /// Conflicts detected during consistency checking.
+    pub consistency_report: Vec<Conflict>,
+    /// Suggested evolution actions for this bundle.
+    pub evolution_suggestions: Vec<String>,
 }
 
 // ─────────────────────────────────────────────
@@ -521,21 +574,32 @@ impl Default for Intent {
     }
 }
 
-/// User input types (multimodal)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum UserInput {
-    Text(String),
-    Voice(Vec<u8>),
-    Screenshot(Vec<u8>),
-    Sketch(Vec<u8>),
-    FileUpload(Vec<FileData>),
-    Mixed(Vec<UserInput>),
+/// Modality of a piece of user input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InputType {
+    Text,
+    Voice,
+    Screenshot,
+    Sketch,
+    File,
+    Url,
 }
 
-impl Default for UserInput {
+impl Default for InputType {
     fn default() -> Self {
-        UserInput::Text(String::new())
+        InputType::Text
     }
+}
+
+/// A single multimodal user input.
+///
+/// Carries the raw bytes (`raw_data`) plus a normalized text projection
+/// (`extracted_text`) used by intent classification and privacy scanning.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UserInput {
+    pub input_type: InputType,
+    pub raw_data: Vec<u8>,
+    pub extracted_text: String,
 }
 
 /// Uploaded file data
@@ -549,6 +613,8 @@ pub struct FileData {
 /// Project context gathered from filesystem
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectContext {
+    /// Filesystem path the context was gathered from.
+    pub project_path: String,
     pub language: String,
     pub framework: String,
     pub database: Option<String>,
@@ -562,6 +628,7 @@ pub struct ProjectContext {
 impl Default for ProjectContext {
     fn default() -> Self {
         Self {
+            project_path: String::new(),
             language: "unknown".to_string(),
             framework: "unknown".to_string(),
             database: None,
@@ -585,12 +652,35 @@ pub struct FileEntry {
 /// Generated artifact from the engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Artifact {
-    Prompt { system: String, user: String },
-    Code { path: String, content: String, language: String },
-    Config { path: String, content: String, format: String },
-    Test { path: String, content: String, framework: String },
-    Migration { path: String, content: String, database: String },
-    Documentation { title: String, content: String, format: String },
+    Prompt {
+        system: String,
+        user: String,
+    },
+    Code {
+        path: String,
+        content: String,
+        language: String,
+    },
+    Config {
+        path: String,
+        content: String,
+        format: String,
+    },
+    Test {
+        path: String,
+        content: String,
+        framework: String,
+    },
+    Migration {
+        path: String,
+        content: String,
+        database: String,
+    },
+    Documentation {
+        title: String,
+        content: String,
+        format: String,
+    },
 }
 
 /// Execution plan step
@@ -666,6 +756,8 @@ pub struct CostEstimate {
     pub tokens_input: u64,
     pub tokens_output: u64,
     pub cost_usd: f64,
+    /// Alias surfaced to callers that report the estimated dollar cost.
+    pub estimated_cost_usd: f64,
     pub time_seconds: u32,
     pub confidence: f64,
 }
@@ -676,6 +768,7 @@ impl Default for CostEstimate {
             tokens_input: 0,
             tokens_output: 0,
             cost_usd: 0.0,
+            estimated_cost_usd: 0.0,
             time_seconds: 0,
             confidence: 0.0,
         }
@@ -690,6 +783,8 @@ pub struct ConfidenceScore {
     pub skill_match: f64,
     pub historical_success: f64,
     pub overall: f64,
+    /// Aggregate confidence surfaced to callers (mirrors `overall`).
+    pub score: f64,
     pub requires_confirmation: bool,
 }
 
@@ -701,6 +796,7 @@ impl Default for ConfidenceScore {
             skill_match: 0.5,
             historical_success: 0.5,
             overall: 0.5,
+            score: 0.5,
             requires_confirmation: true,
         }
     }
@@ -826,7 +922,10 @@ impl Default for UserProfile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserCorrection {
     pub original_intent: String,
-    pub correction: String,
+    /// The corrected/expected output the user supplied.
+    pub corrected_output: String,
+    /// Free-form feedback explaining the correction.
+    pub feedback: String,
     pub agent_id: Uuid,
     pub timestamp: DateTime<Utc>,
 }
@@ -980,11 +1079,13 @@ mod model_tests {
     fn test_user_correction() {
         let uc = UserCorrection {
             original_intent: "build app".to_string(),
-            correction: "use react".to_string(),
+            corrected_output: "use react".to_string(),
+            feedback: "prefer a component framework".to_string(),
             agent_id: Uuid::new_v4(),
             timestamp: Utc::now(),
         };
-        assert!(!uc.correction.is_empty());
+        assert!(!uc.corrected_output.is_empty());
+        assert!(!uc.feedback.is_empty());
     }
 
     #[test]

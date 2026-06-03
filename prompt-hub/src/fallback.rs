@@ -2,14 +2,21 @@
 
 use crate::error::{HubError, Result};
 use crate::models::{Artifact, Intent, ProjectContext};
+use std::future::Future;
+use std::pin::Pin;
 use tracing::{debug, info, instrument, warn};
+
+/// Boxed future returned by [`FallbackStrategy::attempt`].
+///
+/// Returning an explicitly-boxed future (instead of `async fn`) keeps the
+/// trait object-safe so it can be stored as `Box<dyn FallbackStrategy>`.
+type AttemptFuture<'a> = Pin<Box<dyn Future<Output = Result<Artifact>> + Send + 'a>>;
 
 /// Fallback chain for resilient execution.
 ///
 /// When the primary execution strategy fails, this chain tries a sequence
 /// of fallback strategies — from switching models to simplifying the task —
 /// silently recovering so the user only sees "Done!".
-#[derive(Debug, Clone)]
 pub struct FallbackChain {
     pub strategies: Vec<Box<dyn FallbackStrategy>>,
     pub max_attempts: usize,
@@ -31,10 +38,11 @@ impl Default for FallbackChain {
 
 /// Trait for individual fallback strategies.
 ///
-/// Uses native async fn (Rust 2024 Edition) — no third-party macro needed.
+/// `attempt` returns an explicitly-boxed future (rather than `async fn`) so the
+/// trait stays object-safe and can be used as `Box<dyn FallbackStrategy>`.
 pub trait FallbackStrategy: Send + Sync {
     /// Attempt to recover by producing an artifact.
-    async fn attempt(&self, intent: &Intent, context: &ProjectContext) -> Result<Artifact>;
+    fn attempt<'a>(&'a self, intent: &'a Intent, context: &'a ProjectContext) -> AttemptFuture<'a>;
     /// Human-readable strategy name for logging.
     fn name(&self) -> &'static str;
 }
@@ -47,20 +55,22 @@ pub trait FallbackStrategy: Send + Sync {
 pub struct ModelFallback;
 
 impl FallbackStrategy for ModelFallback {
-    async fn attempt(&self, intent: &Intent, context: &ProjectContext) -> Result<Artifact> {
-        debug!(
-            "ModelFallback: trying alternative model for '{}' in {:?} project",
-            intent.raw_text, context.language
-        );
-        // In production: retry with alternative model provider
-        // For now: produce a degraded but valid artifact
-        Ok(Artifact::Documentation {
-            title: format!("Fallback response for: {}", intent.raw_text),
-            content: format!(
-                "Attempted with alternative model.\n\nIntent: {:?}\nDomain: {:?}\nTask: {:?}",
-                intent.raw_text, intent.domain, intent.task_type
-            ),
-            format: "markdown".to_string(),
+    fn attempt<'a>(&'a self, intent: &'a Intent, context: &'a ProjectContext) -> AttemptFuture<'a> {
+        Box::pin(async move {
+            debug!(
+                "ModelFallback: trying alternative model for '{}' in {:?} project",
+                intent.raw_text, context.language
+            );
+            // In production: retry with alternative model provider
+            // For now: produce a degraded but valid artifact
+            Ok(Artifact::Documentation {
+                title: format!("Fallback response for: {}", intent.raw_text),
+                content: format!(
+                    "Attempted with alternative model.\n\nIntent: {:?}\nDomain: {:?}\nTask: {:?}",
+                    intent.raw_text, intent.domain, intent.task_type
+                ),
+                format: "markdown".to_string(),
+            })
         })
     }
 
@@ -77,29 +87,31 @@ impl FallbackStrategy for ModelFallback {
 pub struct SkillFallback;
 
 impl FallbackStrategy for SkillFallback {
-    async fn attempt(&self, intent: &Intent, context: &ProjectContext) -> Result<Artifact> {
-        debug!(
-            "SkillFallback: trying alternative skill for domain {:?}",
-            intent.domain
-        );
+    fn attempt<'a>(&'a self, intent: &'a Intent, context: &'a ProjectContext) -> AttemptFuture<'a> {
+        Box::pin(async move {
+            debug!(
+                "SkillFallback: trying alternative skill for domain {:?}",
+                intent.domain
+            );
 
-        let alt_skill = match intent.domain {
-            crate::models::Domain::DevOps => "manual-deploy",
-            crate::models::Domain::Security => "basic-security-checklist",
-            crate::models::Domain::Analysis => "manual-analysis",
-            _ => "general-code",
-        };
+            let alt_skill = match intent.domain {
+                crate::models::Domain::DevOps => "manual-deploy",
+                crate::models::Domain::Security => "basic-security-checklist",
+                crate::models::Domain::Analysis => "manual-analysis",
+                _ => "general-code",
+            };
 
-        Ok(Artifact::Prompt {
-            system: format!(
-                "You are using the fallback skill '{}'. \
-                 Produce the best possible output given limited context.",
-                alt_skill
-            ),
-            user: format!(
-                "Using fallback skill '{}': {} for a {} project",
-                alt_skill, intent.raw_text, context.language
-            ),
+            Ok(Artifact::Prompt {
+                system: format!(
+                    "You are using the fallback skill '{}'. \
+                     Produce the best possible output given limited context.",
+                    alt_skill
+                ),
+                user: format!(
+                    "Using fallback skill '{}': {} for a {} project",
+                    alt_skill, intent.raw_text, context.language
+                ),
+            })
         })
     }
 
@@ -116,24 +128,30 @@ impl FallbackStrategy for SkillFallback {
 pub struct SimplificationFallback;
 
 impl FallbackStrategy for SimplificationFallback {
-    async fn attempt(&self, intent: &Intent, _context: &ProjectContext) -> Result<Artifact> {
-        debug!(
-            "SimplificationFallback: reducing complexity for '{}':",
-            intent.raw_text
-        );
+    fn attempt<'a>(
+        &'a self,
+        intent: &'a Intent,
+        _context: &'a ProjectContext,
+    ) -> AttemptFuture<'a> {
+        Box::pin(async move {
+            debug!(
+                "SimplificationFallback: reducing complexity for '{}':",
+                intent.raw_text
+            );
 
-        let simplified_request = format!(
-            "SIMPLIFIED VERSION (reduced from {:?} complexity): \
-             Create a minimal implementation of: {}",
-            intent.complexity, intent.raw_text
-        );
+            let simplified_request = format!(
+                "SIMPLIFIED VERSION (reduced from {:?} complexity): \
+                 Create a minimal implementation of: {}",
+                intent.complexity, intent.raw_text
+            );
 
-        Ok(Artifact::Prompt {
-            system: "You are in simplified fallback mode. \
-                     Produce a minimal but working implementation. \
-                     Skip advanced features, focus on core functionality."
-                .to_string(),
-            user: simplified_request,
+            Ok(Artifact::Prompt {
+                system: "You are in simplified fallback mode. \
+                         Produce a minimal but working implementation. \
+                         Skip advanced features, focus on core functionality."
+                    .to_string(),
+                user: simplified_request,
+            })
         })
     }
 
@@ -150,27 +168,33 @@ impl FallbackStrategy for SimplificationFallback {
 pub struct ManualDecompositionFallback;
 
 impl FallbackStrategy for ManualDecompositionFallback {
-    async fn attempt(&self, intent: &Intent, _context: &ProjectContext) -> Result<Artifact> {
-        debug!(
-            "ManualDecompositionFallback: breaking '{}' into smaller steps",
-            intent.raw_text
-        );
+    fn attempt<'a>(
+        &'a self,
+        intent: &'a Intent,
+        _context: &'a ProjectContext,
+    ) -> AttemptFuture<'a> {
+        Box::pin(async move {
+            debug!(
+                "ManualDecompositionFallback: breaking '{}' into smaller steps",
+                intent.raw_text
+            );
 
-        let steps = vec![
-            "Step 1: Set up project structure",
-            "Step 2: Implement core functionality",
-            "Step 3: Add basic styling",
-            "Step 4: Add error handling",
-        ];
+            let steps = vec![
+                "Step 1: Set up project structure",
+                "Step 2: Implement core functionality",
+                "Step 3: Add basic styling",
+                "Step 4: Add error handling",
+            ];
 
-        Ok(Artifact::Documentation {
-            title: format!("Decomposed Plan: {}", intent.raw_text),
-            content: format!(
-                "The request has been decomposed into smaller steps:\n\n{}\n\n\
-                 Please execute each step individually.",
-                steps.join("\n")
-            ),
-            format: "markdown".to_string(),
+            Ok(Artifact::Documentation {
+                title: format!("Decomposed Plan: {}", intent.raw_text),
+                content: format!(
+                    "The request has been decomposed into smaller steps:\n\n{}\n\n\
+                     Please execute each step individually.",
+                    steps.join("\n")
+                ),
+                format: "markdown".to_string(),
+            })
         })
     }
 
@@ -189,11 +213,7 @@ impl FallbackChain {
     /// Returns the first successful artifact, or an error if all strategies fail.
     /// When a non-first strategy succeeds, an informational log is emitted.
     #[instrument(skip(self, intent, context))]
-    pub async fn execute(
-        &self,
-        intent: &Intent,
-        context: &ProjectContext,
-    ) -> Result<Artifact> {
+    pub async fn execute(&self, intent: &Intent, context: &ProjectContext) -> Result<Artifact> {
         for (i, strategy) in self.strategies.iter().enumerate() {
             if i >= self.max_attempts {
                 warn!("Max fallback attempts ({}) reached", self.max_attempts);
@@ -239,7 +259,7 @@ impl FallbackChain {
     }
 
     /// Execute with a custom list of pre-selected strategies.
-    #[instrument(skip(self, intent, context, strategies))]
+    #[instrument(skip(self, intent, context, strategy_indices))]
     pub async fn execute_with(
         &self,
         intent: &Intent,
