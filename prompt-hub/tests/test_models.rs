@@ -56,7 +56,7 @@ fn test_semver_parsing() {
 
 #[test]
 fn test_status_variants() {
-    let statuses = vec![
+    let statuses = [
         Status::Draft,
         Status::Active,
         Status::Deprecated,
@@ -91,7 +91,7 @@ fn test_role_variants() {
 
 #[test]
 fn test_evolution_strategy_variants() {
-    let strategies = vec![
+    let strategies = [
         EvolutionStrategy::Mutate,
         EvolutionStrategy::Crossover,
         EvolutionStrategy::AbTest,
@@ -235,7 +235,7 @@ fn test_intent_default() {
 
 #[test]
 fn test_complexity_variants() {
-    let variants = vec![
+    let variants = [
         Complexity::Simple,
         Complexity::Moderate,
         Complexity::Complex,
@@ -246,7 +246,7 @@ fn test_complexity_variants() {
 
 #[test]
 fn test_urgency_variants() {
-    let variants = vec![
+    let variants = [
         Urgency::Low,
         Urgency::Medium,
         Urgency::High,
@@ -257,7 +257,7 @@ fn test_urgency_variants() {
 
 #[test]
 fn test_skill_level_variants() {
-    let variants = vec![
+    let variants = [
         SkillLevel::Beginner,
         SkillLevel::Intermediate,
         SkillLevel::Expert,
@@ -267,7 +267,7 @@ fn test_skill_level_variants() {
 
 #[test]
 fn test_task_type_variants() {
-    let variants = vec![
+    let variants = [
         TaskType::Create,
         TaskType::Fix,
         TaskType::Improve,
@@ -304,7 +304,7 @@ fn test_file_entry_creation() {
 
 #[test]
 fn test_artifact_variants() {
-    let artifacts = vec![
+    let artifacts = [
         Artifact::Prompt {
             system: "sys".to_string(),
             user: "user".to_string(),

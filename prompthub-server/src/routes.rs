@@ -258,11 +258,11 @@ pub async fn search_prompts(
     let mode = query
         .mode
         .as_deref()
-        .and_then(|m| match m {
-            "fast" => Some(SearchMode::Fast),
-            "smart" => Some(SearchMode::Smart),
-            "hybrid" => Some(SearchMode::Hybrid),
-            _ => Some(SearchMode::Hybrid),
+        .map(|m| match m {
+            "fast" => SearchMode::Fast,
+            "smart" => SearchMode::Smart,
+            "hybrid" => SearchMode::Hybrid,
+            _ => SearchMode::Hybrid,
         })
         .unwrap_or(SearchMode::Hybrid);
 

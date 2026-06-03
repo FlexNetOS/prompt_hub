@@ -95,7 +95,7 @@ impl FastEngine {
         let mut fts = term_tokens.join(" OR ");
 
         if let Some(ref domain) = filters.domain {
-            fts.push_str(&format!(" AND domain:'{}'", format!("{domain:?}")));
+            fts.push_str(&format!(" AND domain:'{domain:?}'"));
         }
         if !filters.tags.is_empty() {
             let tag_clause = filters
@@ -917,7 +917,7 @@ mod tests {
         let v = engine.mock_embed("range check");
         for &val in &v {
             assert!(
-                val >= -1.0 && val <= 1.0,
+                (-1.0..=1.0).contains(&val),
                 "embedding values must be in [-1, 1]"
             );
         }

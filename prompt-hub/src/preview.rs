@@ -317,7 +317,7 @@ mod tests {
             total_estimated_duration_secs: 240,
         };
 
-        let engine = PreviewEngine::default();
+        let engine = PreviewEngine;
         let preview = engine.generate(&plan).await.unwrap();
 
         match preview {
@@ -347,7 +347,7 @@ mod tests {
             },
         ];
 
-        let engine = PreviewEngine::default();
+        let engine = PreviewEngine;
         let preview = engine.preview_artifacts(&artifacts).await.unwrap();
 
         match preview {
@@ -362,7 +362,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_preview_database() {
-        let engine = PreviewEngine::default();
+        let engine = PreviewEngine;
         let tables = vec![
             (
                 "users",
@@ -393,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_preview_api() {
-        let engine = PreviewEngine::default();
+        let engine = PreviewEngine;
         let endpoints = vec![
             ("POST", "/api/auth/login", "Authenticate user"),
             ("GET", "/api/auth/me", "Get current user"),
@@ -413,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_preview_webpage() {
-        let engine = PreviewEngine::default();
+        let engine = PreviewEngine;
         let preview = engine
             .preview_webpage(
                 "My App",

@@ -55,35 +55,32 @@ impl HubConfig {
         // Try environment variable first
         if let Ok(path_str) = std::env::var("PROMPTHUB_CONFIG") {
             let path = PathBuf::from(path_str);
-            if path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(config) = toml::from_str(&content) {
-                        return Some(config);
-                    }
-                }
+            if path.exists()
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(config) = toml::from_str(&content)
+            {
+                return Some(config);
             }
         }
 
         // Try XDG config directory
         if let Some(config_dir) = dirs::config_dir() {
             let path = config_dir.join("prompthub").join("config.toml");
-            if path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(config) = toml::from_str(&content) {
-                        return Some(config);
-                    }
-                }
+            if path.exists()
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(config) = toml::from_str(&content)
+            {
+                return Some(config);
             }
         }
 
         // Try current directory
         let local = PathBuf::from("prompthub.toml");
-        if local.exists() {
-            if let Ok(content) = std::fs::read_to_string(&local) {
-                if let Ok(config) = toml::from_str(&content) {
-                    return Some(config);
-                }
-            }
+        if local.exists()
+            && let Ok(content) = std::fs::read_to_string(&local)
+            && let Ok(config) = toml::from_str(&content)
+        {
+            return Some(config);
         }
 
         None

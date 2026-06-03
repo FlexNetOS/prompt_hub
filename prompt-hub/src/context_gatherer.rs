@@ -37,17 +37,15 @@ impl ContextGatherer {
             let path = entry.path();
 
             // Skip hidden directories and common non-project paths
-            if let Some(fname) = path.file_name().and_then(|n| n.to_str()) {
-                if fname.starts_with('.')
-                    && fname != ".github"
-                    && fname != ".prompthub"
-                    && fname != ".env"
-                    && fname != ".env.local"
-                {
-                    if path.is_dir() {
-                        continue;
-                    }
-                }
+            if let Some(fname) = path.file_name().and_then(|n| n.to_str())
+                && fname.starts_with('.')
+                && fname != ".github"
+                && fname != ".prompthub"
+                && fname != ".env"
+                && fname != ".env.local"
+                && path.is_dir()
+            {
+                continue;
             }
 
             if let Ok(meta) = entry.metadata().await {
@@ -163,20 +161,20 @@ async fn detect_database(path: &Path) -> Option<String> {
     }
 
     // Check for docker-compose with db services
-    if path.join("docker-compose.yml").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("docker-compose.yml")).await {
-            if content.contains("postgres") || content.contains("postgresql") {
-                return Some("postgres".to_string());
-            }
-            if content.contains("mysql") {
-                return Some("mysql".to_string());
-            }
-            if content.contains("mongodb") {
-                return Some("mongodb".to_string());
-            }
-            if content.contains("redis") {
-                return Some("redis".to_string());
-            }
+    if path.join("docker-compose.yml").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("docker-compose.yml")).await
+    {
+        if content.contains("postgres") || content.contains("postgresql") {
+            return Some("postgres".to_string());
+        }
+        if content.contains("mysql") {
+            return Some("mysql".to_string());
+        }
+        if content.contains("mongodb") {
+            return Some("mongodb".to_string());
+        }
+        if content.contains("redis") {
+            return Some("redis".to_string());
         }
     }
 
@@ -191,47 +189,47 @@ async fn detect_database(path: &Path) -> Option<String> {
     }
 
     // Check for SeaORM
-    if path.join("Cargo.toml").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("Cargo.toml")).await {
-            if content.contains("sea-orm") || content.contains("sqlx") {
-                return Some("postgres".to_string());
-            }
-            if content.contains("diesel") {
-                return Some("diesel-supported".to_string());
-            }
-            if content.contains("rusqlite") {
-                return Some("sqlite".to_string());
-            }
+    if path.join("Cargo.toml").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("Cargo.toml")).await
+    {
+        if content.contains("sea-orm") || content.contains("sqlx") {
+            return Some("postgres".to_string());
+        }
+        if content.contains("diesel") {
+            return Some("diesel-supported".to_string());
+        }
+        if content.contains("rusqlite") {
+            return Some("sqlite".to_string());
         }
     }
 
     // Check Python projects
-    if path.join("requirements.txt").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("requirements.txt")).await {
-            if content.contains("sqlalchemy") {
-                return Some("postgres".to_string());
-            }
-            if content.contains("django") {
-                return Some("django-orm".to_string());
-            }
-            if content.contains("psycopg") || content.contains("psycopg2") {
-                return Some("postgres".to_string());
-            }
+    if path.join("requirements.txt").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("requirements.txt")).await
+    {
+        if content.contains("sqlalchemy") {
+            return Some("postgres".to_string());
+        }
+        if content.contains("django") {
+            return Some("django-orm".to_string());
+        }
+        if content.contains("psycopg") || content.contains("psycopg2") {
+            return Some("postgres".to_string());
         }
     }
 
     // Check package.json for ORM hints
-    if path.join("package.json").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("package.json")).await {
-            if content.contains("prisma") || content.contains("@prisma") {
-                return Some("postgres".to_string());
-            }
-            if content.contains("mongoose") {
-                return Some("mongodb".to_string());
-            }
-            if content.contains("typeorm") {
-                return Some("postgres".to_string());
-            }
+    if path.join("package.json").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("package.json")).await
+    {
+        if content.contains("prisma") || content.contains("@prisma") {
+            return Some("postgres".to_string());
+        }
+        if content.contains("mongoose") {
+            return Some("mongodb".to_string());
+        }
+        if content.contains("typeorm") {
+            return Some("postgres".to_string());
         }
     }
 
@@ -251,30 +249,29 @@ async fn detect_styling(path: &Path) -> Option<String> {
     }
 
     // Check package.json for styled-components
-    if path.join("package.json").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("package.json")).await {
-            if content.contains("styled-components") {
-                return Some("styled-components".to_string());
-            }
-            if content.contains("@emotion") {
-                return Some("emotion".to_string());
-            }
-            if content.contains("sass") || content.contains("node-sass") {
-                return Some("sass".to_string());
-            }
-            if content.contains("bootstrap") {
-                return Some("bootstrap".to_string());
-            }
+    if path.join("package.json").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("package.json")).await
+    {
+        if content.contains("styled-components") {
+            return Some("styled-components".to_string());
+        }
+        if content.contains("@emotion") {
+            return Some("emotion".to_string());
+        }
+        if content.contains("sass") || content.contains("node-sass") {
+            return Some("sass".to_string());
+        }
+        if content.contains("bootstrap") {
+            return Some("bootstrap".to_string());
         }
     }
 
     // Check Cargo.toml for Rust styling
-    if path.join("Cargo.toml").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("Cargo.toml")).await {
-            if content.contains("tailwind-rs") || content.contains("tailwind_css") {
-                return Some("tailwind".to_string());
-            }
-        }
+    if path.join("Cargo.toml").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("Cargo.toml")).await
+        && (content.contains("tailwind-rs") || content.contains("tailwind_css"))
+    {
+        return Some("tailwind".to_string());
     }
 
     None
@@ -295,42 +292,41 @@ async fn detect_auth(path: &Path) -> Option<String> {
     }
 
     // Check package.json for auth libraries
-    if path.join("package.json").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("package.json")).await {
-            if content.contains("next-auth") || content.contains("@auth") {
-                return Some("next-auth".to_string());
-            }
-            if content.contains("@clerk") {
-                return Some("clerk".to_string());
-            }
-            if content.contains("passport") {
-                return Some("passport".to_string());
-            }
-            if content.contains("@supabase") {
-                return Some("supabase".to_string());
-            }
+    if path.join("package.json").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("package.json")).await
+    {
+        if content.contains("next-auth") || content.contains("@auth") {
+            return Some("next-auth".to_string());
+        }
+        if content.contains("@clerk") {
+            return Some("clerk".to_string());
+        }
+        if content.contains("passport") {
+            return Some("passport".to_string());
+        }
+        if content.contains("@supabase") {
+            return Some("supabase".to_string());
         }
     }
 
     // Check Cargo.toml for Rust auth
-    if path.join("Cargo.toml").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("Cargo.toml")).await {
-            if content.contains("jsonwebtoken") || content.contains("jwt") {
-                return Some("jwt".to_string());
-            }
-            if content.contains("oauth2") {
-                return Some("oauth2".to_string());
-            }
+    if path.join("Cargo.toml").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("Cargo.toml")).await
+    {
+        if content.contains("jsonwebtoken") || content.contains("jwt") {
+            return Some("jwt".to_string());
+        }
+        if content.contains("oauth2") {
+            return Some("oauth2".to_string());
         }
     }
 
     // Check for .env with auth vars
-    if path.join(".env").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join(".env")).await {
-            if content.contains("JWT") || content.contains("AUTH") {
-                return Some("jwt".to_string());
-            }
-        }
+    if path.join(".env").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join(".env")).await
+        && (content.contains("JWT") || content.contains("AUTH"))
+    {
+        return Some("jwt".to_string());
     }
 
     None
@@ -400,17 +396,17 @@ async fn detect_python_framework(path: &Path) -> String {
             return "fastapi".to_string();
         }
     }
-    if path.join("pyproject.toml").exists() {
-        if let Ok(content) = tokio::fs::read_to_string(path.join("pyproject.toml")).await {
-            if content.contains("django") {
-                return "django".to_string();
-            }
-            if content.contains("flask") {
-                return "flask".to_string();
-            }
-            if content.contains("fastapi") {
-                return "fastapi".to_string();
-            }
+    if path.join("pyproject.toml").exists()
+        && let Ok(content) = tokio::fs::read_to_string(path.join("pyproject.toml")).await
+    {
+        if content.contains("django") {
+            return "django".to_string();
+        }
+        if content.contains("flask") {
+            return "flask".to_string();
+        }
+        if content.contains("fastapi") {
+            return "fastapi".to_string();
         }
     }
     "unknown".to_string()

@@ -840,7 +840,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let prompt_id = Uuid::new_v4();
 
-        let events = vec![
+        let events = [
             SyncEvent::PromptAdded { prompt_id },
             SyncEvent::PromptUpdated { prompt_id },
             SyncEvent::PromptLocked {

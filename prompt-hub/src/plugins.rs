@@ -9,8 +9,12 @@ use tracing::{info, instrument, warn};
 /// Static plugin registry — plugins register themselves at compile time via
 /// the [`register_plugin`] function.  Each entry stores a human-readable name
 /// and a constructor function that produces a boxed trait object.
-static PLUGIN_REGISTRY: Mutex<Vec<(&'static str, fn() -> Box<dyn Plugin>)>> =
-    Mutex::new(Vec::new());
+/// Constructor function that produces a boxed plugin trait object.
+type PluginConstructor = fn() -> Box<dyn Plugin>;
+/// A registry entry: a human-readable name paired with its constructor.
+type PluginEntry = (&'static str, PluginConstructor);
+
+static PLUGIN_REGISTRY: Mutex<Vec<PluginEntry>> = Mutex::new(Vec::new());
 
 /// Register a plugin constructor in the static registry.
 ///

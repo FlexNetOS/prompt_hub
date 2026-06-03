@@ -203,7 +203,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_beginner_summary() {
-        let summarizer = ResultSummarizer::default();
+        let summarizer = ResultSummarizer;
         let summary = summarizer
             .summarize(&test_result(), SkillLevel::Beginner)
             .await
@@ -219,7 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intermediate_summary() {
-        let summarizer = ResultSummarizer::default();
+        let summarizer = ResultSummarizer;
         let summary = summarizer
             .summarize(&test_result(), SkillLevel::Intermediate)
             .await
@@ -234,7 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expert_summary() {
-        let summarizer = ResultSummarizer::default();
+        let summarizer = ResultSummarizer;
         let summary = summarizer
             .summarize(&test_result(), SkillLevel::Expert)
             .await
@@ -250,7 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_beginner_summary_minimal_result() {
-        let summarizer = ResultSummarizer::default();
+        let summarizer = ResultSummarizer;
         let summary = summarizer
             .summarize(&minimal_result(), SkillLevel::Beginner)
             .await
@@ -263,7 +263,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expert_summary_minimal_result() {
-        let summarizer = ResultSummarizer::default();
+        let summarizer = ResultSummarizer;
         let summary = summarizer
             .summarize(&minimal_result(), SkillLevel::Expert)
             .await
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_summarize_quick() {
-        let summarizer = ResultSummarizer::default();
+        let summarizer = ResultSummarizer;
         let summary = summarizer.summarize_quick(&test_result());
 
         assert!(summary.contains("Completed successfully"));
@@ -287,7 +287,7 @@ mod tests {
         let mut result = test_result();
         result.duration = Duration::from_secs(1);
 
-        let summarizer = ResultSummarizer::default();
+        let summarizer = ResultSummarizer;
         let summary = summarizer.beginner_summary(&result);
 
         // Should say "1 second" not "1 seconds"

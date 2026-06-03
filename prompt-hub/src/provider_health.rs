@@ -113,11 +113,7 @@ impl ProviderHealthMonitor {
             record.total_probes += 1;
 
             let total = record.error_count + record.success_count;
-            let error_rate = if total > 0 {
-                (record.error_count * 100) / total
-            } else {
-                0
-            };
+            let error_rate = (record.error_count * 100).checked_div(total).unwrap_or(0);
 
             if record.consecutive_failures >= 3
                 || error_rate as u8 >= self.error_rate_threshold_percent
@@ -151,9 +147,7 @@ impl ProviderHealthMonitor {
             .filter(|r| r.status == HealthStatus::Unhealthy)
             .count();
 
-        let overall = if unhealthy > 0 {
-            HealthStatus::Degraded
-        } else if degraded > 0 {
+        let overall = if unhealthy > 0 || degraded > 0 {
             HealthStatus::Degraded
         } else if healthy > 0 {
             HealthStatus::Healthy

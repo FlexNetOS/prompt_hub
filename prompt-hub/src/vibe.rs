@@ -23,12 +23,12 @@ pub struct VibeEngine {
 impl Default for VibeEngine {
     fn default() -> Self {
         Self {
-            intent_classifier: IntentClassifier::default(),
-            prompt_generator: PromptGenerator::default(),
-            skill_recommender: SkillRecommender::default(),
-            variable_extractor: VariableExtractor::default(),
-            default_injector: DefaultInjector::default(),
-            self_healer: SelfHealer::default(),
+            intent_classifier: IntentClassifier,
+            prompt_generator: PromptGenerator,
+            skill_recommender: SkillRecommender,
+            variable_extractor: VariableExtractor,
+            default_injector: DefaultInjector,
+            self_healer: SelfHealer,
         }
     }
 }
@@ -219,7 +219,7 @@ impl IntentClassifier {
 
     fn detect_complexity(lower: &str) -> Complexity {
         let word_count = lower.split_whitespace().count();
-        let sentence_count = lower.split(|c| c == '.' || c == '?' || c == '!').count();
+        let sentence_count = lower.split(['.', '?', '!']).count();
 
         if word_count > 20 || sentence_count > 3 {
             Complexity::Complex
@@ -560,7 +560,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intent_classifier_create() {
-        let classifier = IntentClassifier::default();
+        let classifier = IntentClassifier;
         let intent = classifier.classify("Make me a login page").await.unwrap();
 
         assert_eq!(intent.task_type, TaskType::Create);
@@ -570,7 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intent_classifier_devops() {
-        let classifier = IntentClassifier::default();
+        let classifier = IntentClassifier;
         let intent = classifier
             .classify("Deploy my app to a Kubernetes cluster with a CI/CD pipeline")
             .await
@@ -582,7 +582,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intent_classifier_security() {
-        let classifier = IntentClassifier::default();
+        let classifier = IntentClassifier;
         let intent = classifier
             .classify("Add secure login with JWT auth and password hashing")
             .await
@@ -594,7 +594,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_intent_classifier_react() {
-        let classifier = IntentClassifier::default();
+        let classifier = IntentClassifier;
         let intent = classifier
             .classify("Build a React dashboard with Google auth and Tailwind styling")
             .await
@@ -607,7 +607,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_skill_recommender() {
-        let recommender = SkillRecommender::default();
+        let recommender = SkillRecommender;
         let intent = Intent {
             domain: Domain::DevOps,
             ..Default::default()
@@ -620,8 +620,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_variable_extractor() {
-        let extractor = VariableExtractor::default();
-        let intent = IntentClassifier::default()
+        let extractor = VariableExtractor;
+        let intent = IntentClassifier
             .classify("Build with React and Google auth")
             .await
             .unwrap();
@@ -636,7 +636,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_injector() {
-        let injector = DefaultInjector::default();
+        let injector = DefaultInjector;
         let vars = HashMap::new();
         let intent = Intent::default();
         let filled = injector.inject(vars, &intent).await.unwrap();
@@ -648,7 +648,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_injector_preserves_existing() {
-        let injector = DefaultInjector::default();
+        let injector = DefaultInjector;
         let mut vars = HashMap::new();
         vars.insert("framework".to_string(), "vue".to_string());
         let intent = Intent::default();
@@ -659,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_prompt_generator() {
-        let generator = PromptGenerator::default();
+        let generator = PromptGenerator;
         let intent = Intent {
             raw_text: "Build a login page".to_string(),
             ..Default::default()

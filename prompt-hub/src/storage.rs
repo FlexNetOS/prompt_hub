@@ -304,7 +304,7 @@ impl Storage {
                     prompt.system_prompt.clone(),
                     prompt.user_template.clone(),
                     serde_json::to_string(&prompt.required_vars).unwrap_or_else(|_| "[]".to_string()),
-                    serde_json::to_value(&prompt.domain).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
+                    serde_json::to_value(prompt.domain).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
                     serde_json::to_string(&prompt.tags).unwrap_or_else(|_| "[]".to_string()),
                     serde_json::to_string(&prompt.target_roles).unwrap_or_else(|_| "[]".to_string()),
                     serde_json::to_string(&prompt.metadata).unwrap_or_else(|_| "{}".to_string()),
@@ -752,7 +752,7 @@ impl Storage {
         let conn = self.acquire().await?;
 
         // Sanitise the query: remove quotes that could break FTS syntax
-        let safe_query = query.replace('"', "").replace('\'', "");
+        let safe_query = query.replace(['"', '\''], "");
 
         let sql = format!(
             "SELECT p.id, p.name, p.version, p.status, p.system_prompt, p.user_template,

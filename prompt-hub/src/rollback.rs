@@ -164,7 +164,7 @@ impl SafeDeployer {
     #[instrument]
     pub async fn restore_snapshot(&self, snapshot_id: &str) -> Result<()> {
         warn!(snapshot_id = %snapshot_id, "Rolling back to snapshot");
-        if self.snapshots.get(snapshot_id).is_some() {
+        if self.snapshots.contains_key(snapshot_id) {
             info!(snapshot_id = %snapshot_id, "Snapshot restored successfully");
         } else {
             info!(

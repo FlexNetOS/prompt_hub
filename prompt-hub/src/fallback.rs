@@ -179,7 +179,7 @@ impl FallbackStrategy for ManualDecompositionFallback {
                 intent.raw_text
             );
 
-            let steps = vec![
+            let steps = [
                 "Step 1: Set up project structure",
                 "Step 2: Implement core functionality",
                 "Step 3: Add basic styling",

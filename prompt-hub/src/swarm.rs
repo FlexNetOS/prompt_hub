@@ -394,12 +394,11 @@ pub fn check_consistency(
                 debug!("Missing standard roles for Coding domain: {:?}", missing);
             }
         }
-        Domain::Writing => {
+        Domain::Writing
             // Writing domain: Critic and Reviewer are especially important.
-            if !roles.contains(&Role::Critic) {
+            if !roles.contains(&Role::Critic) => {
                 conflicts.push(Conflict::DomainMismatch);
             }
-        }
         _ => {
             // Other domains: no additional constraints.
         }

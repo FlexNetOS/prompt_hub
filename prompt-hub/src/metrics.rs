@@ -161,7 +161,7 @@ impl MetricsCollector {
     pub fn get_avg_search_latency(&self) -> u64 {
         let total = self.search_latency_ms.load(Ordering::Relaxed);
         let count = self.search_latency_count.load(Ordering::Relaxed);
-        if count > 0 { total / count } else { 0 }
+        total.checked_div(count).unwrap_or(0)
     }
 
     /// Get total number of blocked sanitization attempts.
@@ -223,14 +223,14 @@ impl MetricsCollector {
     pub fn get_avg_embedding_latency(&self) -> u64 {
         let total = self.embedding_generation_ms.load(Ordering::Relaxed);
         let count = self.embedding_generation_count.load(Ordering::Relaxed);
-        if count > 0 { total / count } else { 0 }
+        total.checked_div(count).unwrap_or(0)
     }
 
     /// Get average DB query latency.
     pub fn get_avg_db_latency(&self) -> u64 {
         let total = self.db_query_latency_ms.load(Ordering::Relaxed);
         let count = self.db_query_latency_count.load(Ordering::Relaxed);
-        if count > 0 { total / count } else { 0 }
+        total.checked_div(count).unwrap_or(0)
     }
 
     /// Report all metrics as a formatted summary string.

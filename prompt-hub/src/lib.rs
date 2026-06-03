@@ -77,7 +77,7 @@ mod lib_tests {
 
     #[test]
     fn test_module_declarations() {
-        // Just verify modules compile
-        assert!(true);
+        // Compilation of this test module is the assertion: if the module
+        // declarations or imports above break, this test fails to build.
     }
 }

@@ -254,8 +254,7 @@ pub async fn openapi_json() -> axum::Json<Value> {
 
 /// Serve Swagger UI HTML.
 pub async fn swagger_ui() -> axum::response::Html<String> {
-    let html = format!(
-        r#"
+    let html = r#"
 <!DOCTYPE html>
 <html>
 <head>
@@ -266,15 +265,14 @@ pub async fn swagger_ui() -> axum::response::Html<String> {
     <div id="swagger-ui"></div>
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
     <script>
-        SwaggerUIBundle({{
+        SwaggerUIBundle({
             url: '/openapi.json',
             dom_id: '#swagger-ui',
             presets: [SwaggerUIBundle.presets.apis]
-        }});
+        });
     </script>
 </body>
 </html>
-"#
-    );
+"#.to_string();
     axum::response::Html(html)
 }

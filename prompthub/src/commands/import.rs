@@ -44,12 +44,10 @@ pub async fn run(file: &Path, skip_validation: bool) -> Result<()> {
     let identity = AgentIdentity::default();
 
     for prompt in prompts {
-        if !skip_validation {
-            if let Err(e) = validate_prompt(&prompt) {
-                warn!("Skipping invalid prompt '{}': {}", prompt.name, e);
-                failed += 1;
-                continue;
-            }
+        if !skip_validation && let Err(e) = validate_prompt(&prompt) {
+            warn!("Skipping invalid prompt '{}': {}", prompt.name, e);
+            failed += 1;
+            continue;
         }
 
         match hub.register(prompt.clone(), &identity).await {

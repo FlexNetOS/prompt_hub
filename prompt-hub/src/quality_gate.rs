@@ -118,22 +118,12 @@ pub struct QualityResult {
 ///
 /// Aggregates results from linters, security scanners, performance checkers,
 /// and accessibility checkers to produce an overall quality verdict.
+#[derive(Default)]
 pub struct QualityGate {
     pub linters: Vec<Box<dyn Linter>>,
     pub security_scanners: Vec<Box<dyn SecurityScanner>>,
     pub performance_checkers: Vec<Box<dyn PerformanceChecker>>,
     pub accessibility_checkers: Vec<Box<dyn AccessibilityChecker>>,
-}
-
-impl Default for QualityGate {
-    fn default() -> Self {
-        Self {
-            linters: Vec::new(),
-            security_scanners: Vec::new(),
-            performance_checkers: Vec::new(),
-            accessibility_checkers: Vec::new(),
-        }
-    }
 }
 
 impl QualityGate {

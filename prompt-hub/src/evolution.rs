@@ -116,7 +116,7 @@ impl EvolutionEngine {
     ///
     /// Cycles through candidates deterministically and returns
     /// the one with the highest fitness score.
-    pub fn select_tournament<'a>(pool: &'a [Prompt], tournament_size: usize) -> &'a Prompt {
+    pub fn select_tournament(pool: &[Prompt], tournament_size: usize) -> &Prompt {
         if pool.is_empty() {
             panic!("Cannot select from an empty prompt pool");
         }

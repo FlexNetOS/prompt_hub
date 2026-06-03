@@ -130,7 +130,7 @@ impl BudgetTracker {
         self.set_budget(config.monthly_budget_usd);
         let threshold_micros = (config.alert_threshold_percent * 1_000_000.0) as u64;
         self.alert_threshold_percent
-            .store((threshold_micros / 1_000_000) as u64, Ordering::SeqCst);
+            .store(threshold_micros / 1_000_000, Ordering::SeqCst);
         Ok(())
     }
 

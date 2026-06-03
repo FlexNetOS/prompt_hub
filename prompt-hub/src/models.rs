@@ -11,8 +11,9 @@ use uuid::Uuid;
 // ─────────────────────────────────────────────
 
 /// Status of a prompt in the hub
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum, Default)]
 pub enum Status {
+    #[default]
     Draft,
     Active,
     Deprecated,
@@ -20,14 +21,10 @@ pub enum Status {
     Locked,
 }
 
-impl Default for Status {
-    fn default() -> Self {
-        Status::Draft
-    }
-}
-
 /// Domain classification for prompts
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum, Default,
+)]
 pub enum Domain {
     Coding,
     DevOps,
@@ -38,13 +35,8 @@ pub enum Domain {
     Testing,
     Documentation,
     Writing,
+    #[default]
     General,
-}
-
-impl Default for Domain {
-    fn default() -> Self {
-        Domain::General
-    }
 }
 
 /// Role classification for intent.
@@ -52,9 +44,10 @@ impl Default for Domain {
 /// Note: this enum carries a data-bearing `Custom(String)` variant, so it
 /// intentionally does NOT derive `clap::ValueEnum` (which requires all-unit
 /// variants) nor `Copy`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum Role {
     Architect,
+    #[default]
     Developer,
     Tester,
     DevOps,
@@ -66,12 +59,6 @@ pub enum Role {
     Refiner,
     Critic,
     Custom(String),
-}
-
-impl Default for Role {
-    fn default() -> Self {
-        Role::Developer
-    }
 }
 
 /// Type of task the user wants to perform
@@ -114,9 +101,10 @@ pub enum SkillLevel {
 }
 
 /// Evolution strategy for prompt improvement
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum, Default)]
 pub enum EvolutionStrategy {
     /// Mutate single prompt parameters
+    #[default]
     Mutate,
     /// Crossover between two parent prompts
     Crossover,
@@ -128,12 +116,6 @@ pub enum EvolutionStrategy {
     Compress,
     /// Expand prompt with more detail
     Expand,
-}
-
-impl Default for EvolutionStrategy {
-    fn default() -> Self {
-        EvolutionStrategy::Mutate
-    }
 }
 
 // ─────────────────────────────────────────────
@@ -244,23 +226,12 @@ impl Default for GenerationParams {
 }
 
 /// Multi-modal support configuration
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct MultimodalConfig {
     pub supports_images: bool,
     pub supports_audio: bool,
     pub supports_video: bool,
     pub image_placeholders: Vec<String>,
-}
-
-impl Default for MultimodalConfig {
-    fn default() -> Self {
-        Self {
-            supports_images: false,
-            supports_audio: false,
-            supports_video: false,
-            image_placeholders: Vec::new(),
-        }
-    }
 }
 
 // ─────────────────────────────────────────────
@@ -288,18 +259,13 @@ pub enum Capability {
 }
 
 /// Health status for plugins, providers, and subsystem checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
     Healthy,
     Degraded,
     Unhealthy,
+    #[default]
     Unknown,
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        HealthStatus::Unknown
-    }
 }
 
 /// Conflict types for swarm validation
@@ -575,20 +541,15 @@ impl Default for Intent {
 }
 
 /// Modality of a piece of user input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum InputType {
+    #[default]
     Text,
     Voice,
     Screenshot,
     Sketch,
     File,
     Url,
-}
-
-impl Default for InputType {
-    fn default() -> Self {
-        InputType::Text
-    }
 }
 
 /// A single multimodal user input.
@@ -972,7 +933,7 @@ mod model_tests {
 
     #[test]
     fn test_search_mode_variants() {
-        let modes = vec![SearchMode::Fast, SearchMode::Smart, SearchMode::Hybrid];
+        let modes = [SearchMode::Fast, SearchMode::Smart, SearchMode::Hybrid];
         assert_eq!(modes.len(), 3);
     }
 

@@ -14,9 +14,11 @@ async fn test_hub_creation() {
 
 #[tokio::test]
 async fn test_hub_creation_with_config() {
-    let mut config = HubConfig::default();
-    config.max_pool_size = 5;
-    config.auto_migrate = false;
+    let config = HubConfig {
+        max_pool_size: 5,
+        auto_migrate: false,
+        ..Default::default()
+    };
 
     let result = PromptHub::new(Path::new(":memory:"), config.clone()).await;
     assert!(result.is_ok());

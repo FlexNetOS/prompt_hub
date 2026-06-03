@@ -93,24 +93,24 @@ impl MultimodalEngine {
         // Simple parser for {{id}} patterns
         let mut chars = template.chars().peekable();
         while let Some(ch) = chars.next() {
-            if ch == '{' {
-                if let Some(&'{') = chars.peek() {
-                    chars.next(); // consume second '{'
-                    let mut id = String::new();
-                    while let Some(&c) = chars.peek() {
-                        if c == '}' {
-                            chars.next(); // consume first '}'
-                            if let Some(&'}') = chars.peek() {
-                                chars.next(); // consume second '}'
-                                if !id.is_empty() {
-                                    ids.push(id.clone());
-                                }
+            if ch == '{'
+                && let Some(&'{') = chars.peek()
+            {
+                chars.next(); // consume second '{'
+                let mut id = String::new();
+                while let Some(&c) = chars.peek() {
+                    if c == '}' {
+                        chars.next(); // consume first '}'
+                        if let Some(&'}') = chars.peek() {
+                            chars.next(); // consume second '}'
+                            if !id.is_empty() {
+                                ids.push(id.clone());
                             }
-                            break;
-                        } else {
-                            id.push(c);
-                            chars.next();
                         }
+                        break;
+                    } else {
+                        id.push(c);
+                        chars.next();
                     }
                 }
             }

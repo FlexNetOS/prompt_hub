@@ -37,31 +37,31 @@ impl I18nEngine {
     #[instrument]
     pub fn get_localized_prompt(&self, prompt: &Prompt, locale: &str) -> Option<String> {
         // Direct match on the prompt's locale
-        if let Some(ref prompt_locale) = prompt.locale {
-            if prompt_locale == locale {
-                return Some(prompt.user_template.clone());
-            }
+        if let Some(ref prompt_locale) = prompt.locale
+            && prompt_locale == locale
+        {
+            return Some(prompt.user_template.clone());
         }
 
         // Try the fallback chain
         let chain = Self::fallback_chain(locale);
         for fallback_locale in &chain {
-            if let Some(translations) = self.translations.get(fallback_locale) {
-                if let Some(template) = translations.get(&prompt.id.to_string()) {
-                    info!(
-                        prompt_id = %prompt.id,
-                        locale = %fallback_locale,
-                        "Resolved localized prompt via fallback"
-                    );
-                    return Some(template.clone());
-                }
+            if let Some(translations) = self.translations.get(fallback_locale)
+                && let Some(template) = translations.get(&prompt.id.to_string())
+            {
+                info!(
+                    prompt_id = %prompt.id,
+                    locale = %fallback_locale,
+                    "Resolved localized prompt via fallback"
+                );
+                return Some(template.clone());
             }
 
             // Check if the prompt itself matches this fallback locale
-            if let Some(ref prompt_locale) = prompt.locale {
-                if prompt_locale == fallback_locale {
-                    return Some(prompt.user_template.clone());
-                }
+            if let Some(ref prompt_locale) = prompt.locale
+                && prompt_locale == fallback_locale
+            {
+                return Some(prompt.user_template.clone());
             }
         }
 

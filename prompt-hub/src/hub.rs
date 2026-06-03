@@ -407,7 +407,7 @@ impl PromptHub {
         context: &ProjectContext,
     ) -> Result<CostEstimate> {
         use crate::cost::CostEstimator;
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let estimate = estimator.estimate(intent, context).await?;
         info!(
             "Cost estimate: ${:.4} ({} input / {} output tokens)",
@@ -748,7 +748,7 @@ mod tests {
         // Create an already-expired token manually
         let expired_token = LockToken {
             prompt_id,
-            agent_id: agent.id.clone(),
+            agent_id: agent.id,
             expires_at: Utc::now() - chrono::Duration::seconds(1),
             token: "expired".to_string(),
         };
@@ -804,7 +804,7 @@ mod tests {
     fn test_lock_manager_create_and_expire() {
         let prompt_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
-        let token = LockManager::create_lock(prompt_id, agent_id.clone(), 3600);
+        let token = LockManager::create_lock(prompt_id, agent_id, 3600);
 
         assert_eq!(token.prompt_id, prompt_id);
         assert_eq!(token.agent_id, agent_id);
@@ -813,7 +813,7 @@ mod tests {
         // Expired token
         let expired = LockToken {
             prompt_id,
-            agent_id: agent_id.clone(),
+            agent_id,
             expires_at: Utc::now() - chrono::Duration::seconds(1),
             token: "old".to_string(),
         };

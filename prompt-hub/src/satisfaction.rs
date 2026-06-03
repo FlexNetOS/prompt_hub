@@ -76,7 +76,7 @@ impl SatisfactionTracker {
     /// Record a CSAT rating (1-5).
     #[instrument(skip(self), fields(score))]
     pub fn record_csat(&self, score: u8, context: &str) {
-        if score < 1 || score > 5 {
+        if !(1..=5).contains(&score) {
             warn!("Invalid CSAT score: {}, must be 1-5", score);
             return;
         }
@@ -96,7 +96,7 @@ impl SatisfactionTracker {
     /// Record an NPS rating (1-10).
     #[instrument(skip(self), fields(score))]
     pub fn record_nps(&self, score: u8) {
-        if score < 1 || score > 10 {
+        if !(1..=10).contains(&score) {
             warn!("Invalid NPS score: {}, must be 1-10", score);
             return;
         }
@@ -185,7 +185,7 @@ impl SatisfactionTracker {
             one_shot_success_rate: self.one_shot_success_rate(),
             total_ratings: ratings.len(),
             total_events: events.len(),
-            recent_trend: recent_trend,
+            recent_trend,
         }
     }
 

@@ -214,7 +214,7 @@ impl PromptDiff {
                 lcs.push((i, j));
                 i += 1;
                 j += 1;
-            } else if i + 1 <= m
+            } else if i < m
                 && dp.get(i + 1).and_then(|row| row.get(j)).unwrap_or(&0)
                     >= dp.get(i).and_then(|row| row.get(j + 1)).unwrap_or(&0)
             {

@@ -141,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_estimate_simple() {
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let intent = test_intent(Complexity::Simple);
         let ctx = empty_context();
 
@@ -155,7 +155,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_estimate_moderate() {
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let intent = test_intent(Complexity::Moderate);
         let ctx = empty_context();
 
@@ -168,7 +168,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_estimate_complex() {
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let intent = test_intent(Complexity::Complex);
         let ctx = empty_context();
 
@@ -181,7 +181,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_estimate_research() {
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let intent = test_intent(Complexity::Research);
         let ctx = empty_context();
 
@@ -194,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_estimate_with_large_project() {
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let intent = test_intent(Complexity::Moderate);
         let ctx = large_context(75); // 75 files = 1.25x multiplier
 
@@ -207,7 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_estimate_quick() {
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let intent = test_intent(Complexity::Simple);
 
         let estimate = estimator.estimate_quick(&intent).await.unwrap();
@@ -219,7 +219,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_estimate_confidence_with_context() {
-        let estimator = CostEstimator::default();
+        let estimator = CostEstimator;
         let intent = test_intent(Complexity::Moderate);
         let mut ctx = empty_context();
         ctx.language = "typescript".to_string();
