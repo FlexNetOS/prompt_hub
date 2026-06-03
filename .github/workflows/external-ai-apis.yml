@@ -157,7 +157,7 @@ jobs:
           cat /tmp/generated_tests.rs
 
       - name: Upload generated tests
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: devin-generated-tests
           path: /tmp/generated_tests.rs

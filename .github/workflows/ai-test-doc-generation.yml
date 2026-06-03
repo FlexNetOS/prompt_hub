@@ -76,7 +76,7 @@ jobs:
           EOF
 
       - name: Upload test artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: generated-unit-tests
           path: /tmp/generated/tests.rs
@@ -139,7 +139,7 @@ jobs:
           EOF
 
       - name: Upload docs artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: generated-documentation
           path: /tmp/generated/docs.md
@@ -199,7 +199,7 @@ jobs:
           EOF
 
       - name: Upload examples artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: generated-examples
           path: /tmp/generated/examples.rs
