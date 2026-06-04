@@ -85,7 +85,6 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 semver = { workspace = true }
 validator = { workspace = true }
-jsonwebtoken = { workspace = true }
 regex = { workspace = true }
 fancy-regex = { workspace = true }
 argon2 = { workspace = true }

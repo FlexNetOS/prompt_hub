@@ -45,7 +45,6 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 semver = { workspace = true }
-jsonwebtoken = { workspace = true }
 validator = { workspace = true }
 clap = { workspace = true }
 regex = { workspace = true }
