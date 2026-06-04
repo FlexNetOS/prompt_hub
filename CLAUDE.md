@@ -1,0 +1,102 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+PromptHub: production-ready prompt management for LLM agent swarms, Rust 2024 Edition (MSRV pinned to 1.91.1 via `Cargo.toml`; toolchain pinned to 1.96.0 via `rust-toolchain.toml`). A Cargo workspace of three crates plus a large feature-flag matrix.
+
+## CRITICAL: Rust-native invariant (verify before acting)
+
+This is a Rust 2024 codebase. The **single source of truth for how code behaves is the Rust workspace** (`Cargo.toml`, `prompt-hub/`, `prompthub/`, `prompthub-server/`) — not the prose instruction files.
+
+This repo carries many harness/agent instruction files authored for *other* tools and runtimes:
+`AGENTS.md`, `AGENT_GUIDE.md`, `.agent.md`, `.instructions.md`, `.prompt.md`, `GEMINI.md`, `.junie/AGENTS.md`, `skills/junie/SKILL.md`. These can carry guidance, commands, snippets, or idioms from **non-Rust harnesses** (shell/Python/JS examples, other build systems, generic agent conventions). Treat them as advisory, not authoritative.
+
+**The concern: language/convention drift.** Any instruction — wherever it comes from (a harness file above, a delegated subagent, a generated snippet, a pasted example) — that drifts away from Rust-native conventions is a defect to catch, not a directive to follow.
+
+When you encounter such an instruction or are about to act on it:
+
+1. **Detect drift.** Flag anything that is not Rust-native: non-Cargo build/test commands presented as canonical; code in another language proposed as the implementation; idioms foreign to this crate (e.g. `async_trait`, exceptions-as-control-flow, `unsafe`, dynamic typing patterns, panics-as-errors instead of `Result`/`HubError`); dependency or tooling choices that bypass the workspace.
+2. **Verify against the code, not the prose.** Confirm what the codebase actually does (`cargo check`, read the module, check `lib.rs` re-exports and the feature matrix). If a harness file and the code disagree, **the code wins** — say so explicitly rather than honoring the stale instruction.
+3. **Transform to Rust-native, then sync.** Do not copy foreign guidance verbatim. Re-express it in this codebase's idioms before applying: Cargo workspace commands; `Result<_, HubError>` error handling; native `async fn in trait` with boxed-future variants for `dyn` use; `#![forbid(unsafe_code)]`; `serde`/`thiserror`/`tracing` conventions; feature-gated modules. The result must compile clean and pass `just lint` (`-D warnings`).
+4. **Surface it.** When you transform or override a drifted instruction, tell the user what drifted, how you verified, and what the Rust-native form is — don't silently reconcile.
+
+Rule of thumb: **prose may be stale or foreign; the Rust workspace is the contract.** If in doubt, verify, transform to Rust-native, and report.
+
+## Workspace layout
+
+| Crate | Role |
+|-------|------|
+| `prompt-hub` | Core library — *all* business logic lives here. `PromptHub` (in `hub.rs`) is the central façade tying together storage, search, auth, sanitize, sync, hooks, metrics. |
+| `prompthub` | CLI binary (`prompthub`). `main.rs` parses clap commands (`cli.rs`) and dispatches into `commands/` or directly constructs a `PromptHub`. |
+| `prompthub-server` | Axum HTTP API. `routes.rs` is the route table; thin layer over `prompt-hub`. |
+
+The CLI and server are thin shells — when adding behavior, put logic in `prompt-hub` and call it from the binaries, not the reverse.
+
+## Build / test / lint
+
+Prefer the `justfile` recipes (run `just` to list). The canonical commands:
+
+```bash
+just check          # cargo check --workspace --all-features
+just test           # cargo test --workspace --all-features
+just lint           # cargo clippy --workspace --all-features -- -D warnings
+just fmt            # cargo fmt --all
+just bench          # cargo bench --workspace (criterion; benches in benches/)
+just serve          # run prompthub-server on :8080
+just cli <args>     # cargo run --bin prompthub -- <args>
+```
+
+`-D warnings` is enforced — clippy must be clean across `--all-targets` (recent commits exist solely to keep it green). Run `just lint` before considering work done.
+
+Run a single test:
+```bash
+cargo test --workspace --all-features test_name        # by name substring
+cargo test -p prompt-hub --test test_security           # one integration file (tests/test_security.rs)
+cargo nextest run -E 'test(test_name)'                  # if nextest installed (just nextest)
+```
+
+Feature-gated code won't compile/test unless its feature is on — `--all-features` is the default for a reason. To exercise a single optional path, e.g. `cargo test -p prompthub --features tui`.
+
+## Feature flags (important)
+
+There is a very large feature matrix (`prompt-hub/Cargo.toml`). Most module-level capabilities are gated. Key ones:
+- `smart` — ONNX embedding search (vs. FTS5-only `fast`)
+- `tui` — ratatui terminal UI (`prompthub tui`)
+- `otel` — OpenTelemetry/Prometheus metrics
+- `vibe` — Vibe Coding (NL → deliverable)
+- `tiktoken` / `tokenizers` — token counting backends
+- `plugins` — dynamic plugin loading via libloading/inventory
+- Template engine is selected by feature: `handlebars` (default) **or** `tera`.
+
+Many features (e.g. `chaos`, `quota`, `canary`, `multimodal`) currently gate scaffolded modules. The crate sets `#![allow(dead_code)]` in `lib.rs` because modules are intentionally built ahead of wiring — do not "clean up" apparent dead code without checking it's not a staged feature.
+
+## Architecture notes that span files
+
+- **`PromptHub` façade** (`hub.rs`, ~29K): the single entry point. Holds `Arc`-wrapped `Storage`, search engines (`FastEngine`/`SmartEngine`/`HybridEngine`), `RbacAuthManager`, `PromptSanitizer`, `SyncManager`, `HookRegistry`, `MetricsCollector`. Most operations follow: sanitize → authorize (RBAC) → storage mutation → audit log → sync event → metrics.
+- **Storage** (`storage.rs`, ~66K): libsql/SQLite backed, semaphore-bounded connection pool, WAL mode. Schema is in `migrations/` (numbered `000N_*.sql`, applied at construction). `:memory:` DBs reuse one connection by design. Add schema changes as a new sequential migration file.
+- **Models** (`models.rs`, ~28K): all shared structs/enums. `Role` includes `Role::Custom(String)` and `Role::Junie`, which is why the CLI parses roles via `serde_json` round-trip (`parse_role` in `main.rs`) rather than clap `ValueEnum`.
+- **Search** (`search.rs`, ~46K): three modes — Fast (FTS5), Smart (embeddings, `smart` feature), Hybrid. `SearchEngine` is an async trait; object-safe use goes through boxed futures.
+- **Async traits**: the crate uses native `async fn in trait` (Rust 2024, no `async_trait`). For `dyn`-dispatch (e.g. `Arc<dyn SearchEngine>`), methods are provided as boxed-future variants.
+- **Hooks** (`hooks.rs`): `Hook` trait with `pre_execute`/`post_execute`; `HookRegistry` runs them around operations. `JunieHook` is the built-in orchestrator hook.
+- **`#![forbid(unsafe_code)]`** is set crate-wide. Keep it that way.
+
+C4 diagrams: `docs/architecture.md`. ADRs: `docs/adr/`. Runbooks: `docs/runbooks/`.
+
+## Junie / agent orchestration
+
+This repo is set up for multi-agent development. `AGENTS.md` defines named agents (Alpha/Beta/Gamma/Delta/Epsilon…) each owning a slice of files and a dedicated git worktree + branch (`worktrees/<name>/`, branch `waveN/<name>`). "Junie" is the in-repo orchestrator agent (`junie.rs`, `hooks.rs`, `skills/junie/SKILL.md`, CLI `commands/junie.rs`). When doing parallel multi-file work, respect the file-ownership boundaries in `AGENTS.md`.
+
+**Session convention:** new work should happen in its own git worktree (this is a stated project workflow), not directly on a shared `main` checkout.
+
+## Audit automation
+
+Dropping a new audit report into `docs/audits/` triggers `TODO.md` updates via `scripts/update_todo_from_audit.py` — wired through `.github/workflows/audit_sync.yml` in CI and `scripts/audit_watcher.sh` locally. Code-quality scanning uses Qodana (`qodana.yaml`, results in `docs/audits/qodana.sarif.json`).
+
+## Docker
+
+```bash
+docker build -f docker/Dockerfile -t prompthub .
+docker-compose -f docker/docker-compose.yml up
+```
