@@ -42,10 +42,12 @@ impl TokenCounter {
             // When tiktoken-rs is available, use its encoder
             #[cfg(feature = "tiktoken")]
             {
-                use tiktoken_rs::get_bpe_from_model;
-                let bpe = get_bpe_from_model(model)
-                    .map_err(|e| HubError::token_count(format!("tiktoken: {e}")))?;
-                bpe.encode_ordinary(text).len()
+                use tiktoken_rs::bpe_for_model;
+                let bpe = bpe_for_model(model)
+                    .map_err(|e| crate::error::HubError::Internal(format!("tiktoken: {e}")))?;
+                // Keep the same "at least 1 token" contract as the heuristic
+                // path below (tiktoken encodes an empty string to 0 tokens).
+                bpe.encode_ordinary(text).len().max(1)
             }
             #[cfg(not(feature = "tiktoken"))]
             {

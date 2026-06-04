@@ -12,9 +12,17 @@ else
     echo "SUCCESS: All library files have #![forbid(unsafe_code)]."
 fi
 
-# Check for any usage of 'unsafe' keyword
+# Check for any usage of the `unsafe` keyword in actual code.
+# `#![forbid(unsafe_code)]` already makes real `unsafe` a compile error, so this
+# is a belt-and-suspenders check — it must ignore the word appearing in comments
+# or doc-comments (e.g. "unsafe patterns", "safe replacement for `unsafe impl`")
+# and must not trip over `unsafe_code` in the forbid attribute itself.
 echo "Checking for 'unsafe' keyword usage..."
-unsafe_usage=$(grep -r "unsafe " prompt-hub/src/ --exclude-dir=tests --include="*.rs")
+unsafe_usage=$(
+    grep -rn --include="*.rs" --exclude-dir=tests -e 'unsafe' prompt-hub/src/ \
+        | sed -E 's://.*$::' \
+        | grep -E '\bunsafe[[:space:]]*(\{|fn|impl|trait|extern|\()'
+)
 
 if [ -n "$unsafe_usage" ]; then
     echo "ERROR: Unsafe code detected in the library:"
