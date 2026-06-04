@@ -15,6 +15,12 @@ COPY rust-toolchain.toml rust-toolchain.toml
 COPY prompt-hub/Cargo.toml prompt-hub/
 COPY prompthub/Cargo.toml prompthub/
 COPY prompthub-server/Cargo.toml prompthub-server/
+# prompt-hub declares [[bench]] targets; cargo validates they exist when parsing
+# the manifest (even for the dummy dependency-cache build below), so the bench
+# sources must be present. README is referenced by `readme =` and the lib doc
+# include, so it must exist before the manifest is parsed too.
+COPY prompt-hub/benches prompt-hub/benches/
+COPY prompt-hub/README.md prompt-hub/README.md
 
 # Build dependencies cache layer
 RUN mkdir -p prompt-hub/src prompthub/src prompthub-server/src && \
@@ -28,11 +34,9 @@ RUN mkdir -p prompt-hub/src prompthub/src prompthub-server/src && \
 COPY prompt-hub/src prompt-hub/src/
 COPY prompthub/src prompthub/src/
 COPY prompthub-server/src prompthub-server/src/
-# Crate-embedded assets (include_str!) now live under the prompt-hub crate;
-# README is needed for the lib's `#![doc = include_str!("../README.md")]`.
+# Crate-embedded assets (include_str!) now live under the prompt-hub crate.
 COPY prompt-hub/migrations prompt-hub/migrations/
 COPY prompt-hub/templates prompt-hub/templates/
-COPY prompt-hub/README.md prompt-hub/README.md
 COPY docs docs/
 
 # Build release binaries
