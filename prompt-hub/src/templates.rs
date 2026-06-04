@@ -149,10 +149,7 @@ impl Default for TemplateRegistry {
             "base_implementer",
             include_str!("../templates/base_implementer.md"),
         );
-        templates.insert(
-            "base_critic",
-            include_str!("../templates/base_critic.md"),
-        );
+        templates.insert("base_critic", include_str!("../templates/base_critic.md"));
         templates.insert(
             "base_reviewer",
             include_str!("../templates/base_reviewer.md"),
