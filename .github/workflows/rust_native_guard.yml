@@ -1,0 +1,52 @@
+name: Rust-Native Guard
+
+# Operationalizes the "CRITICAL: Rust-native invariant" section of CLAUDE.md.
+# Rust-source drift is blocking; prose/harness drift is advisory (PR comment only).
+# The hard gates (fmt, clippy -D warnings, check/test --all-features, unsafe) live in
+# ci.yml + scripts/check_safety.sh — this job does NOT duplicate them.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: rust-native-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift-guard:
+    name: Drift Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need the base ref to diff changed files
+
+      - name: Scan changed files for Rust-native drift
+        id: scan
+        env:
+          BASE_REF: origin/${{ github.base_ref || 'main' }}
+        run: |
+          chmod +x scripts/drift_guard.sh
+          set +e
+          scripts/drift_guard.sh
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Post / update PR comment
+        if: github.event_name == 'pull_request' && always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rust-native-guard
+          path: drift-report.md
+
+      - name: Fail on blocking drift
+        if: steps.scan.outputs.exit_code != '0'
+        run: |
+          echo "Blocking Rust-native drift detected — see the Drift Guard report and annotations."
+          exit 1
