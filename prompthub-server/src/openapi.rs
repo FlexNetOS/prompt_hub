@@ -19,8 +19,10 @@ pub const TAG_METRICS: &str = "metrics";
 // ── utoipa route macro helpers ───────────────────────────────────────────
 
 /// Re-export utoipa path macro so routes.rs can use `crate::openapi::path!`
-/// without adding a direct dependency on utoipa.
+/// without adding a direct dependency on utoipa. Scaffolded ahead of being
+/// wired into routes.rs, so it is not yet referenced internally.
 #[cfg(feature = "utoipa")]
+#[allow(unused_imports)]
 pub use utoipa::path;
 
 /// Collect all OpenAPI paths and schemas into a single `OpenApi` instance.

@@ -49,7 +49,7 @@ impl LockManager {
 
     /// Create a new [`LockToken`] for `prompt_id` held by `agent_id`.
     ///
-    /// `ttl_seconds` is clamped to [`MAX_TTL_SECONDS`].
+    /// `ttl_seconds` is clamped to `MAX_TTL_SECONDS`.
     #[instrument]
     pub fn create_lock(prompt_id: Uuid, agent_id: Uuid, ttl_seconds: u64) -> LockToken {
         let clamped_ttl = ttl_seconds.min(Self::MAX_TTL_SECONDS);

@@ -354,7 +354,7 @@ impl SmartEngine {
             .collect()
     }
 
-    /// Convert a byte slice (little-endian f32 values) into a Vec<f32>.
+    /// Convert a byte slice (little-endian f32 values) into a `Vec<f32>`.
     pub fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
         bytes
             .chunks_exact(4)
@@ -632,9 +632,19 @@ impl SearchEngine for HybridEngine {
 /// Each registered plugin must implement `SearchEngine`.  Queries are
 /// broadcast to all plugins and results are merged.
 #[cfg(feature = "plugins")]
-#[derive(Debug)]
 pub struct PluginEngine {
     plugins: Vec<Box<dyn SearchEngine>>,
+}
+
+// `dyn SearchEngine` is not `Debug`, so derive won't work here; report the
+// plugin count instead (mirrors `HookRegistry`'s manual Debug impl).
+#[cfg(feature = "plugins")]
+impl std::fmt::Debug for PluginEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginEngine")
+            .field("plugins", &self.plugins.len())
+            .finish()
+    }
 }
 
 #[cfg(feature = "plugins")]
@@ -687,7 +697,7 @@ impl SearchEngine for PluginEngine {
 
             // De-duplicate and re-rank.
             let mut combined: HashMap<Uuid, ScoredPrompt> = HashMap::new();
-            for mut sp in all_results {
+            for sp in all_results {
                 combined
                     .entry(sp.prompt.id)
                     .and_modify(|existing| {

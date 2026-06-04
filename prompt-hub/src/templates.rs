@@ -116,8 +116,9 @@ pub mod tera_engine {
             for (k, v) in &context.vars {
                 ctx.insert(k, v);
             }
-            self.tera
-                .render_str(template, &ctx)
+            // `render_str` needs `&mut Tera`, which an `Arc<Tera>` can't provide;
+            // `one_off` renders a template string statelessly.
+            Tera::one_off(template, &ctx, false)
                 .map_err(|e| HubError::ValidationError(format!("Tera: {e}")))
         }
 
