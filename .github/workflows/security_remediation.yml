@@ -1,0 +1,81 @@
+name: Security Remediation
+
+# Reasoning-anchored remediation loop (counter to mechanical Dependabot bumps):
+# gather the alert signals, then hand them to an agent that follows the
+# `security-remediation` skill — reachability first, minimal verified fix, one PR.
+#
+# Opt-in: gated on the `ENABLE_AI_WORKFLOWS` repository variable (same pattern as
+# the other agent workflows) so it is inert and CI-green until enabled. To turn
+# on: set repo variable ENABLE_AI_WORKFLOWS=true.
+
+on:
+  schedule:
+    # Mondays 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  # `dependabot_alert` can be added here once enabled for the repo to react to
+  # new alerts immediately:
+  #   dependabot_alert:
+  #     types: [created, reintroduced]
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: Alert inventory
+    # Job-level gate: the whole job no-ops (success, not failure) when unset.
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: read   # read Dependabot / code-scanning alerts
+      pull-requests: write     # the remediation agent opens the PR
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit cargo-deny --locked
+
+      - name: Consolidate alert inventory
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          {
+            echo "## Security alert inventory"
+            echo
+            echo "### cargo audit"
+            echo '```'
+            cargo audit 2>&1 || true
+            echo '```'
+            echo "### cargo deny check"
+            echo '```'
+            cargo deny check 2>&1 || true
+            echo '```'
+            echo "### Dependabot alerts (open)"
+            echo '```'
+            # GITHUB_TOKEN can't always list Dependabot alerts; tolerate 403.
+            gh api "repos/${GITHUB_REPOSITORY}/dependabot/alerts?state=open" \
+              --jq '.[] | "[\(.security_advisory.severity)] \(.dependency.package.name) \(.security_advisory.ghsa_id) -> \(.security_vulnerability.first_patched_version.identifier // "none")"' \
+              2>&1 || echo "(dependabot alerts unavailable: needs a PAT with security_events, or none open)"
+            echo '```'
+          } | tee "$GITHUB_STEP_SUMMARY" > alert-inventory.md
+
+      - name: Upload inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-alert-inventory
+          path: alert-inventory.md
+
+      # ── Remediation agent (the reasoning anchor) ───────────────────────────
+      # Wire your agent runner here (org Claude Code / Junie runner, or
+      # anthropics/claude-code-action). It reads alert-inventory.md, follows
+      # skills/security-remediation/SKILL.md — reachability verdict, minimal-fix
+      # ladder, verify-via-gate, adversarial check — and opens ONE PR with the
+      # confirmed fixes (or escalates the ones that aren't auto-safe).
+      - name: Remediation agent (placeholder)
+        run: |
+          echo "Alert inventory ready at alert-inventory.md."
+          echo "Hook up the agent runner here, pointed at skills/security-remediation/SKILL.md."

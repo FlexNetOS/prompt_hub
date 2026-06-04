@@ -20,20 +20,55 @@ jobs:
         with:
           python-version: '3.x'
 
+      # Native git replaces tj-actions/changed-files (GHSA-mrrh-fwg8-r2c3:
+      # the third-party action exfiltrated CI secrets via build logs). This job
+      # has `contents: write` + a push, so removing the action — not just
+      # bumping it — eliminates the whole supply-chain risk class.
       - name: Get changed audit files
         id: changed-files
-        uses: tj-actions/changed-files@v44
-        with:
-          files: docs/audits/**
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Determine the comparison base. On workflow_dispatch (or an initial
+          # push where `before` is all-zeros) fall back to the previous commit.
+          if [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" =~ ^0+$ ]]; then
+            BASE="$(git rev-parse "${AFTER_SHA}^" 2>/dev/null || git rev-parse HEAD^ 2>/dev/null || echo "")"
+          else
+            BASE="${BEFORE_SHA}"
+          fi
+          if [[ -z "${BASE}" ]]; then
+            # No parent (true root commit): --root diffs against the empty tree.
+            CHANGED="$(git diff-tree --no-commit-id --name-only -r --root "${AFTER_SHA}" -- 'docs/audits/' || true)"
+          else
+            CHANGED="$(git diff --name-only "${BASE}" "${AFTER_SHA}" -- 'docs/audits/' || true)"
+          fi
+          if [[ -n "${CHANGED}" ]]; then
+            echo "any_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "all_changed_files<<__EOF__"
+            echo "${CHANGED}"
+            echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Update TODO.md
         if: steps.changed-files.outputs.any_changed == 'true'
+        # Read the file list from the environment, never interpolated into the
+        # script body — a filename can't inject shell (same bug class as the
+        # action we just removed).
+        env:
+          ALL_CHANGED: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
             if [[ $file == *.json ]]; then
               python3 scripts/update_todo_from_audit.py "$file"
             fi
-          done
+          done <<< "$ALL_CHANGED"
 
       - name: Commit and push changes
         if: steps.changed-files.outputs.any_changed == 'true'
@@ -42,4 +77,4 @@ jobs:
           git config --local user.name "GitHub Action"
           git add TODO.md
           git commit -m "docs: auto-update TODO.md from new audit findings [skip ci]" || echo "No changes to commit"
-          git push
+          git push || echo "nothing to push"
