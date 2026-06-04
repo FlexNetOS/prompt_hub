@@ -13,6 +13,9 @@ jobs:
   code-review:
     runs-on: ubuntu-latest
     name: AI Code Review (GitHub Models)
+    # Opt-in: set repository variable ENABLE_AI_WORKFLOWS=true to run. Skips
+    # (green) otherwise so the absence of AI access never fails CI.
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v4
@@ -84,7 +87,7 @@ jobs:
   feature-suggestions:
     runs-on: ubuntu-latest
     name: Feature Suggestions (Claude)
-    if: contains(github.event.pull_request.labels.*.name, 'feature')
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' && contains(github.event.pull_request.labels.*.name, 'feature') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

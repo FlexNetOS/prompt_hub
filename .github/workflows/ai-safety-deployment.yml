@@ -24,6 +24,8 @@ jobs:
   security-analysis:
     runs-on: ubuntu-latest
     name: Security Analysis (GitHub Models)
+    # Opt-in: set repository variable ENABLE_AI_WORKFLOWS=true to run.
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -120,6 +122,7 @@ jobs:
   performance-impact:
     runs-on: ubuntu-latest
     name: Performance Impact Analysis
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -197,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Deployment Readiness Check
     needs: [security-analysis, performance-impact]
-    if: always()
+    if: ${{ always() && vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
       - uses: actions/checkout@v4
 

@@ -2,6 +2,30 @@
 
 This directory contains GitHub Actions workflows that integrate multiple AI models for code review, testing, documentation, and deployment safety checks.
 
+## Enabling the AI workflows (opt-in)
+
+The AI workflows (`ai-code-review`, `ai-safety-deployment`, `ai-test-doc-generation`,
+`external-ai-apis`, `multi-model-evaluation`) are **disabled by default**. Every job
+is gated on the repository variable `ENABLE_AI_WORKFLOWS`, so without it they **skip
+cleanly (green)** instead of failing CI when AI access/credentials are unavailable.
+
+To enable:
+
+1. Set the repository **variable** `ENABLE_AI_WORKFLOWS` to `true`
+   (`Settings → Secrets and variables → Actions → Variables`, or
+   `gh variable set ENABLE_AI_WORKFLOWS --body true`).
+2. Provide the credentials each workflow needs:
+
+   | Workflow | Requires | Notes |
+   |----------|----------|-------|
+   | `ai-code-review`, `ai-safety-deployment`, `ai-test-doc-generation`, `multi-model-evaluation` | GitHub Models | Uses the built-in `GITHUB_TOKEN` + `models: read`; the org/repo must have **GitHub Models enabled**. |
+   | `external-ai-apis` (Claude job) | secret `ANTHROPIC_API_KEY` | Anthropic API. |
+   | `external-ai-apis` (Devin job) | secret `DEVIN_API_KEY` | Devin API. |
+
+   Set secrets with `gh secret set ANTHROPIC_API_KEY` / `gh secret set DEVIN_API_KEY`.
+
+To disable again, unset the variable (or set it to anything other than `true`).
+
 ## Available Workflows
 
 ### 1. **Code Review with GitHub Models** (`ai-code-review.yml`)
