@@ -2825,6 +2825,7 @@ dependencies = [
  "notify",
  "opentelemetry",
  "opentelemetry-prometheus",
+ "password-hash",
  "petgraph",
  "prometheus",
  "proptest",

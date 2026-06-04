@@ -28,8 +28,11 @@ RUN mkdir -p prompt-hub/src prompthub/src prompthub-server/src && \
 COPY prompt-hub/src prompt-hub/src/
 COPY prompthub/src prompthub/src/
 COPY prompthub-server/src prompthub-server/src/
-COPY migrations migrations/
-COPY templates templates/
+# Crate-embedded assets (include_str!) now live under the prompt-hub crate;
+# README is needed for the lib's `#![doc = include_str!("../README.md")]`.
+COPY prompt-hub/migrations prompt-hub/migrations/
+COPY prompt-hub/templates prompt-hub/templates/
+COPY prompt-hub/README.md prompt-hub/README.md
 COPY docs docs/
 
 # Build release binaries
@@ -39,8 +42,8 @@ RUN cargo build --release --bin prompthub-server --bin prompthub
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /app/target/release/prompthub-server /bin/
 COPY --from=builder /app/target/release/prompthub /bin/
-COPY --from=builder /app/migrations /migrations
-COPY --from=builder /app/templates /templates
+COPY --from=builder /app/prompt-hub/migrations /migrations
+COPY --from=builder /app/prompt-hub/templates /templates
 COPY --from=builder /app/docs /docs
 
 # Security: run as non-root

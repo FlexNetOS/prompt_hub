@@ -89,6 +89,7 @@ jsonwebtoken = { workspace = true }
 regex = { workspace = true }
 fancy-regex = { workspace = true }
 argon2 = { workspace = true }
+password-hash = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
