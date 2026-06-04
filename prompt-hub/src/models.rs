@@ -58,6 +58,7 @@ pub enum Role {
     Implementer,
     Refiner,
     Critic,
+    Junie,
     Custom(String),
 }
 
