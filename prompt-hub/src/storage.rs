@@ -184,47 +184,47 @@ impl Storage {
             (
                 1,
                 "0001_initial.sql",
-                include_str!("../../migrations/0001_initial.sql"),
+                include_str!("../migrations/0001_initial.sql"),
             ),
             (
                 2,
                 "0002_audit.sql",
-                include_str!("../../migrations/0002_audit.sql"),
+                include_str!("../migrations/0002_audit.sql"),
             ),
             (
                 3,
                 "0003_locks.sql",
-                include_str!("../../migrations/0003_locks.sql"),
+                include_str!("../migrations/0003_locks.sql"),
             ),
             (
                 4,
                 "0004_swarm_state.sql",
-                include_str!("../../migrations/0004_swarm_state.sql"),
+                include_str!("../migrations/0004_swarm_state.sql"),
             ),
             (
                 5,
                 "0005_backup_meta.sql",
-                include_str!("../../migrations/0005_backup_meta.sql"),
+                include_str!("../migrations/0005_backup_meta.sql"),
             ),
             (
                 6,
                 "0006_plugins.sql",
-                include_str!("../../migrations/0006_plugins.sql"),
+                include_str!("../migrations/0006_plugins.sql"),
             ),
             (
                 7,
                 "0007_soft_delete.sql",
-                include_str!("../../migrations/0007_soft_delete.sql"),
+                include_str!("../migrations/0007_soft_delete.sql"),
             ),
             (
                 8,
                 "0008_generation_params.sql",
-                include_str!("../../migrations/0008_generation_params.sql"),
+                include_str!("../migrations/0008_generation_params.sql"),
             ),
             (
                 9,
                 "0009_config.sql",
-                include_str!("../../migrations/0009_config.sql"),
+                include_str!("../migrations/0009_config.sql"),
             ),
         ];
 

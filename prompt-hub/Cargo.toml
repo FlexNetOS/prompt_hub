@@ -11,6 +11,7 @@ documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
 description = "Production-ready prompt management library for LLM agent swarms"
+readme = "README.md"
 
 [features]
 default = ["handlebars"]
