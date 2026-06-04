@@ -84,6 +84,11 @@
 - [ ] **Run `cargo doc --workspace --all-features --no-deps`**
   - Fix documentation warnings
 
+## Audits
+
+- [ ] **Review audit findings from `qodana.sarif.json`** — Audit dropped at 2026-06-03 20:00. Found 87 issues (40
+  warning, 47 note).
+  - File: `docs/audits/qodana.sarif.json`
 ## P3 — Testing
 
 - [ ] **Run `cargo test -p prompt-hub --lib`**

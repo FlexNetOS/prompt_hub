@@ -1,0 +1,45 @@
+name: Audit Automation
+on:
+  push:
+    paths:
+      - 'docs/audits/**'
+  workflow_dispatch:
+
+jobs:
+  update-todo:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Get changed audit files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: docs/audits/**
+
+      - name: Update TODO.md
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            if [[ $file == *.json ]]; then
+              python3 scripts/update_todo_from_audit.py "$file"
+            fi
+          done
+
+      - name: Commit and push changes
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add TODO.md
+          git commit -m "docs: auto-update TODO.md from new audit findings [skip ci]" || echo "No changes to commit"
+          git push

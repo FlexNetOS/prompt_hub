@@ -95,17 +95,17 @@ pub mod handlebars_engine {
 #[cfg(feature = "tera")]
 pub mod tera_engine {
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use tera::{Context, Tera};
 
     pub struct TeraEngine {
-        tera: Arc<Tera>,
+        tera: Arc<Mutex<Tera>>,
     }
 
     impl Default for TeraEngine {
         fn default() -> Self {
             Self {
-                tera: Arc::new(Tera::default()),
+                tera: Arc::new(Mutex::new(Tera::default())),
             }
         }
     }
@@ -116,9 +116,12 @@ pub mod tera_engine {
             for (k, v) in &context.vars {
                 ctx.insert(k, v);
             }
-            // `render_str` needs `&mut Tera`, which an `Arc<Tera>` can't provide;
-            // `one_off` renders a template string statelessly.
-            Tera::one_off(template, &ctx, false)
+            // Stateful Tera behind a Mutex (the batch's design): `render_str`
+            // needs `&mut Tera`, which the lock provides.
+            self.tera
+                .lock()
+                .map_err(|e| HubError::Internal(format!("Tera lock error: {e}")))?
+                .render_str(template, &ctx)
                 .map_err(|e| HubError::ValidationError(format!("Tera: {e}")))
         }
 

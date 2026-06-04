@@ -59,8 +59,11 @@ impl TokenCounter {
             let word_count = text.split_whitespace().count();
             let char_estimate = text.len() / 4;
             let word_estimate = word_count * 4 / 3;
-            word_estimate.max(char_estimate).max(1)
+            word_estimate.max(char_estimate)
         };
+
+        // Ensure we always return at least 1 token (conservative estimate)
+        let tokens = tokens.max(1);
 
         info!(model = %model, tokens = %tokens, "Counted tokens");
 
