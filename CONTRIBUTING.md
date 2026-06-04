@@ -55,6 +55,12 @@ This installs:
    just test
    ```
 
+   `bash scripts/setup.sh` provisions the toolchain and activates the
+   version-controlled git hooks (`git config core.hooksPath .githooks`). To
+   enable just the hooks without the full setup, run that one command. The
+   `pre-commit` hook enforces worktree-only commits and runs the lint/test gate
+   (`scripts/code_review.sh`); set `SKIP_REVIEW_TESTS=1` to lint without tests.
+
 3. **Run the full validation suite:**
 
    ```bash

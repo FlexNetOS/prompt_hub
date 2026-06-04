@@ -112,6 +112,24 @@ verify_workspace() {
     info "Workspace ready at $(pwd)"
 }
 
+# ---- Install version-controlled git hooks ----
+install_git_hooks() {
+    info "Wiring up git hooks (core.hooksPath -> .githooks)..."
+
+    cd "$(dirname "$0")/.."
+
+    if [ ! -d .githooks ]; then
+        warn "  .githooks/ not found — skipping (hooks land once this is on your branch)"
+        return 0
+    fi
+
+    # Ensure tracked hooks are executable, then point git at them. This is
+    # shared across all worktrees of the repo and survives `git clone`.
+    chmod +x .githooks/* 2>/dev/null || true
+    git config core.hooksPath .githooks
+    info "  Hooks active: $(git config core.hooksPath)"
+}
+
 # ---- Print environment summary ----
 print_env() {
     echo ""
@@ -144,6 +162,7 @@ main() {
     install_rust
     install_cargo_tools
     verify_workspace
+    install_git_hooks
     print_env
 }
 

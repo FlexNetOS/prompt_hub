@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# Version-controlled pre-commit hook.
+#
+# Activated by `git config core.hooksPath .githooks` (done automatically by
+# scripts/setup.sh). Thin, robust shim — all real logic lives in the tracked
+# scripts/code_review.sh. Resolves the script from the repo root (cwd- and
+# worktree-independent) and skips gracefully when it is absent, so a checkout
+# that predates the script is never blocked by a missing file.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+script="$repo_root/scripts/code_review.sh"
+
+if [ -f "$script" ]; then
+    exec bash "$script"
+else
+    echo "pre-commit: $script not found in this worktree — skipping review gate." >&2
+    exit 0
+fi
