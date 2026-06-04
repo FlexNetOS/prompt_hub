@@ -13,6 +13,8 @@ permissions:
 jobs:
   test-generation:
     runs-on: ubuntu-latest
+    # Opt-in: set repository variable ENABLE_AI_WORKFLOWS=true to run.
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Generate Unit Tests (GitHub Models)
     steps:
       - uses: actions/checkout@v4
@@ -84,6 +86,7 @@ jobs:
 
   documentation-generation:
     runs-on: ubuntu-latest
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Generate Documentation (Claude)
     steps:
       - uses: actions/checkout@v4
@@ -147,6 +150,7 @@ jobs:
 
   example-generation:
     runs-on: ubuntu-latest
+    if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Generate Examples (DeepSeek)
     steps:
       - uses: actions/checkout@v4
@@ -209,7 +213,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Create PR with Generated Content
     needs: [test-generation, documentation-generation, example-generation]
-    if: always() && github.event_name == 'pull_request'
+    if: ${{ always() && vars.ENABLE_AI_WORKFLOWS == 'true' && github.event_name == 'pull_request' }}
     steps:
       - uses: actions/checkout@v4
 

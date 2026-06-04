@@ -1,20 +1,33 @@
+# cargo-deny configuration (schema version 2; cargo-deny >= 0.16).
+# https://embarkstudios.github.io/cargo-deny/
+
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-unsound = "deny"
-notice = "warn"
+version = 2
+# RUSTSEC vulnerabilities and unsound advisories are denied by default. List
+# specific advisory IDs here (with rationale) only when no upgrade is available.
+ignore = []
 
 [licenses]
-unlicensed = "deny"
+version = 2
+# Permissive licenses only. A crate whose license is not listed fails the check.
 allow = [
     "MIT",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-3-Clause",
     "BSD-2-Clause",
     "ISC",
     "Zlib",
+    "Unicode-3.0",
 ]
 confidence-threshold = 0.8
+
+# Narrow, documented exceptions instead of broadening the allow-list.
+# option-ext (a tiny helper pulled transitively via `dirs`) is MPL-2.0, a
+# file-level weak copyleft that does not impose obligations on our code.
+[[licenses.exceptions]]
+crate = "option-ext"
+allow = ["MPL-2.0"]
 
 [bans]
 multiple-versions = "warn"

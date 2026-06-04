@@ -5,7 +5,7 @@
 // async_trait crate); `Arc<dyn SearchEngine>` is supported via boxed-future
 // methods where object-safety is required.
 #![allow(dead_code, async_fn_in_trait, unused_assignments)]
-#![doc = include_str!("../../README.md")]
+#![doc = include_str!("../README.md")]
 
 pub mod analytics;
 pub mod audit;

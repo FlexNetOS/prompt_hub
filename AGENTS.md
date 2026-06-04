@@ -32,7 +32,7 @@ This file defines specialized agents for parallel multi-agent development workfl
 - `prompt-hub/src/config.rs` — XDG config loading and hot-reload
 - `prompt-hub/src/templates.rs` — Handlebars/Tera rendering
 - `prompt-hub/src/defaults.rs` — Seed data and base templates
-- `migrations/` — SQL migration files
+- `prompt-hub/migrations/` — SQL migration files (embedded into the lib via `include_str!`)
 
 **Responsibilities**:
 - Design and implement database schema

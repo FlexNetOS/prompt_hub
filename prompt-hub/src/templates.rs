@@ -139,27 +139,27 @@ impl Default for TemplateRegistry {
         let mut templates = HashMap::new();
         templates.insert(
             "base_orchestrator",
-            include_str!("../../templates/base_orchestrator.md"),
+            include_str!("../templates/base_orchestrator.md"),
         );
         templates.insert(
             "base_architect",
-            include_str!("../../templates/base_architect.md"),
+            include_str!("../templates/base_architect.md"),
         );
         templates.insert(
             "base_implementer",
-            include_str!("../../templates/base_implementer.md"),
+            include_str!("../templates/base_implementer.md"),
         );
         templates.insert(
             "base_critic",
-            include_str!("../../templates/base_critic.md"),
+            include_str!("../templates/base_critic.md"),
         );
         templates.insert(
             "base_reviewer",
-            include_str!("../../templates/base_reviewer.md"),
+            include_str!("../templates/base_reviewer.md"),
         );
         templates.insert(
             "handoff_standard",
-            include_str!("../../templates/handoff_standard.md"),
+            include_str!("../templates/handoff_standard.md"),
         );
         Self { templates }
     }
