@@ -38,7 +38,7 @@ tracing-appender = { version = "0.2.3" }
 uuid = { version = "1.18.0", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4.41", features = ["serde"] }
 semver = { version = "1.0.26", features = ["serde"] }
-validator = { version = "0.19", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive", "cargo", "env"] }
 clap_complete = { version = "4.5.50" }
 handlebars = { version = "6.4.0" }
