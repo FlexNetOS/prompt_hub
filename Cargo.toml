@@ -67,9 +67,13 @@ petgraph = { version = "0.7.1" }
 dirs = { version = "5.0.1" }
 notify = { version = "6.1.1" }
 dashmap = { version = "6.1" }
-opentelemetry = { version = "0.29" }
-opentelemetry-prometheus = { version = "0.29" }
-prometheus = { version = "0.14.0" }
+# Prometheus text exposition only. `default-features = false` drops the
+# `protobuf` exposition format (and the unmaintained `protobuf` crate with it),
+# keeping the dependency graph free of known-vulnerable transitive deps. The
+# OpenTelemetry Prometheus exporter (`opentelemetry-prometheus`) is intentionally
+# NOT used: it is discontinued (0.29 is its final release) and pulls that same
+# vulnerable `protobuf` crate. See prompt-hub `otel` feature.
+prometheus = { version = "0.14.0", default-features = false }
 utoipa = { version = "5.0" }
 schemars = { version = "0.8" }
 reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls", "json"] }
