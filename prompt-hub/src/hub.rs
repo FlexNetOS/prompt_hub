@@ -3,6 +3,7 @@
 use crate::auth::{Action, RbacAuthManager};
 use crate::config::HubConfig;
 use crate::error::{HubError, Result};
+use crate::hooks::{HookRegistry, JunieHook};
 use crate::metrics::MetricsCollector;
 use crate::models::*;
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
@@ -11,6 +12,7 @@ use crate::storage::{Storage, StorageConfig};
 use crate::sync::{SyncEvent, SyncManager};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::hash::DefaultHasher;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
@@ -71,8 +73,8 @@ pub type AgentId = Uuid;
 /// Produces a stable hex digest of the concatenated before/after JSON, used to
 /// populate [`AuditEntry::diff_hash`].
 fn diff_hash(before: Option<&str>, after: Option<&str>) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    pub use std::hash::{Hash, Hasher};
+    let mut hasher: DefaultHasher = DefaultHasher::new();
     before.unwrap_or("").hash(&mut hasher);
     after.unwrap_or("").hash(&mut hasher);
     format!("{:016x}", hasher.finish())
@@ -96,6 +98,7 @@ pub struct PromptHub {
     lock_manager: LockManager,
     metrics: Arc<MetricsCollector>,
     sync: SyncManager,
+    hooks: HookRegistry,
 }
 
 impl PromptHub {
@@ -117,15 +120,22 @@ impl PromptHub {
 
         info!("PromptHub initialized at {:?}", db_path);
 
-        Ok(Self {
+        let metrics = Arc::new(MetricsCollector::default());
+        let mut hub = Self {
             storage,
             search_engine: hybrid,
             sanitizer: PromptSanitizer::default(),
             auth: RbacAuthManager::new(),
             lock_manager: LockManager::new(),
-            metrics: Arc::new(MetricsCollector::default()),
+            metrics: metrics.clone(),
             sync: SyncManager::new(),
-        })
+            hooks: HookRegistry::new(),
+        };
+
+        // Register default hooks
+        hub.hooks.register(Box::new(JunieHook));
+
+        Ok(hub)
     }
 
     // ── Accessors for server layer ──────────────────────────────────────
@@ -183,7 +193,7 @@ impl PromptHub {
             })
             .await?;
 
-        // Sync broadcast is best-effort: a send error just means no subscribers
+        // Sync broadcast is best-effort: an error just means no subscribers
         // are listening, which must not fail the registration.
         let _ = self.sync.broadcast(SyncEvent::PromptAdded {
             prompt_id: prompt.id,

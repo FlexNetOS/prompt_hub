@@ -565,6 +565,20 @@ impl SwarmRoleRegistry {
             },
         );
 
+        roles.insert(
+            Role::Junie,
+            RoleMetadata {
+                description: "Primary AI agent and orchestrator of the PromptHub swarm."
+                    .to_string(),
+                required_capabilities: vec![
+                    Capability::Read,
+                    Capability::Write,
+                    Capability::Execute,
+                ],
+                max_parallel_agents: 1,
+            },
+        );
+
         Self { roles }
     }
 

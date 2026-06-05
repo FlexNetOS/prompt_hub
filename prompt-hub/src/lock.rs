@@ -356,6 +356,135 @@ mod tests {
         assert_eq!(mgr.sweep_interval(), 30);
     }
 
+    // ── Concurrency: agents racing for the same prompt ──────────────────────
+
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    fn make_identity(id: Uuid, name: &str) -> AgentIdentity {
+        AgentIdentity {
+            id,
+            name: name.to_string(),
+            capabilities: vec![crate::models::Capability::Write],
+            token_hash: "hash".to_string(),
+            specialization_score: 0.5,
+        }
+    }
+
+    /// Many agents concurrently create locks for the SAME prompt. Every call
+    /// must succeed and yield a globally-unique token (distinct `id` AND
+    /// `token_hash`) bound to the requesting agent — i.e. `create_lock` is
+    /// safe to call from many threads at once with no shared-state corruption
+    /// or RNG collisions.
+    #[test]
+    fn test_concurrent_create_lock_same_prompt_unique_tokens() {
+        const THREADS: usize = 32;
+        let prompt_id = Uuid::new_v4();
+        let tokens: Arc<Mutex<Vec<LockToken>>> = Arc::new(Mutex::new(Vec::new()));
+
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                let tokens = Arc::clone(&tokens);
+                scope.spawn(move || {
+                    let agent_id = Uuid::new_v4();
+                    let lock = LockManager::create_lock(prompt_id, agent_id, 300);
+                    assert_eq!(lock.prompt_id, prompt_id);
+                    assert_eq!(lock.agent_id, agent_id);
+                    tokens.lock().unwrap().push(lock);
+                });
+            }
+        });
+
+        let tokens = Arc::try_unwrap(tokens).unwrap().into_inner().unwrap();
+        assert_eq!(tokens.len(), THREADS);
+        let ids: HashSet<_> = tokens.iter().map(|t| t.id).collect();
+        let hashes: HashSet<_> = tokens.iter().map(|t| t.token_hash.clone()).collect();
+        let agents: HashSet<_> = tokens.iter().map(|t| t.agent_id).collect();
+        assert_eq!(ids.len(), THREADS, "lock ids must be unique across threads");
+        assert_eq!(
+            hashes.len(),
+            THREADS,
+            "token hashes must be unique across threads"
+        );
+        assert_eq!(
+            agents.len(),
+            THREADS,
+            "each racing agent is distinct on the same prompt"
+        );
+    }
+
+    /// Model race resolution: of all agents that grabbed a token for the
+    /// prompt, exactly one is the holder. `verify_lock_holder` must accept
+    /// only that agent and reject every other, even when checked
+    /// concurrently from many threads against the same lock.
+    #[test]
+    fn test_concurrent_verify_only_holder_succeeds() {
+        const LOSERS: usize = 16;
+        let prompt_id = Uuid::new_v4();
+        let holder_id = Uuid::new_v4();
+        let lock = LockManager::create_lock(prompt_id, holder_id, 300);
+
+        std::thread::scope(|scope| {
+            let lock = &lock;
+            scope.spawn(move || {
+                let holder = make_identity(holder_id, "holder");
+                assert!(
+                    LockManager::verify_lock_holder(&holder, lock).is_ok(),
+                    "the lock holder must verify successfully"
+                );
+            });
+            for i in 0..LOSERS {
+                scope.spawn(move || {
+                    let loser = make_identity(Uuid::new_v4(), &format!("loser-{i}"));
+                    assert!(
+                        LockManager::verify_lock_holder(&loser, lock).is_err(),
+                        "a non-holder must always be rejected"
+                    );
+                });
+            }
+        });
+    }
+
+    /// Concurrent heartbeats on independent tokens must each clamp to
+    /// `MAX_TTL_SECONDS` — the clamp logic has no cross-thread state, so it
+    /// must hold under parallel use.
+    #[test]
+    fn test_concurrent_heartbeat_clamps_to_max() {
+        const THREADS: usize = 16;
+        std::thread::scope(|scope| {
+            for _ in 0..THREADS {
+                scope.spawn(|| {
+                    let mut lock = LockManager::create_lock(Uuid::new_v4(), Uuid::new_v4(), 3500);
+                    LockManager::heartbeat(&mut lock, 100_000);
+                    let max_expiry =
+                        Utc::now() + Duration::seconds(LockManager::MAX_TTL_SECONDS as i64);
+                    assert!(
+                        lock.expires_at <= max_expiry,
+                        "heartbeat must clamp to MAX_TTL under concurrency"
+                    );
+                });
+            }
+        });
+    }
+
+    /// A shared `Arc<LockManager>` (the type advertises `Clone + Send + Sync`)
+    /// must be usable from many threads simultaneously without data races.
+    #[test]
+    fn test_shared_manager_used_across_threads() {
+        let mgr = Arc::new(LockManager::with_sweep_interval(15));
+        std::thread::scope(|scope| {
+            let mgr = &mgr;
+            for _ in 0..8 {
+                scope.spawn(move || {
+                    assert_eq!(mgr.sweep_interval(), 15);
+                    mgr.spawn_sweep_task();
+                    let lock = LockManager::create_lock(Uuid::new_v4(), Uuid::new_v4(), 300);
+                    assert!(!LockManager::is_expired(&lock));
+                });
+            }
+        });
+    }
+
     // ── Send / Sync ─────────────────────────────────────────────────────────
 
     #[test]

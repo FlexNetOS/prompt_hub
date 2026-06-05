@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
 use crate::error::{HubError, Result};
-use crate::models::*;
 // Re-export SearchMode publicly so `prompt_hub::search::SearchMode` resolves for
 // consumers (the CLI's search command) — `use models::*` only brings it in privately.
 pub use crate::models::SearchMode;
+use crate::models::*;
 use crate::storage::Storage;
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -20,7 +20,7 @@ use uuid::Uuid;
 ///
 /// All implementations are `Send + Sync` so the hub can hold an `Arc<dyn
 /// SearchEngine>` and call it concurrently from multiple tokio tasks.
-pub trait SearchEngine: Send + Sync {
+pub trait SearchEngine: Send + Sync + std::fmt::Debug {
     /// Execute a search query with optional filters and pagination.
     ///
     /// Returns a boxed future so the trait stays `dyn`-compatible (an `async

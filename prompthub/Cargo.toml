@@ -69,11 +69,9 @@ chaos-automation = ["prompt-hub/chaos-automation"]
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -82,18 +80,8 @@ chrono = { workspace = true }
 semver = { workspace = true }
 clap = { workspace = true }
 clap_complete = { workspace = true }
-regex = { workspace = true }
-validator = { workspace = true }
-dirs = { workspace = true }
-dashmap = { workspace = true }
 ratatui = { workspace = true, optional = true }
 dialoguer = { workspace = true, optional = true }
 console = { workspace = true, optional = true }
 comfy-table = { workspace = true, optional = true }
 syntect = { workspace = true, optional = true }
-tempfile = { workspace = true }
-
-[dev-dependencies]
-assert_cmd = { workspace = true }
-predicates = { workspace = true }
-insta = { workspace = true }

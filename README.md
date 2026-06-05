@@ -131,6 +131,14 @@ docker build -f docker/Dockerfile -t prompthub .
 docker-compose -f docker/docker-compose.yml up
 ```
 
+## Audit Automation
+
+The project includes an automation that triggers updates to `TODO.md` whenever a new audit report is added to
+`docs/audits/`.
+
+- **GitHub Action**: `.github/workflows/audit_sync.yml` automates this in CI.
+- **Local Watcher**: `scripts/audit_watcher.sh` can be used for local development.
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for C4 model diagrams and system design.

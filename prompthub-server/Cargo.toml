@@ -31,36 +31,22 @@ qdrant = ["prompt-hub/qdrant"]
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true, features = ["timeout"] }
 tower-governor = { workspace = true }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 semver = { workspace = true }
-jsonwebtoken = { workspace = true }
-validator = { workspace = true }
 clap = { workspace = true }
-regex = { workspace = true }
-argon2 = { workspace = true }
-rustls = { workspace = true }
 tokio-rustls = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
-dashmap = { workspace = true }
-opentelemetry = { workspace = true, optional = true }
-prometheus = { workspace = true, optional = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
-
-[dev-dependencies]
-tempfile = { workspace = true }
-reqwest = { workspace = true }

@@ -5,6 +5,7 @@
 use anyhow::Result;
 use clap::Parser;
 use prompt_hub::config::HubConfig;
+use std::sync::Arc;
 use tracing::info;
 
 mod cli;
@@ -180,10 +181,6 @@ async fn main() -> Result<()> {
             info!("Starting TUI");
             tui::run_tui().await?;
         }
-        #[cfg(not(feature = "tui"))]
-        Commands::Tui => {
-            println!("TUI feature not enabled. Rebuild with --features tui");
-        }
         Commands::Server { port } => {
             info!(port, "Starting embedded server");
             println!("Starting embedded server on port {}...", port);
@@ -352,6 +349,15 @@ async fn main() -> Result<()> {
             hub.learn_from_feedback(&correction, &intent, agent_id)
                 .await?;
             println!("Feedback recorded: '{}'", correction);
+        }
+        Commands::Junie { subcommand } => {
+            info!(?subcommand, "Junie command");
+            let config = HubConfig::load().unwrap_or_default();
+            let hub = Arc::new(
+                prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
+                    .await?,
+            );
+            commands::junie::run(subcommand, hub).await?;
         }
         Commands::Budget { subcommand } => {
             info!(?subcommand, "Budget command");

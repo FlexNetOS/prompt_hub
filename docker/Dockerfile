@@ -15,6 +15,12 @@ COPY rust-toolchain.toml rust-toolchain.toml
 COPY prompt-hub/Cargo.toml prompt-hub/
 COPY prompthub/Cargo.toml prompthub/
 COPY prompthub-server/Cargo.toml prompthub-server/
+# prompt-hub declares [[bench]] targets; cargo validates they exist when parsing
+# the manifest (even for the dummy dependency-cache build below), so the bench
+# sources must be present. README is referenced by `readme =` and the lib doc
+# include, so it must exist before the manifest is parsed too.
+COPY prompt-hub/benches prompt-hub/benches/
+COPY prompt-hub/README.md prompt-hub/README.md
 
 # Build dependencies cache layer
 RUN mkdir -p prompt-hub/src prompthub/src prompthub-server/src && \
@@ -28,8 +34,9 @@ RUN mkdir -p prompt-hub/src prompthub/src prompthub-server/src && \
 COPY prompt-hub/src prompt-hub/src/
 COPY prompthub/src prompthub/src/
 COPY prompthub-server/src prompthub-server/src/
-COPY migrations migrations/
-COPY templates templates/
+# Crate-embedded assets (include_str!) now live under the prompt-hub crate.
+COPY prompt-hub/migrations prompt-hub/migrations/
+COPY prompt-hub/templates prompt-hub/templates/
 COPY docs docs/
 
 # Build release binaries
@@ -39,8 +46,8 @@ RUN cargo build --release --bin prompthub-server --bin prompthub
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /app/target/release/prompthub-server /bin/
 COPY --from=builder /app/target/release/prompthub /bin/
-COPY --from=builder /app/migrations /migrations
-COPY --from=builder /app/templates /templates
+COPY --from=builder /app/prompt-hub/migrations /migrations
+COPY --from=builder /app/prompt-hub/templates /templates
 COPY --from=builder /app/docs /docs
 
 # Security: run as non-root

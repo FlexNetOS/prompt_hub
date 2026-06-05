@@ -256,7 +256,7 @@ jobs:
             
             ### Test Status
             - Compilation: ✅ OK
-            - Tests: ${{ steps.tests.outcome === 'success' ? '✅ PASS' : '⚠️ REVIEW' }}
+            - Tests: ${{ steps.tests.outcome == 'success' && '✅ PASS' || '⚠️ REVIEW' }}
             
             ### Deployment Checklist
             

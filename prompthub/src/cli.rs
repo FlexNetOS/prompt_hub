@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::{Shell, generate};
 use prompt_hub::models::*;
 use std::path::PathBuf;
@@ -122,6 +122,7 @@ pub enum Commands {
     Completions { shell: Shell },
 
     /// Launch TUI interface
+    #[cfg(feature = "tui")]
     Tui,
 
     /// Start embedded server
@@ -200,6 +201,12 @@ pub enum Commands {
     /// Submit feedback
     Feedback { correction: String },
 
+    /// Junie specific commands
+    Junie {
+        #[command(subcommand)]
+        subcommand: JunieCommand,
+    },
+
     /// Budget management
     Budget {
         #[command(subcommand)]
@@ -269,6 +276,16 @@ pub enum QuotaCommand {
     History,
 }
 
+#[derive(Debug, Subcommand, Clone)]
+pub enum JunieCommand {
+    /// Check Junie's health and status
+    Status,
+    /// Chat with Junie
+    Chat { message: String },
+    /// Ask Junie to perform a task
+    Task { request: String },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum OutputFormat {
     Table,
@@ -299,7 +316,7 @@ pub enum MagicTarget {
 
 /// Generate shell completions for the given shell.
 pub fn generate_completions(shell: Shell) -> anyhow::Result<()> {
-    let mut cmd = Cli::command();
+    let mut cmd: Command = Cli::command();
     let name = cmd.get_name().to_string();
     generate(shell, &mut cmd, name, &mut std::io::stdout());
     Ok(())
