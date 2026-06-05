@@ -125,6 +125,10 @@ pub enum Commands {
     #[cfg(feature = "tui")]
     Tui,
 
+    /// Print Prometheus metrics in text exposition format
+    #[cfg(feature = "otel")]
+    Metrics,
+
     /// Start embedded server
     Server {
         #[arg(short, long, default_value = "8080")]
@@ -330,6 +334,13 @@ mod tests {
     fn test_cli_parse_init() {
         let args = Cli::parse_from(["prompthub", "init"]);
         assert!(matches!(args.command, Commands::Init { .. }));
+    }
+
+    #[test]
+    #[cfg(feature = "otel")]
+    fn test_cli_parse_metrics() {
+        let args = Cli::parse_from(["prompthub", "metrics"]);
+        assert!(matches!(args.command, Commands::Metrics));
     }
 
     #[test]

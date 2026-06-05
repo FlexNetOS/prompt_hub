@@ -7,5 +7,7 @@ pub mod import;
 pub mod init;
 pub mod junie;
 pub mod list;
+#[cfg(feature = "otel")]
+pub mod metrics;
 pub mod plugin;
 pub mod search;
