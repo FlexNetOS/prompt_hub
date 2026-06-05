@@ -47,8 +47,6 @@ clap = { workspace = true }
 tokio-rustls = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 schemars = { workspace = true, optional = true }
-opentelemetry = { workspace = true, optional = true }
-prometheus = { workspace = true, optional = true }
 
 [build-dependencies]
 serde_json = { workspace = true }

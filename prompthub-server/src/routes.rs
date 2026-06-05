@@ -553,30 +553,64 @@ pub async fn live_check() -> Response {
 
 /// Prometheus-compatible metrics endpoint.
 ///
-/// Returns real metrics from the PromptHub metrics collector.
+/// Returns real metrics from the PromptHub metrics collector in the Prometheus
+/// text exposition format.
 #[instrument(skip(state))]
 pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let metrics = state.hub.metrics();
+    let output = render_metrics(&state.hub.metrics(), state.uptime().as_secs_f64());
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        output,
+    )
+}
 
-    let output = format!(
-        "# TYPE prompt_hub_requests_total counter\n\
+/// Render the Prometheus text exposition for the given collector snapshot.
+///
+/// With the `otel` feature the body comes from the `prompt-hub` core renderer
+/// (full counter/gauge set via the `prometheus` crate); the server appends its
+/// own process-level `prompt_hub_uptime_seconds` gauge, which the core has no
+/// concept of. Without `otel`, a compact but **valid** hand-rolled exposition is
+/// emitted — notably the search-latency aggregate is a gauge (its average), not
+/// a single-bucket pseudo-histogram.
+pub(crate) fn render_metrics(
+    metrics: &prompt_hub::metrics::MetricsCollector,
+    uptime_secs: f64,
+) -> String {
+    let uptime_block = format!(
+        "# HELP prompt_hub_uptime_seconds Server uptime in seconds\n\
+         # TYPE prompt_hub_uptime_seconds gauge\n\
+         prompt_hub_uptime_seconds {uptime_secs:.3}\n"
+    );
+
+    #[cfg(feature = "otel")]
+    {
+        match metrics.prometheus_text() {
+            Ok(mut body) => {
+                body.push_str(&uptime_block);
+                return body;
+            }
+            Err(e) => {
+                warn!("prometheus exposition failed, using fallback: {e}");
+            }
+        }
+    }
+
+    // Default (and otel-error fallback): compact, valid exposition.
+    format!(
+        "# HELP prompt_hub_requests_total Total requests processed\n\
+         # TYPE prompt_hub_requests_total counter\n\
          prompt_hub_requests_total {}\n\
-         # TYPE prompt_hub_search_latency_ms histogram\n\
-         prompt_hub_search_latency_ms_bucket{{le=\"+Inf\"}} {}\n\
+         # HELP prompt_hub_search_latency_ms_avg Average search latency in milliseconds\n\
+         # TYPE prompt_hub_search_latency_ms_avg gauge\n\
+         prompt_hub_search_latency_ms_avg {}\n\
+         # HELP prompt_hub_active_locks Currently held locks\n\
          # TYPE prompt_hub_active_locks gauge\n\
          prompt_hub_active_locks {}\n\
-         # TYPE prompt_hub_uptime_seconds gauge\n\
-         prompt_hub_uptime_seconds {:.3}\n",
+         {uptime_block}",
         metrics.get_requests_total(),
         metrics.get_avg_search_latency(),
         metrics.get_active_locks(),
-        state.uptime().as_secs_f64()
-    );
-
-    (
-        StatusCode::OK,
-        [("content-type", "text/plain; charset=utf-8")],
-        output,
     )
 }
 
@@ -590,4 +624,50 @@ pub async fn openapi_json() -> Json<Value> {
 /// Serve Swagger UI HTML.
 pub async fn swagger_ui() -> axum::response::Html<String> {
     crate::openapi::swagger_ui().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_metrics;
+    use prompt_hub::metrics::MetricsCollector;
+
+    #[test]
+    fn render_metrics_is_valid_exposition() {
+        let metrics = MetricsCollector::new();
+        metrics.record_request();
+        metrics.record_request();
+        metrics.record_search_latency(100);
+        metrics.record_lock_acquired();
+
+        let text = render_metrics(&metrics, 12.5);
+
+        // Common invariants across both feature configs.
+        assert!(text.contains("prompt_hub_requests_total 2"));
+        assert!(text.contains("# TYPE prompt_hub_active_locks gauge"));
+        assert!(text.contains("prompt_hub_active_locks 1"));
+        assert!(text.contains("# TYPE prompt_hub_uptime_seconds gauge"));
+        assert!(text.contains("prompt_hub_uptime_seconds 12.500"));
+
+        // The malformed single-bucket pseudo-histogram must be gone in every config.
+        assert!(
+            !text.contains("le=\"+Inf\""),
+            "must not emit a single-bucket pseudo-histogram: {text}"
+        );
+        assert!(
+            !text.contains(" histogram"),
+            "no histogram-typed series without real buckets: {text}"
+        );
+
+        // Feature-specific latency representation.
+        #[cfg(feature = "otel")]
+        {
+            assert!(text.contains("prompt_hub_search_latency_ms_sum 100"));
+            assert!(text.contains("prompt_hub_search_latency_ms_count 1"));
+        }
+        #[cfg(not(feature = "otel"))]
+        {
+            assert!(text.contains("# TYPE prompt_hub_search_latency_ms_avg gauge"));
+            assert!(text.contains("prompt_hub_search_latency_ms_avg 100"));
+        }
+    }
 }

@@ -17,7 +17,7 @@ categories = ["development-tools", "command-line-utilities"]
 [workspace.dependencies]
 tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = { version = "0.7.15" }
-tokio-tungstenite = { version = "0.26.2" }
+tokio-tungstenite = { version = "0.29.0" }
 tower = { version = "0.5.2" }
 tower-http = { version = "0.6.2", features = ["cors", "compression-full", "trace", "request-id"] }
 tower-governor = { version = "0.7", package = "tower_governor" }
@@ -44,7 +44,7 @@ clap_complete = { version = "4.5.50" }
 handlebars = { version = "6.4.0" }
 tera = { version = "1.20.1" }
 tiktoken-rs = { version = "0.12" }
-tokenizers = { version = "0.21" }
+tokenizers = { version = "0.23" }
 libloading = { version = "0.8.6" }
 inventory = { version = "0.3.20" }
 regex = { version = "1.11.2" }
@@ -58,29 +58,33 @@ password-hash = { version = "0.5", features = ["getrandom"] }
 rustls = { version = "0.23.26" }
 tokio-rustls = { version = "0.26.2" }
 ratatui = { version = "0.29" }
-dialoguer = { version = "0.11" }
-console = { version = "0.15" }
+dialoguer = { version = "0.12" }
+console = { version = "0.16" }
 comfy-table = { version = "7.1" }
 syntect = { version = "5.2" }
-ndarray = { version = "0.16.1" }
-petgraph = { version = "0.7.1" }
-dirs = { version = "5.0.1" }
+ndarray = { version = "0.17.2" }
+petgraph = { version = "0.8.3" }
+dirs = { version = "6.0.0" }
 notify = { version = "6.1.1" }
 dashmap = { version = "6.1" }
-opentelemetry = { version = "0.29" }
-opentelemetry-prometheus = { version = "0.29" }
-prometheus = { version = "0.14.0" }
+# Prometheus text exposition only. `default-features = false` drops the
+# `protobuf` exposition format (and the unmaintained `protobuf` crate with it),
+# keeping the dependency graph free of known-vulnerable transitive deps. The
+# OpenTelemetry Prometheus exporter (`opentelemetry-prometheus`) is intentionally
+# NOT used: it is discontinued (0.29 is its final release) and pulls that same
+# vulnerable `protobuf` crate. See prompt-hub `otel` feature.
+prometheus = { version = "0.14.0", default-features = false }
 utoipa = { version = "5.0" }
 schemars = { version = "0.8" }
 reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls", "json"] }
-sha2 = { version = "0.10.8" }
+sha2 = { version = "0.11.0" }
 tempfile = { version = "3.19.1" }
 
 # Template engine (choose one)
 # handlebars = { workspace = true }  # or tera
 
 # Dev dependencies (workspace)
-criterion = { version = "0.5.1", features = ["async_tokio"] }
+criterion = { version = "0.8.2", features = ["async_tokio"] }
 assert_cmd = { version = "2.0.17" }
 predicates = { version = "3.1.3" }
 proptest = { version = "1.6.1" }
