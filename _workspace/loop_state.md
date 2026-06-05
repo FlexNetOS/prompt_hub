@@ -8,8 +8,8 @@ cycles_this_session: 3     # reset to 0 on RESUME — BUDGET REACHED -> HAND OFF
 cycles_total: 3            # carried across sessions
 apply_mode: APPLY          # push -> PR -> auto-merge on green DONE-gates (fail-closed)
 last_item: Triage qodana code-quality findings (18 unused-qualifications fixed; rest stale/won't-fix)
-status: cycle 3 complete — budget reached; committing + PR, then HAND OFF (session-relay)
-last_update: 2026-06-05T22:48:00Z
+status: HANDOFF written (budget reached, 3/3 cycles merged) — next session: /prompt-loop resume from _workspace/HANDOFF.md
+last_update: 2026-06-05T22:50:00Z
 # Cycle ledger:
 #   c1 (PR #30, merged cddff47): P0 fix audit.rs sha2 0.11 LowerHex -> green build
 #   c2 (PR #31, merged 93e393c): prompthub metrics CLI subcommand (Prometheus exposition, cfg otel)
