@@ -16,7 +16,9 @@ readme = "README.md"
 [features]
 default = ["handlebars"]
 smart = ["dep:ndarray"]
-otel =["dep:opentelemetry", "dep:opentelemetry-prometheus", "dep:prometheus"]
+# Prometheus text-format metrics exposition via the maintained `prometheus`
+# crate (text encoder only — no protobuf, no discontinued OpenTelemetry exporter).
+otel = ["dep:prometheus"]
 sqlcipher = []
 tls = ["dep:tokio-rustls"]
 ffi = []
@@ -85,8 +87,6 @@ ndarray = { workspace = true, optional = true }
 petgraph = { workspace = true, optional = true }
 dirs = { workspace = true }
 notify = { workspace = true, optional = true }
-opentelemetry = { workspace = true, optional = true }
-opentelemetry-prometheus = { workspace = true, optional = true }
 prometheus = { workspace = true, optional = true }
 handlebars = { workspace = true, optional = true }
 tera = { workspace = true, optional = true }

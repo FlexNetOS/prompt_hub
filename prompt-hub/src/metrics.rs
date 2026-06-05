@@ -233,6 +233,41 @@ impl MetricsCollector {
         total.checked_div(count).unwrap_or(0)
     }
 
+    // Raw cumulative sum/count accessors for the latency aggregates. These back
+    // the Prometheus exposition's `*_sum` / `*_count` series, from which a
+    // scrape can derive a rate-based average — the correct representation for a
+    // sum+count aggregate (as opposed to a single-bucket pseudo-histogram).
+
+    /// Get the cumulative sum of recorded search latencies (milliseconds).
+    pub fn get_search_latency_sum(&self) -> u64 {
+        self.search_latency_ms.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of recorded search-latency samples.
+    pub fn get_search_latency_count(&self) -> u64 {
+        self.search_latency_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the cumulative sum of recorded embedding-generation latencies (milliseconds).
+    pub fn get_embedding_latency_sum(&self) -> u64 {
+        self.embedding_generation_ms.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of recorded embedding-generation latency samples.
+    pub fn get_embedding_latency_count(&self) -> u64 {
+        self.embedding_generation_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the cumulative sum of recorded DB-query latencies (milliseconds).
+    pub fn get_db_latency_sum(&self) -> u64 {
+        self.db_query_latency_ms.load(Ordering::Relaxed)
+    }
+
+    /// Get the number of recorded DB-query latency samples.
+    pub fn get_db_latency_count(&self) -> u64 {
+        self.db_query_latency_count.load(Ordering::Relaxed)
+    }
+
     /// Report all metrics as a formatted summary string.
     pub fn summary(&self) -> String {
         format!(
@@ -277,6 +312,151 @@ impl MetricsCollector {
         self.rollback_deployments.store(0, Ordering::Relaxed);
         self.rollback_rollbacked.store(0, Ordering::Relaxed);
         info!("All metrics reset to zero");
+    }
+
+    /// Render all metrics in the Prometheus text exposition format (v0.0.4).
+    ///
+    /// Builds a fresh [`prometheus::Registry`] from the current atomic snapshot
+    /// on each call and encodes it with the text encoder — no protobuf, no
+    /// process-global meter provider. Counters carry the `_total` suffix;
+    /// `active_locks` is a gauge. Latency aggregates are exposed as cumulative
+    /// `*_ms_sum` / `*_ms_count` counter pairs, the correct representation for a
+    /// precomputed sum+count (a scrape derives the average via
+    /// `rate(sum) / rate(count)`) — deliberately *not* a single-bucket
+    /// pseudo-histogram.
+    #[cfg(feature = "otel")]
+    pub fn prometheus_text(&self) -> crate::Result<String> {
+        use prometheus::{Encoder, IntCounter, IntGauge, Opts, Registry, TextEncoder};
+
+        let registry = Registry::new();
+
+        let counter = |name: &str, help: &str, value: u64| -> crate::Result<()> {
+            let c = IntCounter::with_opts(Opts::new(name, help)).map_err(|e| {
+                crate::HubError::Internal(format!("prometheus counter {name}: {e}"))
+            })?;
+            if value > 0 {
+                c.inc_by(value);
+            }
+            registry
+                .register(Box::new(c))
+                .map_err(|e| crate::HubError::Internal(format!("prometheus register {name}: {e}")))
+        };
+
+        let gauge = |name: &str, help: &str, value: i64| -> crate::Result<()> {
+            let g = IntGauge::with_opts(Opts::new(name, help))
+                .map_err(|e| crate::HubError::Internal(format!("prometheus gauge {name}: {e}")))?;
+            g.set(value);
+            registry
+                .register(Box::new(g))
+                .map_err(|e| crate::HubError::Internal(format!("prometheus register {name}: {e}")))
+        };
+
+        counter(
+            "prompt_hub_requests_total",
+            "Total requests processed",
+            self.get_requests_total(),
+        )?;
+        counter(
+            "prompt_hub_sanitization_blocked_total",
+            "Sanitization attempts blocked",
+            self.get_sanitization_blocked(),
+        )?;
+        counter(
+            "prompt_hub_evolution_success_total",
+            "Successful prompt evolutions",
+            self.get_evolution_success(),
+        )?;
+        counter(
+            "prompt_hub_evolution_failure_total",
+            "Failed prompt evolutions",
+            self.get_evolution_failure(),
+        )?;
+        counter(
+            "prompt_hub_pollination_patterns_total",
+            "Patterns shared via pollination",
+            self.get_pollination_patterns(),
+        )?;
+        counter(
+            "prompt_hub_privacy_scans_total",
+            "Privacy scans completed",
+            self.get_privacy_scans(),
+        )?;
+        counter(
+            "prompt_hub_privacy_issues_found_total",
+            "Privacy issues found across all scans",
+            self.get_privacy_issues_found(),
+        )?;
+        counter(
+            "prompt_hub_quality_gate_runs_total",
+            "Quality gate runs",
+            self.get_quality_gate_runs(),
+        )?;
+        counter(
+            "prompt_hub_quality_gate_failures_total",
+            "Quality gate failures",
+            self.get_quality_gate_failures(),
+        )?;
+        counter(
+            "prompt_hub_multimodal_processed_total",
+            "Multimodal inputs processed",
+            self.get_multimodal_processed(),
+        )?;
+        counter(
+            "prompt_hub_deployments_total",
+            "Deployments attempted",
+            self.get_deployments(),
+        )?;
+        counter(
+            "prompt_hub_rollbacks_total",
+            "Rollbacks performed",
+            self.get_rollbacks(),
+        )?;
+
+        // Latency aggregates as sum/count counter pairs (milliseconds).
+        counter(
+            "prompt_hub_search_latency_ms_sum",
+            "Cumulative search latency in milliseconds",
+            self.get_search_latency_sum(),
+        )?;
+        counter(
+            "prompt_hub_search_latency_ms_count",
+            "Number of search-latency samples",
+            self.get_search_latency_count(),
+        )?;
+        counter(
+            "prompt_hub_embedding_latency_ms_sum",
+            "Cumulative embedding-generation latency in milliseconds",
+            self.get_embedding_latency_sum(),
+        )?;
+        counter(
+            "prompt_hub_embedding_latency_ms_count",
+            "Number of embedding-generation latency samples",
+            self.get_embedding_latency_count(),
+        )?;
+        counter(
+            "prompt_hub_db_latency_ms_sum",
+            "Cumulative DB-query latency in milliseconds",
+            self.get_db_latency_sum(),
+        )?;
+        counter(
+            "prompt_hub_db_latency_ms_count",
+            "Number of DB-query latency samples",
+            self.get_db_latency_count(),
+        )?;
+
+        // Gauges.
+        gauge(
+            "prompt_hub_active_locks",
+            "Currently held locks",
+            self.get_active_locks() as i64,
+        )?;
+
+        let mut buf = Vec::new();
+        TextEncoder::new()
+            .encode(&registry.gather(), &mut buf)
+            .map_err(|e| crate::HubError::Internal(format!("prometheus encode: {e}")))?;
+        String::from_utf8(buf)
+            .map_err(|e| crate::HubError::Internal(format!("prometheus utf8: {e}")))
     }
 }
 
@@ -425,5 +605,48 @@ mod tests {
         assert_eq!(metrics.get_active_locks(), 0);
         assert_eq!(metrics.get_evolution_success(), 0);
         assert_eq!(metrics.get_avg_search_latency(), 0);
+    }
+
+    #[test]
+    fn test_latency_sum_count_accessors() {
+        let metrics = MetricsCollector::new();
+        metrics.record_search_latency(100);
+        metrics.record_search_latency(50);
+        assert_eq!(metrics.get_search_latency_sum(), 150);
+        assert_eq!(metrics.get_search_latency_count(), 2);
+        // avg is derived from the same sum/count
+        assert_eq!(metrics.get_avg_search_latency(), 75);
+    }
+
+    #[cfg(feature = "otel")]
+    #[test]
+    fn test_prometheus_text_is_valid_exposition() {
+        let metrics = MetricsCollector::new();
+        metrics.record_request();
+        metrics.record_request();
+        metrics.record_search_latency(100);
+        metrics.record_lock_acquired();
+        metrics.record_sanitization_blocked();
+
+        let text = metrics.prometheus_text().expect("exposition renders");
+
+        // Correctly typed series.
+        assert!(text.contains("# TYPE prompt_hub_requests_total counter"));
+        assert!(text.contains("prompt_hub_requests_total 2"));
+        assert!(text.contains("# TYPE prompt_hub_active_locks gauge"));
+        assert!(text.contains("prompt_hub_active_locks 1"));
+        assert!(text.contains("prompt_hub_sanitization_blocked_total 1"));
+
+        // Latency exposed as sum/count, not a malformed single-bucket histogram.
+        assert!(text.contains("prompt_hub_search_latency_ms_sum 100"));
+        assert!(text.contains("prompt_hub_search_latency_ms_count 1"));
+        assert!(
+            !text.contains("le=\"+Inf\""),
+            "must not emit a single-bucket pseudo-histogram: {text}"
+        );
+        assert!(
+            !text.contains("histogram"),
+            "no histogram-typed series without real buckets: {text}"
+        );
     }
 }
