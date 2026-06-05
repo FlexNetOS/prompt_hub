@@ -33,7 +33,18 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 
 ## Core library (prompt-hub)
 
-- [ ] **Triage the live qodana code-quality findings (24 items) — clippy-clean cleanup.**
+- [x] **Triage the live qodana code-quality findings (24 items) — clippy-clean cleanup.**
+      _Cycle 3 (2026-06-05). Triaged all 27 code-smell findings against the CURRENT tree using the
+      compiler as ground truth (`-W unused_qualifications`) rather than the stale SARIF line numbers.
+      FIXED: the 18 still-live `RsUnnecessaryQualifications` (4 of 22 were already fixed) via
+      `cargo fix` — `hub.rs` ×2, `search.rs` ×15, `budget.rs` ×1 (then `cargo fmt`). STALE/already
+      fixed (verified, no action): `RsUnwrap` (server `main.rs` no longer `.unwrap()`s — uses `?`),
+      `RsAssertEqual` (no `assert!(a==b)` candidate left in `load_balancer.rs`), `RsUnreachablePatterns`
+      (rustc's deny-by-default `unreachable_patterns` is silent — build green). WON'T-FIX (subjective
+      RustRover style, not a clippy violation, behavior-risk): 2× `RsLift` (`moderation.rs`,
+      `sanitize.rs`). Gates green: 0 residual unused-qualifications, clippy -D warnings clean, fmt clean,
+      671 tests / 0 fail. Note: the 39 `CargoUnusedDependency` + 21 `NewCrateVersionAvailable` SARIF
+      findings remain stale (PR #27 dep removal + dependabot); recommend regenerating the SARIF. Landed via the cycle-3 PR._
       The SARIF (generated 2026-06-04 00:11) reports 87 results, but the 39 `CargoUnusedDependency`
       and 21 `NewCrateVersionAvailable` findings are **stale** — PR #27 (merged 2026-06-04 21:16)
       already removed 32 unused deps, and dependabot owns version bumps. The genuinely actionable,
