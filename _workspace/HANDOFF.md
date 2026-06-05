@@ -23,6 +23,11 @@
   warning-clean.** Small + verifiable single cycle; unblocked now that the build is green.
   Verify: `cargo doc --workspace --all-features --no-deps 2>&1 | grep -c warning:` → 0.
 - **Then:** P5 — verify Docker build + add `.cliff.toml` (Conventional-Commit changelog).
+- **New from `/verify` (2026-06-05), higher-value bugs — see backlog "CLI / server":**
+  (a) `prompthub metrics` writes tracing logs to **stdout**, polluting the exposition — route the
+  fmt subscriber to stderr (`main.rs:35`); (b) CLI mutations fail for the default `anonymous`
+  identity (`prompthub add` → Unauthorized) — the whole write surface is unusable out-of-the-box.
+  Consider doing (a) before P4: it's a small, high-value correctness fix.
 - **Parked (do NOT pick as a single cycle):** "wire `smart` embedding search end-to-end" — it is
   an **architect-scoped multi-cycle epic** (`SmartEngine`/`HybridEngine` use `mock_embed`,
   `search.rs`). Needs an inference-runtime decision first; have `feature-architect` scope the

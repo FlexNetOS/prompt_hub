@@ -4,8 +4,27 @@
 
 ## P0 — Compilation Blockers (do first)
 
-- [ ] **Verify `cargo check` passes** — Requires rustc in environment (not available in sandbox).
-  - All *known* blockers below are fixed. Next agent should run `cargo check`.
+- [x] **Verify `cargo check` passes** — ✅ GREEN as of 2026-06-05 (PR #30).
+  - A regression appeared post-merge: dependabot's `sha2 0.11` bump broke `audit.rs:75`
+    (`finalize()` no longer impls `LowerHex`, E0277). Fixed by hand hex-encoding the digest
+    (byte-identical). `cargo check --workspace --all-features` → 0; 671 tests pass; clippy/fmt clean.
+
+## V — Verification findings (2026-06-05, prompt-loop `/verify`)
+
+- [ ] **Route CLI tracing logs to stderr (`prompthub metrics` emits logs on stdout).**
+  - `/verify` found `prompthub metrics` prints the Prometheus exposition AND ~14 ANSI INFO log
+    lines on the **same stdout stream**, so `prompthub metrics > out.prom` is not parser-clean
+    (stderr was empty; `RUST_LOG=error` works around it).
+  - File: `prompthub/src/main.rs:35` — add `.with_writer(std::io::stderr)` to `tracing_subscriber::fmt()`.
+
+- [ ] **CLI mutations unusable out-of-the-box — default identity lacks `Write`.**
+  - `prompthub add` (and all writes) fail: `Unauthorized: agent 'anonymous' lacks capability Write`.
+    Provide a configured local identity / `login` flow / dev-capability default for the CLI.
+  - File: `prompthub/src/commands/add.rs:28` (`AgentIdentity::default()`); RBAC in `prompt-hub/src/auth.rs`.
+  - Pre-existing; blocks the entire write surface (incl. observing the audit `diff_hash` via CLI).
+
+- [ ] **Regenerate `docs/audits/qodana.sarif.json`** — committed SARIF (2026-06-04) is stale.
+  - Re-run the CI Qodana job and commit fresh output; 60 of 87 findings are obsolete and line numbers drifted.
 
 - [x] **Fix `AgentIdentity::default()` usage** — Already had manual Default impl.
   - File: `prompt-hub/src/models.rs` lines 146-156
@@ -75,34 +94,32 @@
 
 - [x] **Verify `#![forbid(unsafe_code)]` on all 49 library modules** — 49/49 confirmed.
 
-- [ ] **Run `cargo clippy --workspace --all-features -- -D warnings`**
-  - Fix all warnings (unused imports, redundant clones, etc.)
+- [x] **Run `cargo clippy --workspace --all-features -- -D warnings`** — ✅ clean (2026-06-05).
+  - Also fixed 18 `unused_qualifications` via `cargo fix` (PR #32, qodana triage).
 
-- [ ] **Run `cargo fmt --all -- --check`**
-  - Format all files
+- [x] **Run `cargo fmt --all -- --check`** — ✅ clean (2026-06-05).
 
 - [ ] **Run `cargo doc --workspace --all-features --no-deps`**
-  - Fix documentation warnings
+  - Fix documentation warnings (now unblocked — was blocked by the P0 build error). Next-to-build.
 
 ## Audits
 
-- [ ] **Review audit findings from `qodana.sarif.json`** — Audit dropped at 2026-06-03 20:00. Found 87 issues (40
-  warning, 47 note).
+- [x] **Review audit findings from `qodana.sarif.json`** — ✅ triaged 2026-06-05 (PR #32).
+  - 18 live `RsUnnecessaryQualifications` fixed; rest stale/already-fixed or subjective won't-fix.
+  - ⚠️ The SARIF is now stale — see **V** section: regenerate it before the next triage.
   - File: `docs/audits/qodana.sarif.json`
 ## P3 — Testing
 
-- [ ] **Run `cargo test -p prompt-hub --lib`**
-  - Fix failing tests
+- [x] **Run `cargo test -p prompt-hub --lib`** — ✅ green (part of 671-test workspace pass, 2026-06-05).
 
-- [ ] **Run `cargo test --workspace`**
-  - Fix integration test failures
+- [x] **Run `cargo test --workspace`** — ✅ 671 passed / 0 failed (`--all-features`, 2026-06-05).
 
-- [ ] **Add edge case tests for sanitization**
-  - Zero-width characters, RTL override, homoglyphs
+- [x] **Add edge case tests for sanitization** — ✅ landed (PR #27, commit `72de246`).
+  - Zero-width (ZWSP/ZWNJ/ZWJ/BOM), RTL/LTR overrides, homoglyphs, negative cases.
   - File: `prompt-hub/src/sanitize.rs` test module
 
-- [ ] **Add concurrency tests for LockManager**
-  - Multiple agents racing for same prompt
+- [x] **Add concurrency tests for LockManager** — ✅ landed (PR #27, commit `72de246`).
+  - 32 racing agents → unique tokens; verify-only-holder; heartbeat clamp.
   - File: `prompt-hub/src/lock.rs` test module
 
 ## P4 — Documentation
