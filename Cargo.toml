@@ -44,7 +44,7 @@ clap_complete = { version = "4.5.50" }
 handlebars = { version = "6.4.0" }
 tera = { version = "1.20.1" }
 tiktoken-rs = { version = "0.12" }
-tokenizers = { version = "0.21" }
+tokenizers = { version = "0.23" }
 libloading = { version = "0.8.6" }
 inventory = { version = "0.3.20" }
 regex = { version = "1.11.2" }
@@ -63,7 +63,7 @@ console = { version = "0.15" }
 comfy-table = { version = "7.1" }
 syntect = { version = "5.2" }
 ndarray = { version = "0.16.1" }
-petgraph = { version = "0.7.1" }
+petgraph = { version = "0.8.3" }
 dirs = { version = "6.0.0" }
 notify = { version = "6.1.1" }
 dashmap = { version = "6.1" }
