@@ -101,13 +101,29 @@ docker build -f docker/Dockerfile -t prompthub .
 docker-compose -f docker/docker-compose.yml up
 ```
 
-## Harness: autonomous / resumable operation (upgrade path)
+## Harness: prompt_hub construction crew (autonomous / resumable)
 
-This repo's harness can be upgraded to **autonomous, resumable, self-restarting** operation:
-a durable on-disk backlog → one item per cycle → hand off to a fresh session at a cycle budget
-→ optional fully-unattended self-restart with a clean context each cycle ("/new" effect). Truth
-lives on disk (backlog + checkpoints + commits) so any restart resumes cold with zero loss.
+**Goal:** continuously upgrade and add features to prompt_hub — one backlog item per cycle, built
+by an agent team, verified across boundaries, committed, with fresh-session handoff and optional
+unattended self-restart. Truth lives on disk (`_workspace/backlog.md` + `loop_state.md` + commits +
+`HANDOFF.md`) so any restart resumes cold with zero loss. This harness *builds* prompt_hub — it is
+**not** prompt_hub's product/Junie runtime.
 
+**Trigger:** for any prompt_hub feature-development / "work the backlog" / "upgrade prompt_hub" /
+loop / resume request, use the **`prompt-loop`** skill. It orchestrates the crew
+(`feature-architect` → `rust-implementer` ↔ `verification-gate` → `docs-scribe`, with
+`backlog-curator` + `continuity-steward` bookends) via the `feature-build` discipline and
+`session-relay` handoff. Simple questions may be answered directly.
+
+- Built harness: `.claude/skills/prompt-loop/` (orchestrator + `scripts/ralph-prompt.sh` runner),
+  `.claude/skills/{feature-build,session-relay}/`, `.claude/agents/*.md`, durable `_workspace/`.
 - Generic pattern + templates: `~/Desktop/meta/HARNESS-UPGRADE-KIT.md`
 - Tailored kit for THIS repo:  `~/Desktop/meta/harness_hub/upgrade-kits/prompt_hub.md`
-- No loop harness yet — the kit builds one from scratch (engine/CLI `prompthub`).
+- Unattended runner is **safe by default** (local commits only); `PROMPT_APPLY=1` opts into
+  push → PR → auto-merge-on-green; it does **not** disable the permission sandbox (allowlist needed
+  commands in `.claude/settings.json` for a truly unattended run); `touch _workspace/STOP` halts.
+
+**Change history:**
+| Date | Change | Target | Reason |
+|------|--------|--------|--------|
+| 2026-06-05 | Initial harness build (6 agents, 3 skills, runner, `_workspace/`) | All | Construction crew per autonomous-operation kit (commit 726edcd) |
