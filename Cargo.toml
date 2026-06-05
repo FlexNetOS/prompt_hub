@@ -62,7 +62,7 @@ dialoguer = { version = "0.12" }
 console = { version = "0.16" }
 comfy-table = { version = "7.1" }
 syntect = { version = "5.2" }
-ndarray = { version = "0.16.1" }
+ndarray = { version = "0.17.2" }
 petgraph = { version = "0.8.3" }
 dirs = { version = "6.0.0" }
 notify = { version = "6.1.1" }
