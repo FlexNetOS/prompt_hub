@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::new(&args.log_level)
-                .add_directive("tower_http=info".parse().unwrap()),
+                .add_directive("tower_http=info".parse()?),
         )
         .with_target(true)
         .with_thread_ids(true)

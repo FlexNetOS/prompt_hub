@@ -122,6 +122,7 @@ pub enum Commands {
     Completions { shell: Shell },
 
     /// Launch TUI interface
+    #[cfg(feature = "tui")]
     Tui,
 
     /// Start embedded server

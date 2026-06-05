@@ -645,6 +645,157 @@ mod tests {
         );
     }
 
+    // ── Encoding obfuscation: edge cases ────────────────────────────────────
+
+    /// Extract the issue list from a result, panicking if the input was Clean.
+    fn issues_of(result: SanitizationResult) -> Vec<SanitizationIssue> {
+        match result {
+            SanitizationResult::Blocked(i) | SanitizationResult::Suspicious(i) => i,
+            SanitizationResult::Clean => panic!("expected non-clean result"),
+        }
+    }
+
+    /// Every zero-width / invisible code point must be blocked as Critical.
+    #[test]
+    fn test_all_zero_width_variants_blocked() {
+        let sanitizer = PromptSanitizer::default();
+        // ZWSP, ZWNJ, ZWJ, BOM/ZWNBSP, WORD JOINER
+        for ch in ['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}', '\u{2060}'] {
+            let text = format!("safe{ch}text");
+            let result = sanitizer.sanitize(&text, "").unwrap();
+            assert!(
+                matches!(result, SanitizationResult::Blocked(_)),
+                "expected Blocked for U+{:04X}",
+                ch as u32
+            );
+            let issues = issues_of(result);
+            assert!(
+                issues
+                    .iter()
+                    .any(|i| i.category == "encoding_obfuscation"
+                        && i.severity == Severity::Critical),
+                "expected a Critical encoding_obfuscation issue for U+{:04X}",
+                ch as u32
+            );
+        }
+    }
+
+    /// Both directional-override markers (RTL and LTR) must be blocked.
+    #[test]
+    fn test_ltr_and_rtl_overrides_blocked() {
+        let sanitizer = PromptSanitizer::default();
+        for ch in ['\u{202E}', '\u{202D}'] {
+            let text = format!("invoice{ch}txt.exe");
+            let result = sanitizer.sanitize(&text, "").unwrap();
+            assert!(
+                matches!(result, SanitizationResult::Blocked(_)),
+                "expected Blocked for override U+{:04X}",
+                ch as u32
+            );
+        }
+    }
+
+    /// Multiple distinct hidden characters should each surface an issue.
+    #[test]
+    fn test_multiple_zero_width_all_reported() {
+        let sanitizer = PromptSanitizer::default();
+        let text = "a\u{200B}b\u{200D}c\u{FEFF}d";
+        let issues = issues_of(sanitizer.sanitize(text, "").unwrap());
+        let count = issues
+            .iter()
+            .filter(|i| i.category == "encoding_obfuscation")
+            .count();
+        assert!(count >= 3, "expected >=3 encoding issues, got {count}");
+    }
+
+    /// Full-width look-alikes (no Latin a-z present) trip the homoglyph
+    /// heuristic as a Warning but NOT the mixed-script Critical path,
+    /// so the prompt is Suspicious rather than Blocked.
+    #[test]
+    fn test_fullwidth_homoglyph_is_suspicious_not_blocked() {
+        let sanitizer = PromptSanitizer::default();
+        // "ｈｅｌｌｏ" — full-width Latin (U+FF48..), contains no ASCII a-z.
+        let result = sanitizer
+            .sanitize("\u{FF48}\u{FF45}\u{FF4C}\u{FF4C}\u{FF4F}", "")
+            .unwrap();
+        assert!(
+            matches!(result, SanitizationResult::Suspicious(_)),
+            "full-width homoglyphs alone should be Suspicious"
+        );
+        let issues = issues_of(result);
+        assert!(issues.iter().all(|i| i.severity != Severity::Critical));
+        assert!(issues.iter().any(|i| i.location == "homoglyphs"));
+    }
+
+    /// Pure-Cyrillic text (no Latin) is a homoglyph Warning, not a
+    /// mixed-script Critical — the two paths must stay distinct.
+    #[test]
+    fn test_pure_cyrillic_is_warning_only() {
+        let sanitizer = PromptSanitizer::default();
+        // "пароль" (Russian for "password") — all Cyrillic, no Latin.
+        let result = sanitizer
+            .sanitize("\u{043F}\u{0430}\u{0440}\u{043E}\u{043B}\u{044C}", "")
+            .unwrap();
+        assert!(
+            matches!(result, SanitizationResult::Suspicious(_)),
+            "pure Cyrillic should be Suspicious (homoglyph warning), not Blocked"
+        );
+    }
+
+    /// Mixed Latin + Cyrillic on one line IS a Critical mixed-script attack.
+    #[test]
+    fn test_mixed_script_is_critical() {
+        let sanitizer = PromptSanitizer::default();
+        // "pa" Latin + Cyrillic "ссword" (с = U+0441)
+        let result = sanitizer.sanitize("pa\u{0441}\u{0441}word", "").unwrap();
+        let issues = issues_of(result);
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.location == "mixed-script" && i.severity == Severity::Critical),
+            "expected a Critical mixed-script issue"
+        );
+    }
+
+    /// Negative case: legitimate accented Latin (é, ï, à, ñ) must not be
+    /// flagged — none of these fall in the homoglyph / Cyrillic ranges.
+    #[test]
+    fn test_legitimate_accented_latin_is_clean() {
+        let sanitizer = PromptSanitizer::default();
+        let result = sanitizer
+            .sanitize("Café résumé naïve mañana.", "Über jalapeño.")
+            .unwrap();
+        assert!(
+            matches!(result, SanitizationResult::Clean),
+            "accented Latin should not be flagged: {result:?}"
+        );
+    }
+
+    /// Negative case: emoji and CJK are outside the spoofing ranges and
+    /// should pass clean.
+    #[test]
+    fn test_legitimate_unicode_is_clean() {
+        let sanitizer = PromptSanitizer::default();
+        let result = sanitizer
+            .sanitize("Deploy the build 🚀 then celebrate 🎉", "日本語のテキスト")
+            .unwrap();
+        assert!(
+            matches!(result, SanitizationResult::Clean),
+            "emoji/CJK should not be flagged: {result:?}"
+        );
+    }
+
+    /// Combined attack: an RTL override plus a hidden zero-width character
+    /// must be blocked and surface more than one issue.
+    #[test]
+    fn test_combined_obfuscation_blocked() {
+        let sanitizer = PromptSanitizer::default();
+        let text = "report\u{202E}\u{200B}data";
+        let result = sanitizer.sanitize(text, "").unwrap();
+        assert!(matches!(result, SanitizationResult::Blocked(_)));
+        assert!(issues_of(result).len() >= 2, "expected multiple issues");
+    }
+
     // ── Confidence scoring ──────────────────────────────────────────────────
 
     #[test]
