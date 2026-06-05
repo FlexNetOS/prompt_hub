@@ -35,14 +35,14 @@ pub mod lock {
     #[derive(Debug, Clone, Default)]
     pub struct LockManager {
         #[allow(dead_code)]
-        locks: std::sync::Arc<std::sync::Mutex<Vec<LockToken>>>,
+        locks: Arc<std::sync::Mutex<Vec<LockToken>>>,
     }
 
     impl LockManager {
         /// Create a new lock manager
         pub fn new() -> Self {
             Self {
-                locks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                locks: Arc::new(std::sync::Mutex::new(Vec::new())),
             }
         }
 

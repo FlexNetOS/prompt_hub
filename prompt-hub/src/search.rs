@@ -31,19 +31,16 @@ pub trait SearchEngine: Send + Sync + std::fmt::Debug {
         query: &'a str,
         filters: &'a SearchFilters,
         pagination: &'a Pagination,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>;
 
     /// Index (or re-index) a single prompt.
     fn index<'a>(
         &'a self,
         prompt: &'a Prompt,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 
     /// Remove a prompt from the index.
-    fn remove(
-        &self,
-        prompt_id: Uuid,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>>;
+    fn remove(&self, prompt_id: Uuid) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Human-readable engine name (for metrics / logging).
     fn name(&self) -> &'static str;
@@ -132,8 +129,7 @@ impl SearchEngine for FastEngine {
         query: &'a str,
         filters: &'a SearchFilters,
         pagination: &'a Pagination,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>> {
         Box::pin(async move {
             debug!(
                 "FAST search: '{}' page={} per_page={}",
@@ -212,7 +208,7 @@ impl SearchEngine for FastEngine {
     fn index<'a>(
         &'a self,
         _prompt: &'a Prompt,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             // FTS5 indexing is handled automatically by the storage layer via
             // INSERT/UPDATE/DELETE triggers on the `prompts` table.
@@ -221,10 +217,7 @@ impl SearchEngine for FastEngine {
         })
     }
 
-    fn remove(
-        &self,
-        prompt_id: Uuid,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+    fn remove(&self, prompt_id: Uuid) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             // The CASCADE DELETE trigger on the FTS table handles removal.
             debug!("FAST remove: id={prompt_id} — handled by cascade trigger");
@@ -370,8 +363,7 @@ impl SearchEngine for SmartEngine {
         query: &'a str,
         filters: &'a SearchFilters,
         pagination: &'a Pagination,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>> {
         Box::pin(async move {
             debug!("SMART search: '{}' filters={:?}", query, filters);
 
@@ -453,7 +445,7 @@ impl SearchEngine for SmartEngine {
     fn index<'a>(
         &'a self,
         _prompt: &'a Prompt,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             // Embedding generation is handled separately by an embedding pipeline.
             debug!("SMART index: embeddings handled by pipeline");
@@ -461,10 +453,7 @@ impl SearchEngine for SmartEngine {
         })
     }
 
-    fn remove(
-        &self,
-        prompt_id: Uuid,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+    fn remove(&self, prompt_id: Uuid) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             // Embeddings table has CASCADE DELETE.
             debug!("SMART remove: id={prompt_id} — handled by cascade");
@@ -549,8 +538,7 @@ impl SearchEngine for HybridEngine {
         query: &'a str,
         filters: &'a SearchFilters,
         pagination: &'a Pagination,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>> {
         Box::pin(async move {
             // Run both engines in parallel using tokio::join!
             let (fast_result, smart_result) = tokio::join!(
@@ -599,7 +587,7 @@ impl SearchEngine for HybridEngine {
     fn index<'a>(
         &'a self,
         prompt: &'a Prompt,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             self.fast.index(prompt).await?;
             self.smart.index(prompt).await?;
@@ -607,10 +595,7 @@ impl SearchEngine for HybridEngine {
         })
     }
 
-    fn remove(
-        &self,
-        prompt_id: Uuid,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+    fn remove(&self, prompt_id: Uuid) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             self.fast.remove(prompt_id).await?;
             self.smart.remove(prompt_id).await?;
@@ -681,8 +666,7 @@ impl SearchEngine for PluginEngine {
         query: &'a str,
         filters: &'a SearchFilters,
         pagination: &'a Pagination,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<Paginated<ScoredPrompt>>> + Send + 'a>> {
         Box::pin(async move {
             let mut all_results: Vec<ScoredPrompt> = Vec::new();
 
@@ -734,7 +718,7 @@ impl SearchEngine for PluginEngine {
     fn index<'a>(
         &'a self,
         prompt: &'a Prompt,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             for plugin in &self.plugins {
                 if let Err(e) = plugin.index(prompt).await {
@@ -745,10 +729,7 @@ impl SearchEngine for PluginEngine {
         })
     }
 
-    fn remove(
-        &self,
-        prompt_id: Uuid,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+    fn remove(&self, prompt_id: Uuid) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
             for plugin in &self.plugins {
                 if let Err(e) = plugin.remove(prompt_id).await {
