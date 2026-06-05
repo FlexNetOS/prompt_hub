@@ -53,7 +53,14 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 
 ## CLI / server (prompthub, prompthub-server)
 
-- [ ] **Add a `prompthub metrics` CLI subcommand that prints the Prometheus exposition.**
+- [x] **Add a `prompthub metrics` CLI subcommand that prints the Prometheus exposition.**
+      _Cycle 2 (2026-06-05). Added `Commands::Metrics` (cfg `otel`) → `commands::metrics::run()`
+      which calls `hub.metrics().prometheus_text()` and prints the v0.0.4 exposition to stdout
+      (logs stay on stderr). Reuses the landed otel path; CLI `otel` feature already forwarded to
+      `prompt-hub/otel`, so no Cargo changes. Tests: `test_cli_parse_metrics`,
+      `metrics_renders_valid_exposition` (asserts HELP/TYPE preamble). Gates green
+      (check default+otel+all-features, clippy -D warnings, fmt, 577+ workspace tests / 0 fail);
+      functional run emitted 38 HELP/TYPE lines. Landed via the cycle-2 PR._
       The server already exposes `/metrics` (`prompthub-server/src/routes.rs:559 prometheus_metrics`
       → `render_metrics` → `metrics.prometheus_text()`), but the CLI has **no** way to read metrics
       (`grep metric prompthub/src` finds only `PromptMetrics::default()`). Add a thin `Metrics`

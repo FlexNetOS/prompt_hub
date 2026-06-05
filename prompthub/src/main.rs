@@ -435,6 +435,11 @@ async fn main() -> Result<()> {
             QuotaCommand::Check => println!("Quota status: OK"),
             QuotaCommand::History => println!("Quota history:"),
         },
+        #[cfg(feature = "otel")]
+        Commands::Metrics => {
+            info!("Printing Prometheus metrics");
+            commands::metrics::run().await?;
+        }
     }
 
     Ok(())
