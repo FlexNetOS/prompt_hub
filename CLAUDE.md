@@ -119,11 +119,14 @@ loop / resume request, use the **`prompt-loop`** skill. It orchestrates the crew
   `.claude/skills/{feature-build,session-relay}/`, `.claude/agents/*.md`, durable `_workspace/`.
 - Generic pattern + templates: `~/Desktop/meta/HARNESS-UPGRADE-KIT.md`
 - Tailored kit for THIS repo:  `~/Desktop/meta/harness_hub/upgrade-kits/prompt_hub.md`
-- Unattended runner is **safe by default** (local commits only); `PROMPT_APPLY=1` opts into
-  push → PR → auto-merge-on-green; it does **not** disable the permission sandbox (allowlist needed
-  commands in `.claude/settings.json` for a truly unattended run); `touch _workspace/STOP` halts.
+- `/prompt-loop` **defaults to APPLY** (push → PR → auto-merge on green DONE-gates, fail-closed to
+  `NEEDS-HUMAN`); pass `safe`/`dry-run`/`local` for local-commits-only. The interactive permission
+  sandbox still backstops every push/merge (allowlist commands in `.claude/settings.json` to avoid
+  prompts). The headless **runner stays safe by default** (`PROMPT_APPLY=1` to apply) and does
+  **not** disable the sandbox; `touch _workspace/STOP` halts.
 
 **Change history:**
 | Date | Change | Target | Reason |
 |------|--------|--------|--------|
 | 2026-06-05 | Initial harness build (6 agents, 3 skills, runner, `_workspace/`) | All | Construction crew per autonomous-operation kit (commit 726edcd) |
+| 2026-06-05 | `/prompt-loop` default flipped to APPLY (push→PR→auto-merge on green); added explicit `safe` override | skills/prompt-loop | User feedback: don't require opt-in for apply on the slash command |

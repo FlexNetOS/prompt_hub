@@ -1,6 +1,6 @@
 ---
 name: prompt-loop
-description: "Autonomous construction crew that continuously upgrades and adds features to prompt_hub — one backlog item per cycle, verified and committed, with fresh-session handoff and optional unattended self-restart. ALWAYS use to: build/add/wire prompt_hub features, run the dev loop, 'work the backlog', 'upgrade prompt_hub', 'continuous feature development'. Follow-up/continuation triggers: 'resume', 'pick up the loop', 'continue in a new session', 're-run', 'next cycle', 'keep going', 'run again'. This is the DEV harness that builds prompt_hub — NOT prompt_hub's product runtime."
+description: "Autonomous construction crew that continuously upgrades and adds features to prompt_hub — one backlog item per cycle, verified and committed, with fresh-session handoff and optional unattended self-restart. ALWAYS use to: build/add/wire prompt_hub features, run the dev loop, 'work the backlog', 'upgrade prompt_hub', 'continuous feature development'. Follow-up/continuation triggers: 'resume', 'pick up the loop', 'continue in a new session', 're-run', 'next cycle', 'keep going', 'run again'. Defaults to APPLY (push → PR → auto-merge on green DONE-gates, fail-closed); pass 'safe' (or 'dry-run'/'local') for local-commits-only. This is the DEV harness that builds prompt_hub — NOT prompt_hub's product runtime."
 ---
 
 # Prompt-Loop — Autonomous prompt_hub Construction Crew
@@ -31,13 +31,25 @@ Only one team is active at a time; the per-cycle team is created and disbanded e
 > Always invoke every agent with `model: "opus"`.
 
 ## Apply policy (CODE loop — "apply" = git ops, no system mutation)
+
+**Default = APPLY.** Invoking `/prompt-loop` (or resuming it) defaults to the full apply path each
+cycle: build + commit → **push** the feature branch → **open a PR** (evidence in body) →
+**auto-merge ONLY when the full DONE-criteria gate suite is green** for that feature. Pass an
+explicit `safe` (synonyms: `dry-run`, `local`) to stay local. Fail-closed: if branch protection /
+required CI blocks the self-merge, or the permission sandbox denies a `git`/`gh` command, write
+`_workspace/NEEDS-HUMAN` (reason inside) — never `--force`, never weaken protection or a guard.
+
 | Mode | Trigger | What the loop may do |
 |------|---------|----------------------|
-| **Interactive** (default) | a human is driving this session | Build + commit to a local feature branch. Ask normally before push / PR / merge. |
-| **Unattended SAFE** | external runner, `PROMPT_APPLY` unset | Build + commit locally only. **Never** push, PR, or merge. |
-| **Unattended APPLY** | external runner, `PROMPT_APPLY=1` | Push the feature branch → open a PR (evidence in body) → **auto-merge ONLY when the full DONE-criteria gate suite is green** for that feature. If branch protection / required CI blocks the self-merge, write `NEEDS-HUMAN` (fail-closed) — never `--force`, never weaken protection. |
+| **Apply** (default) | `/prompt-loop` with no override · external runner with `PROMPT_APPLY=1` | Build + commit per cycle → push → PR → auto-merge on green DONE-gates (fail-closed to `NEEDS-HUMAN`). |
+| **Safe** (explicit override) | `/prompt-loop safe` (or `dry-run`/`local`) · external runner with `PROMPT_APPLY` unset | Build + commit to a local feature branch only. **Never** push, PR, or merge. |
 
-Auto-merge is gated on *proven* green (build + test + lint + fmt-clean), uses a safe merge (`gh pr merge --squash`), and stops at the first failure. Safety is never the default; apply is a deliberate opt-in.
+Auto-merge is gated on *proven* green (build + test + lint + fmt-clean), uses a safe squash merge
+(`gh pr merge --squash`), and stops at the first failure. In an interactive session the **permission
+sandbox still backstops** every push/merge — they prompt unless you allowlist the commands in
+`.claude/settings.json`. The headless **runner keeps apply as a deliberate `PROMPT_APPLY=1` opt-in**
+(per the kit's "safe by default" principle) so an unattended self-restart never escalates by
+accident; the human-invoked slash command, where you are present and authorized, defaults to apply.
 
 ## Workflow
 
@@ -47,6 +59,7 @@ Auto-merge is gated on *proven* green (build + test + lint + fmt-clean), uses a 
    - **`backlog.md` present, user requests a specific item / partial re-run** → skip DISCOVER; jump to Phase 2 for that item.
    - **Neither present** → Phase 1 DISCOVER.
 2. Read `_workspace/loop_state.md` for counters (`cycle_budget`, `cycles_this_session`, `cycles_total`).
+3. **Resolve apply mode** (see Apply policy): default **Apply**; if the invocation includes `safe`/`dry-run`/`local`, use **Safe**; an external runner's explicit `PROMPT_APPLY` value wins for that entry point. Record the resolved mode in `loop_state.md`.
 
 ### Phase 1: DISCOVER (initial only)
 1. Spawn `backlog-curator` (sub-agent, opus) → it reads real state (TODO.md, docs/audits, staged features, `gh` issues/PRs, gate gaps) and writes `_workspace/backlog.md` (ordered, with provenance), seeding `loop_state.md`.
@@ -75,7 +88,7 @@ Run for each cycle until a stop condition:
 **e. Write state back + commit (one cohesive commit):**
 - Mark the item `- [x]` (with commit/PR evidence) or `- [!] blocked: <reason>` in `backlog.md`; bump `cycles_this_session` and `cycles_total`; update `last_update`.
 - Commit code + docs + `_workspace/{backlog,loop_state}.md` together, Conventional-Commit subject, ending with the `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer.
-- Apply per the **Apply policy** table (interactive asks; unattended SAFE = local only; unattended APPLY = push→PR→auto-merge-on-green).
+- Apply per the resolved mode (**Apply policy**): default **Apply** → push → PR → auto-merge on green DONE-gates (fail-closed to `NEEDS-HUMAN` if blocked/sandbox-denied); **Safe** override → local commit only.
 
 **f. Self-pace:** in an interactive session, `ScheduleWakeup` to re-enter the next cycle (long delay if waiting on a slow external step like CI). Under the external runner, do **not** wake — finish the budget then write one sentinel.
 
