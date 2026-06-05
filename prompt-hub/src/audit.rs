@@ -72,7 +72,17 @@ impl SqliteAuditLogger {
             hasher.update(a.as_bytes());
         }
         hasher.update(timestamp.as_bytes());
-        format!("{:x}", hasher.finalize())
+        // sha2 0.11's `finalize()` returns a `hybrid_array::Array`, which no
+        // longer implements `LowerHex`. Hex-encode the digest bytes by hand to
+        // keep the output byte-identical (lowercase, zero-padded) so existing
+        // hash-chain entries continue to verify.
+        use std::fmt::Write as _;
+        let mut hash = String::with_capacity(64);
+        for byte in hasher.finalize() {
+            // Writing to a `String` is infallible.
+            let _ = write!(hash, "{byte:02x}");
+        }
+        hash
     }
 
     /// Verify that the `diff_hash` on an existing entry matches the
