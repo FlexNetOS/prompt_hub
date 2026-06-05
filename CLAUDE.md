@@ -100,3 +100,14 @@ Dropping a new audit report into `docs/audits/` triggers `TODO.md` updates via `
 docker build -f docker/Dockerfile -t prompthub .
 docker-compose -f docker/docker-compose.yml up
 ```
+
+## Harness: autonomous / resumable operation (upgrade path)
+
+This repo's harness can be upgraded to **autonomous, resumable, self-restarting** operation:
+a durable on-disk backlog → one item per cycle → hand off to a fresh session at a cycle budget
+→ optional fully-unattended self-restart with a clean context each cycle ("/new" effect). Truth
+lives on disk (backlog + checkpoints + commits) so any restart resumes cold with zero loss.
+
+- Generic pattern + templates: `~/Desktop/meta/HARNESS-UPGRADE-KIT.md`
+- Tailored kit for THIS repo:  `~/Desktop/meta/harness_hub/upgrade-kits/prompt_hub.md`
+- No loop harness yet — the kit builds one from scratch (engine/CLI `prompthub`).
