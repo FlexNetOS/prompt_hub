@@ -100,3 +100,33 @@ Dropping a new audit report into `docs/audits/` triggers `TODO.md` updates via `
 docker build -f docker/Dockerfile -t prompthub .
 docker-compose -f docker/docker-compose.yml up
 ```
+
+## Harness: prompt_hub construction crew (autonomous / resumable)
+
+**Goal:** continuously upgrade and add features to prompt_hub — one backlog item per cycle, built
+by an agent team, verified across boundaries, committed, with fresh-session handoff and optional
+unattended self-restart. Truth lives on disk (`_workspace/backlog.md` + `loop_state.md` + commits +
+`HANDOFF.md`) so any restart resumes cold with zero loss. This harness *builds* prompt_hub — it is
+**not** prompt_hub's product/Junie runtime.
+
+**Trigger:** for any prompt_hub feature-development / "work the backlog" / "upgrade prompt_hub" /
+loop / resume request, use the **`prompt-loop`** skill. It orchestrates the crew
+(`feature-architect` → `rust-implementer` ↔ `verification-gate` → `docs-scribe`, with
+`backlog-curator` + `continuity-steward` bookends) via the `feature-build` discipline and
+`session-relay` handoff. Simple questions may be answered directly.
+
+- Built harness: `.claude/skills/prompt-loop/` (orchestrator + `scripts/ralph-prompt.sh` runner),
+  `.claude/skills/{feature-build,session-relay}/`, `.claude/agents/*.md`, durable `_workspace/`.
+- Generic pattern + templates: `~/Desktop/meta/HARNESS-UPGRADE-KIT.md`
+- Tailored kit for THIS repo:  `~/Desktop/meta/harness_hub/upgrade-kits/prompt_hub.md`
+- `/prompt-loop` **defaults to APPLY** (push → PR → auto-merge on green DONE-gates, fail-closed to
+  `NEEDS-HUMAN`); pass `safe`/`dry-run`/`local` for local-commits-only. The interactive permission
+  sandbox still backstops every push/merge (allowlist commands in `.claude/settings.json` to avoid
+  prompts). The headless **runner stays safe by default** (`PROMPT_APPLY=1` to apply) and does
+  **not** disable the sandbox; `touch _workspace/STOP` halts.
+
+**Change history:**
+| Date | Change | Target | Reason |
+|------|--------|--------|--------|
+| 2026-06-05 | Initial harness build (6 agents, 3 skills, runner, `_workspace/`) | All | Construction crew per autonomous-operation kit (commit 726edcd) |
+| 2026-06-05 | `/prompt-loop` default flipped to APPLY (push→PR→auto-merge on green); added explicit `safe` override | skills/prompt-loop | User feedback: don't require opt-in for apply on the slash command |

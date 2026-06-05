@@ -1,0 +1,5 @@
+# Per-run external-runner logs (ephemeral; truth is in commits + state files)
+ralph-run-*.log
+*.log
+# Local-only terminal sentinels
+STOP
