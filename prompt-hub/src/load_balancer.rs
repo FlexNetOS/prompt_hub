@@ -246,7 +246,7 @@ mod tests {
         lb.add_provider("light", "https://l.com", 1);
 
         let sel = lb.select_provider().unwrap();
-        assert!(sel.strategy_used == RoutingStrategy::Weighted);
+        assert_eq!(sel.strategy_used, RoutingStrategy::Weighted);
     }
 
     #[test]
