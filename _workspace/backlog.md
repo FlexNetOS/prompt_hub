@@ -66,8 +66,10 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 
 - [x] **Add a `prompthub metrics` CLI subcommand that prints the Prometheus exposition.**
       _Cycle 2 (2026-06-05). Added `Commands::Metrics` (cfg `otel`) → `commands::metrics::run()`
-      which calls `hub.metrics().prometheus_text()` and prints the v0.0.4 exposition to stdout
-      (logs stay on stderr). Reuses the landed otel path; CLI `otel` feature already forwarded to
+      which calls `hub.metrics().prometheus_text()` and prints the v0.0.4 exposition to stdout.
+      ⚠️ CORRECTION (post-`/verify` 2026-06-05): the exposition is valid/complete, but the default
+      invocation also writes tracing INFO logs to **stdout** (not stderr) — see the follow-up item
+      below. Reuses the landed otel path; CLI `otel` feature already forwarded to
       `prompt-hub/otel`, so no Cargo changes. Tests: `test_cli_parse_metrics`,
       `metrics_renders_valid_exposition` (asserts HELP/TYPE preamble). Gates green
       (check default+otel+all-features, clippy -D warnings, fmt, 577+ workspace tests / 0 fail);
@@ -78,6 +80,28 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       subcommand in `cli.rs` that calls `hub.metrics().prometheus_text()` (gate behind `otel`,
       matching the server). Small, user-facing, Rust-native, exercises the just-landed otel path.
       _Source: `routes.rs:554-588`; `cli.rs` enum `Commands` has no metrics variant; otel landed via PR #28._
+
+- [ ] **Route CLI tracing logs to stderr so stdout stays machine-readable (`prompthub metrics` fix).**
+      `/verify` found that `prompthub metrics` writes its Prometheus exposition AND ~14 ANSI-colored
+      tracing INFO lines to the **same stream (stdout)** — `prompthub metrics > out.prom` produces a
+      file a Prometheus parser chokes on. STDERR was empty; clean output only via `RUST_LOG=error`
+      / `--log-level error`. Root cause: `prompthub/src/main.rs:35` `tracing_subscriber::fmt().init()`
+      defaults to stdout, and `--log-level` defaults to `info`. Fix Rust-native: add
+      `.with_writer(std::io::stderr)` to the fmt subscriber (and consider disabling ANSI when stdout
+      isn't a TTY). This is correct CLI hygiene for any data-on-stdout command, not just `metrics`.
+      _Source: `/verify` 2026-06-05 (split-stream capture: 14 INFO lines on stdout, 0 on stderr);
+      `main.rs:32-38`. Verify: `prompthub metrics 2>/dev/null | head -1` → first line is `# HELP …`._
+
+- [ ] **Make the CLI usable out-of-the-box for mutations (default identity lacks `Write`).**
+      `/verify` found `prompthub add` (and any mutating command) fails with
+      `Error: Unauthorized: agent 'anonymous' lacks capability Write` because the CLI constructs an
+      `AgentIdentity::default()` (no capabilities). A first-time user cannot create/update a prompt
+      from the CLI at all. Decide + implement the intended path: a configured local identity
+      (token/capabilities via `HubConfig`/env), a `prompthub login`/identity flag, or a
+      developer-capability default for the local CLI. Pre-existing (not introduced this session),
+      but it blocks the whole write surface — including observing the audit `diff_hash` chain via CLI.
+      _Source: `/verify` 2026-06-05 (`prompthub add` exit 1, RBAC deny in `auth.rs::authorize_action`);
+      `prompthub/src/commands/add.rs:28 AgentIdentity::default()`. Verify: `prompthub add <file>` registers a prompt (exit 0)._
 
 ## Docs / infra
 
@@ -94,6 +118,13 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       Conventional-Commit history, enabling docs-scribe's automated changelog path. `justfile` has a
       `docker` recipe but no changelog recipe.
       _Source: `ls .cliff.toml` → absent; `ls docker/Dockerfile` → present; TODO.md P5._
+
+- [ ] **Regenerate `docs/audits/qodana.sarif.json` — the committed SARIF is stale.**
+      Generated 2026-06-04 00:11, before PRs #27/#28/#30/#31/#32. Cycle 3 confirmed its 39
+      `CargoUnusedDependency` + 21 `NewCrateVersionAvailable` findings are obsolete and its code-smell
+      line numbers have drifted (used the compiler as ground truth instead). Re-run the CI Qodana job
+      (`.github/workflows`) and commit the fresh SARIF so `scripts/update_todo_from_audit.py` and the
+      next DISCOVER triage against accurate data. _Source: cycle-3 triage + `/verify` 2026-06-05._
 
 ---
 
