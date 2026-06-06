@@ -5,6 +5,7 @@
 use anyhow::Result;
 use clap::Parser;
 use prompt_hub::config::HubConfig;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use tracing::info;
 
@@ -28,13 +29,18 @@ fn parse_role(s: &str) -> prompt_hub::models::Role {
 async fn main() -> Result<()> {
     let args = cli::Cli::parse();
 
-    // Initialize tracing
+    // Initialize tracing. Logs go to stderr so stdout stays reserved for
+    // machine-readable command output (e.g. `prompthub metrics` Prometheus
+    // exposition). ANSI is disabled when stderr is not a TTY so redirected
+    // logs aren't polluted with escape codes.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&args.log_level));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .init();
 
     match args.command {
