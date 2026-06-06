@@ -1,4 +1,5 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 /// Benchmark the fast search path (keyword/FTS5)
 fn bench_fast_search_empty(c: &mut Criterion) {

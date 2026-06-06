@@ -179,7 +179,14 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       (`.github/workflows`) and commit the fresh SARIF so `scripts/update_todo_from_audit.py` and the
       next DISCOVER triage against accurate data. _Source: cycle-3 triage + `/verify` 2026-06-05._
 
-- [ ] **Fix bench compile under `criterion` 0.8: `criterion::black_box` is deprecated (`-D deprecated`).**
+- [x] **Fix bench compile under `criterion` 0.8: `criterion::black_box` is deprecated (`-D deprecated`).**
+      _Cycle 8 / session-3 cycle-2 (2026-06-06). Fixed Rust-native: replaced `criterion::black_box`
+      with `std::hint::black_box` in all three benches (`db_write_throughput.rs`,
+      `embedding_generation.rs`, `search_latency.rs`) — dropped it from each `use criterion::{…}` and
+      added `use std::hint::black_box;` (call sites unchanged). Verified across the boundary:
+      `cargo clippy --workspace --all-features --all-targets -- -D warnings` now CLEAN (was 18
+      deprecated errors), `cargo bench --workspace --no-run` compiles (1m07s), fmt clean, 675 tests /
+      0 fail. Landed via the cycle PR._
       Discovered session-3 cycle-1 while running `cargo clippy --all-targets`. The criterion 0.5→0.8
       bump (dependabot) deprecated `criterion::black_box`; all three benches (`search_latency`,
       `embedding_generation`, `db_write_throughput`) still call it, so `cargo clippy --all-targets`
