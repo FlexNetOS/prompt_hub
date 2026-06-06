@@ -54,13 +54,53 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       _Source: `docs/audits/qodana.sarif.json` (87 results: 40 warning / 47 note; rule histogram
       via the SARIF). TODO.md "Audits" line. Verify each against current tree — many may already be fixed._
 
-- [ ] **Architect-scoped epic: wire `smart` embedding search end-to-end** (later — multi-cycle).
-      `SmartEngine`/`HybridEngine` in `search.rs` are built but call `mock_embed` (a deterministic
-      text-hash, `search.rs:343`); the `smart` flag only gates an otherwise-unused `ndarray`.
-      The architect should scope the smallest shippable slice: a pluggable embedder trait + a
-      CI-testable fixture backend behind `smart`, deferring real ONNX/model handling.
-      _Source: `search.rs` SmartEngine + `mock_embed`; `Cargo.toml smart = ["dep:ndarray"]`.
-      Keep at the bottom — too big for an early single cycle; needs an inference-runtime decision._
+### Epic: wire `smart` embedding search end-to-end — SCOPED into slices (session-3 cycle-3)
+
+> Decomposed by `feature-architect` 2026-06-06 → full plan in `_workspace/s3c3_architect_plan.md`.
+> Key findings: the SMART path is **not** actually behind the `smart` feature (it runs under
+> `default`; `ndarray` is unused), and there is **no embedding-write path** (the `embeddings` table
+> is empty in production — only tests populate it). Build slices 1→3 in order; 4→5 are blocked on an
+> inference-runtime decision. Each slice must be an independently-green, mergeable PR.
+
+- [ ] **Slice 1 — `refactor(search): extract pluggable Embedder trait + HashEmbedder backend`.**
+      Add an object-safe `Embedder` trait (boxed-future, `Result<_, HubError>`) + `HashEmbedder`
+      (port `mock_embed`, parameterized by `dim`). `SmartEngine` holds `embedder: Arc<dyn Embedder>`;
+      keep `SmartEngine::new(model_name, storage)` constructing a `HashEmbedder` so `hub.rs:118` and
+      both benches keep compiling; keep `mock_embed`/`cosine_similarity` public (bench dep).
+      Acceptance: unit tests (determinism, dimension, range, cosine-self≈1.0, `Arc<dyn Embedder>`
+      object-safety); existing `test_smart_search_*` unchanged. Gates: build + test (default &
+      `--all-features`) + `clippy --workspace --all-features -- -D warnings`. Deps: none. Risk: Low
+      (no migration; `SmartEngine::new` signature blast radius — verify hub.rs + benches).
+
+- [ ] **Slice 2 — `feat(search): write prompt embeddings on index via Embedder`** (deps: Slice 1).
+      Wire `SmartEngine::index`/`remove` to embed + persist; add `Storage::upsert_embedding(prompt_id,
+      &[f32])` + delete helper (f32→LE bytes mirroring `bytes_to_f32_vec`). Acceptance: insert a
+      prompt via `SmartEngine::index` (no manual SQL) → `search` finds it by cosine; `remove` clears
+      the row; blob round-trips. Same 4 gates. Risk: Medium — first real producer of `embeddings`;
+      assert dim==384 (cosine silently returns 0.0 on mismatch). No new migration.
+
+- [ ] **Slice 3 — `feat(config,hub): select embedder backend from HubConfig`** (deps: Slices 1-2).
+      Build `Arc<dyn Embedder>` from config in `hub.rs:108-119` (default `HashEmbedder` with
+      `config.embedding_dimension`); optional `lib.rs` re-export of `Embedder`/`HashEmbedder`.
+      Acceptance: `PromptHub::new` default config → register→search returns the prompt end-to-end.
+      Same 4 gates. Risk: Low-Medium (touches `lib.rs` re-exports + `HubConfig`; keep default
+      deterministic so hub tests stay green).
+
+- [!] **blocked: Slice 4 — `feat(search): gate real-model embedder backend behind `smart` (scaffold)`.**
+      Needs the inference-runtime decision (see plan "Open decisions"). Make `smart` meaningful: a
+      `#[cfg(feature="smart")]` trait-conformant scaffold returning `HubError` "not configured" (no
+      model load yet), so `--features smart` compiles + the contract is tested. Do NOT add a heavy/
+      native/download dep in the loop without sign-off. Deps: Slices 1-3.
+
+- [!] **blocked: Slice 5 — `feat(smart): real ONNX/model loading + download + checksum`.**
+      Implement `load_model`/`download_model`/`verify_checksum` (`search.rs:271-309`) against the
+      chosen runtime; real `Embedder::embed`. Cannot be a pure-CI-green slice (network/model) — ships
+      with a network-skipping `#[ignore]` test. Blocked on Open decisions; needs human approval.
+
+> **Open decisions blocking slices 4-5** (from the plan): inference runtime (ort/candle/fastembed/
+> remote API — dep weight + `unsafe` FFI vs `#![forbid(unsafe_code)]`); tokenizer source; model
+> acquisition + CI network policy; dimension authority (384 fixed vs configurable → migration);
+> future `smart`-feature semantics (+ whether `ndarray` stays). Surface to the user, don't guess.
 
 ## CLI / server (prompthub, prompthub-server)
 
