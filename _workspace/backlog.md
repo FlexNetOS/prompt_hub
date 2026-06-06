@@ -103,7 +103,22 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       _Source: `/verify` 2026-06-05 (split-stream capture: 14 INFO lines on stdout, 0 on stderr);
       `main.rs:32-38`. Verify: `prompthub metrics 2>/dev/null | head -1` → first line is `# HELP …`._
 
-- [ ] **Make the CLI usable out-of-the-box for mutations (default identity lacks `Write`).**
+- [x] **Make the CLI usable out-of-the-box for mutations (default identity lacks `Write`).**
+      _Cycle 7 / session-3 cycle-1 (2026-06-06). Fixed Rust-native without weakening RBAC. Design
+      decision: the local CLI operates on its own on-disk store as the trusted owner, so it now acts
+      as a **local operator** instead of the capability-less `anonymous` default. Added
+      `AgentIdentity::local_operator(name)` (prompt-hub/src/models.rs) granting `[Read, Write, Admin]`
+      — together these cover every `Action` (read; write/lock/evolve; delete/admin/transfer). RBAC
+      (`RbacAuthManager::authorize_action`) is UNCHANGED and remains the enforcement point; swarm/
+      remote/automation identities still need their own explicit grants. Added a single CLI chokepoint
+      `prompthub/src/identity.rs::cli_identity()` (display name overridable via `PROMPTHUB_AGENT` env
+      for audit attribution) and replaced all 9 `AgentIdentity::default()` call sites in the CLI
+      (main.rs ×5 acting identities, add.rs ×2 incl. author, import.rs, fuzzy.rs author). Tests:
+      unit `test_agent_identity_local_operator_has_owner_capabilities` (prompt-hub); integration
+      `cli_add_identity.rs` (×2: `add` succeeds out-of-the-box + `PROMPTHUB_AGENT` override). Functional
+      proof: `prompthub add` in a clean dir → exit 0, "Registered prompt <uuid>" (was exit 1
+      Unauthorized). Gates green across the boundary: check/clippy(-D warnings)/fmt clean, 675 tests /
+      0 fail (+3). Landed via the cycle PR._
       `/verify` found `prompthub add` (and any mutating command) fails with
       `Error: Unauthorized: agent 'anonymous' lacks capability Write` because the CLI constructs an
       `AgentIdentity::default()` (no capabilities). A first-time user cannot create/update a prompt
@@ -150,12 +165,30 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       `docker` recipe but no changelog recipe.
       _Source: `ls .cliff.toml` → absent; `ls docker/Dockerfile` → present; TODO.md P5._
 
-- [ ] **Regenerate `docs/audits/qodana.sarif.json` — the committed SARIF is stale.**
+- [!] **blocked: Regenerate `docs/audits/qodana.sarif.json` — needs Qodana scanner (Docker + `QODANA_TOKEN`), unavailable locally.**
+      _Session-3 cycle-1 (2026-06-06): verified this is a genuine tooling wall for the local runner —
+      Docker daemon not usable (`docker info` fails), no `qodana` CLI, no `QODANA_TOKEN`. The Qodana
+      scanner runs via the JetBrains Docker image, and even **CI skips the scan unless the
+      `QODANA_TOKEN` secret is set** (`qodana_code_quality.yml`: `if [ -n "$QODANA_TOKEN" ]`).
+      Faking a SARIF is forbidden. Resolution path: set the `QODANA_TOKEN` repo secret and let the CI
+      Qodana job regenerate + commit the artifact, OR run `qodana scan` locally once Docker is
+      available. Not a loop-halting NEEDS-HUMAN — single blocked item; loop proceeds._
       Generated 2026-06-04 00:11, before PRs #27/#28/#30/#31/#32. Cycle 3 confirmed its 39
       `CargoUnusedDependency` + 21 `NewCrateVersionAvailable` findings are obsolete and its code-smell
       line numbers have drifted (used the compiler as ground truth instead). Re-run the CI Qodana job
       (`.github/workflows`) and commit the fresh SARIF so `scripts/update_todo_from_audit.py` and the
       next DISCOVER triage against accurate data. _Source: cycle-3 triage + `/verify` 2026-06-05._
+
+- [ ] **Fix bench compile under `criterion` 0.8: `criterion::black_box` is deprecated (`-D deprecated`).**
+      Discovered session-3 cycle-1 while running `cargo clippy --all-targets`. The criterion 0.5→0.8
+      bump (dependabot) deprecated `criterion::black_box`; all three benches (`search_latency`,
+      `embedding_generation`, `db_write_throughput`) still call it, so `cargo clippy --all-targets`
+      and `cargo bench` fail under `-D warnings`/`-D deprecated` (18 errors total). NOT caught by the
+      canonical `just lint` gate (it lints default targets, not benches), so the workspace is "green"
+      per the gate — but benches don't build. Fix Rust-native: replace `criterion::black_box` with
+      `std::hint::black_box` in `prompt-hub/benches/*`. _Source: `cargo clippy -p prompt-hub
+      --all-targets` (E deprecated). Verify: `cargo clippy --workspace --all-features --all-targets
+      -- -D warnings` clean; `cargo bench --no-run` builds._
 
 ---
 
