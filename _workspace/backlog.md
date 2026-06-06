@@ -81,7 +81,18 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       matching the server). Small, user-facing, Rust-native, exercises the just-landed otel path.
       _Source: `routes.rs:554-588`; `cli.rs` enum `Commands` has no metrics variant; otel landed via PR #28._
 
-- [ ] **Route CLI tracing logs to stderr so stdout stays machine-readable (`prompthub metrics` fix).**
+- [x] **Route CLI tracing logs to stderr so stdout stays machine-readable (`prompthub metrics` fix).**
+      _Cycle 4 / session-2 cycle-1 (2026-06-05). Fixed Rust-native at `prompthub/src/main.rs`: the
+      `tracing_subscriber::fmt()` builder now sets `.with_writer(std::io::stderr)` (logs → stderr,
+      stdout reserved for data) and `.with_ansi(std::io::stderr().is_terminal())` (no ANSI escapes
+      when stderr is redirected; `std::io::IsTerminal`, stable). Added a subprocess regression test
+      `prompthub/tests/cli_log_routing.rs` (gated `otel`, runs in a tempdir): asserts `prompthub
+      metrics` stdout starts with the `# HELP`/`# TYPE` Prometheus preamble, contains 0 `INFO`
+      lines / 0 ANSI escapes, and that the `info!` lands on stderr. Added `[dev-dependencies]`
+      (assert_cmd/predicates/tempfile, workspace-pinned) — prompthub had none. Functional proof:
+      `prompthub metrics 2>/dev/null | head -1` → `# HELP prompt_hub_active_locks …`; stdout INFO
+      count 0 (was ~14). Gates green across the boundary: check/clippy(-D warnings)/fmt clean,
+      672 tests / 0 fail (+1 new test). Landed via the cycle PR._
       `/verify` found that `prompthub metrics` writes its Prometheus exposition AND ~14 ANSI-colored
       tracing INFO lines to the **same stream (stdout)** — `prompthub metrics > out.prom` produces a
       file a Prometheus parser chokes on. STDERR was empty; clean output only via `RUST_LOG=error`
