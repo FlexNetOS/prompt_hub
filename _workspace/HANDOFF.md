@@ -7,10 +7,19 @@
 ```
 /prompt-loop resume from _workspace/HANDOFF.md
 ```
-- **Worktree:** `/home/drdave/Desktop/meta/.worktrees/harness-crew`
-- **Base branch:** `main` (all session work is MERGED to `origin/main`; the worktree's transient
-  branches `chore/loop-discover`, `feat/cli-metrics`, `chore/qodana-codequality`, `chore/loop-handoff`
-  are disposable — branch the next cycle fresh off `origin/main`).
+- **Resume location — do NOT assume a specific worktree.** The durable state (`HANDOFF.md`,
+  `backlog.md`, `loop_state.md`) is **committed on `origin/main`**, so it travels with the repo, not
+  with any one checkout. From *any* clone/worktree, sync to `origin/main` FIRST —
+  `git fetch origin && git switch main && git pull` — only then does `_workspace/HANDOFF.md` exist
+  locally. ⚠️ The primary checkout `/home/drdave/Desktop/meta/prompt_hub` may be **stale** (it was at
+  `726edcd` at handoff, with no `_workspace/` until synced). The
+  `~/Desktop/meta/.worktrees/harness-crew` worktree this session used is **not required** and may not
+  exist on another machine / fresh clone / after `git worktree prune` — don't depend on it.
+- **Per project convention** (`prompt_hub/CLAUDE.md`: new work in its own worktree): once on synced
+  `origin/main`, create a FRESH worktree+branch for the next cycle's build —
+  `git worktree add ../ph-<next> -b <next-cycle-branch> origin/main`.
+- **Base branch:** `main` — all session work is MERGED to `origin/main` (latest at handoff: PR #34,
+  `02aa84e`). The session's feature branches are disposable.
 - **Mode:** APPLY (push → PR → auto-merge on green DONE-gates). `main` is currently **unprotected**,
   so `gh pr merge --squash --auto` merges immediately once created — there is no required-CI gate on
   the merge, so the loop's own local DONE-gate suite IS the safety net. Run it before every merge.
@@ -62,8 +71,10 @@
 
 ## 6. Verify-on-resume baseline (run FIRST; do not build on a red tree)
 ```bash
-cd /home/drdave/Desktop/meta/.worktrees/harness-crew
-git fetch origin && git checkout -b <next-cycle-branch> origin/main   # start fresh off merged main
+# From ANY synced checkout of origin/main (NOT a specific worktree). Sync to the committed truth first:
+git fetch origin
+git worktree add ../ph-next -b <next-cycle-branch> origin/main   # fresh worktree (project convention)
+cd ../ph-next                                                     # …or any checkout already on origin/main
 cargo check --workspace --all-features                 # expect: Finished (0)
 cargo clippy --workspace --all-features -- -D warnings  # expect: clean
 cargo fmt --all -- --check                              # expect: clean
