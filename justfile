@@ -31,6 +31,10 @@ doc:
 doc-check:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 
+# Generate CHANGELOG.md from Conventional-Commit history (uses .cliff.toml)
+changelog:
+    git-cliff --output CHANGELOG.md
+
 # Run benchmarks
 bench:
     cargo bench --workspace
