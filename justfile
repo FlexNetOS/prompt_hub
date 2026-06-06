@@ -27,6 +27,10 @@ fmt:
 doc:
     cargo doc --workspace --all-features --no-deps --open
 
+# Verify the docs build is warning-clean (mirrors the CI `doc` job)
+doc-check:
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+
 # Run benchmarks
 bench:
     cargo bench --workspace

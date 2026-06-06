@@ -60,6 +60,10 @@ jobs:
   doc:
     name: Documentation
     runs-on: ubuntu-latest
+    env:
+      # Fail the build on any rustdoc warning (broken intra-doc links,
+      # missing-docs, etc.) so the warning-clean doc build cannot regress.
+      RUSTDOCFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
