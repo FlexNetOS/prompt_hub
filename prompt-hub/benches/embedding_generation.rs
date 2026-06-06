@@ -1,6 +1,7 @@
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use prompt_hub::search::SmartEngine;
 use prompt_hub::storage::{Storage, StorageConfig};
+use std::hint::black_box;
 use std::sync::Arc;
 
 fn bench_mock_embed(c: &mut Criterion) {
