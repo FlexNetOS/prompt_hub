@@ -148,6 +148,33 @@ impl Default for AgentIdentity {
     }
 }
 
+impl AgentIdentity {
+    /// Identity for a **trusted local operator** — the single user who owns the
+    /// local prompt store (e.g. the `prompthub` CLI acting on its on-disk DB).
+    ///
+    /// Unlike [`AgentIdentity::default`] (the capability-less `anonymous`
+    /// identity), this grants the full set of capabilities a local owner needs
+    /// to use every command out of the box: [`Capability::Read`],
+    /// [`Capability::Write`], and [`Capability::Admin`] (which together cover
+    /// every [`Action`](crate::auth::Action) — read, write/lock/evolve, and
+    /// delete/admin/transfer).
+    ///
+    /// This does **not** weaken RBAC: [`RbacAuthManager`](crate::auth::RbacAuthManager)
+    /// is still the enforcement point and still rejects capability-less or
+    /// remote/swarm identities. This constructor merely packages the grant a
+    /// local DB owner legitimately holds; swarm/automation/remote callers must
+    /// continue to present their own explicitly-granted capabilities.
+    pub fn local_operator(name: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            capabilities: vec![Capability::Read, Capability::Write, Capability::Admin],
+            token_hash: String::new(),
+            specialization_score: 0.0,
+        }
+    }
+}
+
 /// Metadata associated with a prompt.
 ///
 /// Holds a floating-point `success_rate` and a `HashMap`, so it cannot derive
@@ -924,6 +951,17 @@ mod model_tests {
         let a = AgentIdentity::default();
         assert_eq!(a.name, "anonymous");
         assert!(a.capabilities.is_empty());
+    }
+
+    #[test]
+    fn test_agent_identity_local_operator_has_owner_capabilities() {
+        let a = AgentIdentity::local_operator("local-operator");
+        assert_eq!(a.name, "local-operator");
+        // Read + Write + Admin together cover every Action (read, write/lock/
+        // evolve, delete/admin/transfer) so the local CLI works out of the box.
+        for cap in [Capability::Read, Capability::Write, Capability::Admin] {
+            assert!(a.capabilities.contains(&cap), "missing {cap:?}");
+        }
     }
 
     #[test]

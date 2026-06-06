@@ -12,6 +12,7 @@ use tracing::info;
 mod cli;
 mod commands;
 mod fuzzy;
+mod identity;
 #[cfg(feature = "tui")]
 mod tui;
 
@@ -57,7 +58,7 @@ async fn main() -> Result<()> {
             let config = HubConfig::load().unwrap_or_default();
             let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
                 .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             match hub.get(parse_role(&role), &intent, &identity).await? {
                 Some(prompt) => {
                     println!("Found prompt: {} (v{})", prompt.name, prompt.version);
@@ -97,7 +98,7 @@ async fn main() -> Result<()> {
                 .await?;
             let content = tokio::fs::read_to_string(&file).await?;
             let patch = parse_update_patch(&content)?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             let updated = hub.update(id, patch, &identity).await?;
             println!("Updated prompt {} (v{})", updated.name, updated.version);
         }
@@ -106,7 +107,7 @@ async fn main() -> Result<()> {
             let config = HubConfig::load().unwrap_or_default();
             let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
                 .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             let rolled = hub.rollback(id, &to_version, &identity).await?;
             println!(
                 "Rolled back prompt {} to version {}",
@@ -123,7 +124,7 @@ async fn main() -> Result<()> {
             let config = HubConfig::load().unwrap_or_default();
             let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
                 .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             let token = hub
                 .lock(id, &identity, std::time::Duration::from_secs(ttl_seconds))
                 .await?;
@@ -212,7 +213,7 @@ async fn main() -> Result<()> {
             let config = HubConfig::load().unwrap_or_default();
             let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
                 .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             let evolved = hub.evolve_prompt(id, strategy, &identity).await?;
             println!("Evolved prompt {} into new prompt {}", id, evolved.id);
             println!("  New version: {}", evolved.version);
