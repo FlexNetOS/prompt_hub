@@ -116,7 +116,14 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 
 ## Docs / infra
 
-- [ ] **P4 — verify `cargo doc --workspace --all-features` is warning-clean (after the P0 fix).**
+- [x] **P4 — verify `cargo doc --workspace --all-features` is warning-clean (after the P0 fix).**
+      _Cycle 5 / session-2 cycle-2 (2026-06-05). Verified: now that P0 landed, the full
+      `cargo doc --workspace --all-features --no-deps` build completes and emits **0 warnings**
+      (`grep -c warning:` → 0), and passes under `RUSTDOCFLAGS="-D warnings"` (exit 0). Made the
+      clean state durable so it can't silently regress: added `env: RUSTDOCFLAGS: "-D warnings"` to
+      the CI `doc` job (`.github/workflows/ci.yml`) — previously it ran `cargo doc` with no warning
+      enforcement — and added a matching `just doc-check` recipe. No Rust code change; code gates
+      unaffected. Landed via the cycle PR._
       `cargo doc -p prompt-hub --no-deps` (default features) currently emits **0 warnings**, but the
       full `--all-features` doc build can't complete because it hits the same P0 `audit.rs` compile
       error. Once P0 lands, re-run and drive any feature-gated doc-link/missing-docs warnings to zero.
