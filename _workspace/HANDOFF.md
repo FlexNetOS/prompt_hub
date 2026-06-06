@@ -18,9 +18,16 @@
   `origin/main`, create a FRESH worktree+branch per cycle —
   `git worktree add ~/Desktop/meta/.worktrees/ph-<next> -b <branch> origin/main`.
 - **Base branch:** `main` — all work MERGED to `origin/main` (latest at handoff: PR #38, `f4b9025`).
-- **Mode:** APPLY (push → PR → auto-merge on green DONE-gates). `main` is **unprotected**, so
-  `gh pr merge --squash --auto` merges immediately — the loop's own local DONE-gate suite IS the
-  safety net. Run it before every merge.
+- **Mode:** APPLY (push → PR → merge on green DONE-gates). `main` is **unprotected**, so the loop's
+  own local DONE-gate suite IS the safety net — run it before every merge.
+  - ⚠️ **Do NOT use `gh pr merge --auto` here.** `--auto` requires branch protection; on this
+    unprotected repo it is flaky — it merged #36–38 but FAILED on #39
+    (`Protected branch rules not configured ... enablePullRequestAutoMerge`), leaving the PR OPEN.
+    Use a **direct** merge and VERIFY it landed:
+    `gh pr merge <n> --squash --delete-branch && gh pr view <n> --json state` (expect `MERGED`).
+  - After merge, sync + clean locally (the server deletes the remote branch, but the local branch and
+    tracking ref linger): `git switch main && git fetch origin --prune && git merge --ff-only
+    origin/main && git branch -d <branch>`.
 - **Tooling notes:** `just` is NOT installed — use raw `cargo` (justfile recipes map 1:1).
   `git-cliff 2.13.1` was `cargo install`ed this session (in `~/.cargo/bin`). **Docker daemon is not
   usable in this sandbox** (`docker info` fails) — rely on the CI `docker` job for image builds.
