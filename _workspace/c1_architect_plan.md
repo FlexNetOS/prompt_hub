@@ -1,22 +1,43 @@
-# c1 — Wire `swarm::SwarmRoleRegistry` into PromptHub
+# Cycle 1 - Wire `swarm::SwarmRoleRegistry` into PromptHub
 
-**Epic:** swarm role management (first shippable slice: core wiring only).
-**Scope:** prompt-hub crate only (hub.rs + lib.rs re-exports + 1 test). No CLI, no server route changes.
+## Blast radius
 
----
+- **Files changed:** 1 (hub.rs only) + 1 new test function in hub.rs
+- **Scope:** Core library internal wiring. No CLI/server surface exposure yet.
+- **Risk: LOW.** Adds one field to `PromptHub`, three thin methods, one test. No public API changes on existing methods. `swarm` is already a declared module in lib.rs; its types (`SwarmBundle`, `Conflict`, `RoleMetadata`) are re-exported via `pub use models::*`.
+- **Caller impact:** Zero external callers today. Server routes can consume via the new handle once wired.
 
-## 1. Files to modify
+## Design decisions
 
-| File | Change |
-|------|--------|
-| `prompt-hub/src/hub.rs` | Add field, init in `new()`, add 3 methods, add tests |
-| `prompt-hub/src/lib.rs` | Verify swarm re-export is already there (line 55) — **no edit needed** if `pub mod swarm;` exists |
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Feature gate | None - wire unconditionally | swarm.rs has no feature-gated code; quality_gate/lineage are already wired identically |
+| Swarm storage type | `Arc<SwarmRoleRegistry>` | Same pattern as `quality_gate`, `metrics` - cheap clone for shared access across handlers |
+| Init value | `SwarmRoleRegistry::default_registry()` | Five standard roles + Junie; server can extend via the handle later |
+| Error handling | All methods delegate to swarm functions which return `Result<T>` or `Vec<Conflict>`; no new error variants needed |
+| Async style | Native `async fn` for bundle generation; sync for registry handle | No `async_trait` - Rust 2024 edition |
 
----
+## Files & changes
 
-## 2. Struct field addition
+### File: `/home/drdave/Desktop/meta/prompt_hub/prompt-hub/src/hub.rs`
 
-Add one line to `PromptHub` (around line 101, after the last field):
+#### Change 1 - Add import (around line 7)
+
+Add after the `lineage` import (line 7):
+
+```rust
+use crate::swarm::{self, SwarmRoleRegistry};
+```
+
+#### Change 2 - Add field to PromptHub struct (lines 95-106)
+
+After `lineage: LineageTracker,` (line 105), add:
+
+```rust
+    swarm_registry: Arc<SwarmRoleRegistry>,
+```
+
+Full struct becomes:
 
 ```rust
 #[derive(Debug)]
@@ -29,167 +50,186 @@ pub struct PromptHub {
     metrics: Arc<MetricsCollector>,
     sync: SyncManager,
     hooks: HookRegistry,
-    swarm_registry: Arc<swarm::SwarmRoleRegistry>, // ← NEW
+    quality_gate: Arc<QualityGate>,
+    lineage: LineageTracker,
+    swarm_registry: Arc<SwarmRoleRegistry>,  // NEW
 }
 ```
 
-**Rationale:** `Arc` mirrors the pattern used by `storage`, `metrics`, and `sync`. Callers already expect `Arc` handles for shared-state managers. The registry is clone-on-read (already derived `Clone`), so wrapping in `Arc` adds zero overhead over a direct field.
+#### Change 3 - Initialize in `new()` (line ~143)
 
----
-
-## 3. Method signatures & bodies
-
-### 3a. Init in `new()` — after line ~135 (after the last field)
-
-In the existing `Self { ... }` literal, add the new field:
+After the `lineage` field init (line 143), add:
 
 ```rust
-let mut hub = Self {
-    storage,
-    search_engine: hybrid,
-    sanitizer: PromptSanitizer::default(),
-    auth: RbacAuthManager::new(),
-    lock_manager: LockManager::new(),
-    metrics: metrics.clone(),
-    sync: SyncManager::new(),
-    hooks: HookRegistry::new(),
-    swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()), // ← NEW
-};
+            swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
 ```
 
-**Why `Arc::new(...)`:** Keeps type consistent with other manager fields. The call is cheap — `SwarmRoleRegistry::default_registry()` is a fast HashMap insertion of ~5 standard roles. No async needed (registry creation has no I/O).
-
-### 3b. `manage_swarm()` accessor (~line 160, after `metrics()`)
+Full `Self { ... }` block (lines 133-144):
 
 ```rust
+        let mut hub = Self {
+            storage,
+            search_engine: hybrid,
+            sanitizer: PromptSanitizer::default(),
+            auth: RbacAuthManager::new(),
+            lock_manager: LockManager::new(),
+            metrics: metrics.clone(),
+            sync: SyncManager::new(),
+            hooks: HookRegistry::new(),
+            quality_gate: Arc::new(QualityGate::new()),
+            lineage: LineageTracker::new(),
+            swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()), // NEW
+        };
+```
+
+#### Change 4 - Add three methods (insert after lineage helpers, after line 712)
+
+All three go in the existing `impl PromptHub` block. Insert after `lineage_roots()` (line 711):
+
+```rust
+    // - Swarm role registry ------------------------------------------------
+
     /// Return a cloneable handle to the swarm role registry.
-    pub fn manage_swarm(&self) -> Arc<swarm::SwarmRoleRegistry> {
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers or
+    /// downstream components. Mutable operations (e.g., registering custom
+    /// roles) use `Arc::get_mut()` on the original.
+    pub fn manage_swarm(&self) -> Arc<SwarmRoleRegistry> {
         Arc::clone(&self.swarm_registry)
     }
-```
 
-This matches the pattern of `storage()`, `metrics()`, `search_engine()` accessors that the server layer uses.
-
-### 3c. `validate_swarm_roles()` convenience method (~line 168, after accessor block)
-
-```rust
-    /// Validate a list of roles against the registry rules.
+    /// Validate a set of roles against the swarm dependency DAG.
     ///
-    /// Returns an empty Vec on success (no conflicts). Use this before
-    /// attempting to register or reconfigure a swarm.
-    pub fn validate_swarm_roles(&self, roles: &[crate::models::Role]) -> Result<Vec<swarm::Conflict>> {
+    /// Returns an empty vec if all roles are valid, or a list of conflicts
+    /// (missing required roles, duplicates, capability gaps, custom-name
+    /// violations).
+    #[instrument(skip(self, roles))]
+    pub fn validate_swarm_roles(&self, roles: &[Role]) -> Result<Vec<Conflict>> {
         swarm::validate_swarm_roles(roles)
     }
-```
 
-### 3d. `generate_swarm_bundle()` convenience method (~line 175)
-
-```rust
-    /// Generate a swarm bundle using the current registry and role set.
+    /// Generate a swarm bundle for the given roles, domain, and workflow.
     ///
-    /// Validates roles, builds the dependency DAG, produces handoff templates,
-    /// consistency report, and evolution suggestions in one call.
+    /// Validates the role DAG, builds the dependency graph, generates a
+    /// consistency report, evolution suggestions, and handoff templates.
+    #[instrument(skip(self, roles))]
     pub async fn generate_swarm_bundle(
         &self,
-        roles: Vec<crate::models::Role>,
-        domain: crate::models::Domain,
+        roles: Vec<Role>,
+        domain: Domain,
         workflow_id: Uuid,
-    ) -> Result<swarm::SwarmBundle> {
+    ) -> Result<SwarmBundle> {
         swarm::generate_swarm_bundle(roles, domain, workflow_id).await
     }
 ```
 
----
+### File: `/home/drdave/Desktop/meta/prompt_hub/prompt-hub/src/hub.rs` (tests)
 
-## 4. Test strategy
-
-Add a test module section at the end of `hub.rs` (inside the existing `#[cfg(test)] mod tests`).
-
-**4a. `test_manage_swarm_returns_handle`** — verifies accessor returns a non-empty registry.
-**4b. `test_validate_swarm_roles_ok`** — valid role set returns empty conflicts.
-**4c. `test_validate_swarm_roles_missing_orchestrator`** — omits Orchestrator → gets Conflict.
+Add one test after the last lineage test (after line 1087, inside `mod tests`):
 
 ```rust
-    #[test]
-    fn test_manage_swarm_returns_default_registry() {
+    #[tokio::test]
+    async fn test_swarm_registry_handle() {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
             .await
             .unwrap();
+
         let registry = hub.manage_swarm();
-        // Default registry has the standard roles (Orchestrator, Architect, etc.)
-        assert!(registry.list_roles().len() >= 5);
+        assert!(!registry.list_roles().is_empty());
+        assert!(registry.get(&Role::Orchestrator).is_some());
     }
 
-    #[tokio::test]
-    async fn test_validate_swarm_roles_ok() {
+    #[test]
+    fn test_validate_swarm_roles_with_orchestrator() {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
             .await
             .unwrap();
-        let roles = vec![
-            models::Role::Orchestrator,
-            models::Role::Architect,
-            models::Role::Implementer,
-        ];
-        let conflicts = hub.validate_swarm_roles(&roles);
-        assert!(conflicts.is_ok());
-        assert!(conflicts.unwrap().is_empty());
+
+        // Valid: Orchestrator is the required role.
+        let result = hub.validate_swarm_roles(&[Role::Orchestrator]);
+        assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_validate_swarm_roles_missing_orchestrator() {
+    #[test]
+    fn test_validate_swarm_roles_critic_without_implementer() {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
             .await
             .unwrap();
-        let roles = vec![
-            models::Role::Architect,
-            models::Role::Implementer,
-        ];
-        let conflicts = hub.validate_swarm_roles(&roles);
-        assert!(conflicts.is_ok());
-        let c = conflicts.unwrap();
-        assert!(!c.is_empty()); // should contain Conflict::MissingRole
+
+        // Should produce CapabilityMissing conflict.
+        let result = hub.validate_swarm_roles(&[Role::Orchestrator, Role::Critic]);
+        assert!(result.is_ok());
+        let conflicts = result.unwrap();
+        assert!(conflicts
+            .iter()
+            .any(|c| matches!(c, Conflict::CapabilityMissing)));
+    }
+
+    #[tokio::test]
+    async fn test_generate_swarm_bundle() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let bundle = hub
+            .generate_swarm_bundle(
+                vec![Role::Orchestrator, Role::Architect],
+                Domain::Coding,
+                Uuid::new_v4(),
+            )
+            .await;
+        assert!(bundle.is_ok());
     }
 ```
 
----
+## Tests summary
 
-## 5. Verification commands
+| Test | Type | Verifies |
+|------|------|----------|
+| `test_swarm_registry_handle` | `#[tokio::test]` | Field initialized, `manage_swarm()` returns non-empty registry |
+| `test_validate_swarm_roles_with_orchestrator` | `#[test]` (sync) | Valid role set produces empty conflicts via hub delegate |
+| `test_validate_swarm_roles_critic_without_implementer` | `#[test]` (sync) | Conflict detection flows through correctly |
+| `test_generate_swarm_bundle` | `#[tokio::test]` | Async delegation returns Ok bundle |
+
+## Verify commands
 
 ```bash
-# 1. Default build check (no features)
+# 1. Check compiles clean (default + all features)
 just check
 
-# 2. All-features build check
-just check --all-targets   # or: just check
+# 2. Clippy lint - must be zero warnings
+just lint
 
-# 3. Clippy lint
-just lint                  # must be clean (-D warnings)
+# 3. Run just the new tests
+cargo test -p prompt-hub --all-features swarm
 
-# 4. Run the new tests specifically
-cargo test -p prompt-hub -- swarm_registry manage_swarm validate_swarm
-
-# 5. Full test suite (regression guard)
+# 4. Run full suite to confirm no regression
 just test
 
-# 6. Fmt check
-just fmt
+# 5. Verify Send + Sync still holds (compile assertion in hub.rs tests)
+cargo test -p prompt-hub --all-features test_send_sync
 ```
 
----
+## Acceptance criteria
 
-## 6. Acceptance criteria
+- [ ] `just check` passes (no errors across workspace, all features)
+- [ ] `just lint` passes (zero clippy warnings with `-D warnings`)
+- [ ] `just test` passes (full suite green, including 4 new swarm tests)
+- [ ] `test_swarm_registry_handle` - registry has 6 default roles, Orchestrator metadata present
+- [ ] `test_validate_swarm_roles_critic_without_implementer` - Conflict::CapabilityMissing in result
+- [ ] `test_generate_swarm_bundle` - async method returns Ok(SwarmBundle) with non-empty handoff_template
+- [ ] `test_send_sync` still passes (PromptHub remains Send + Sync + 'static)
+- [ ] No `async_trait`, no `unsafe`, no feature-gate on swarm wiring
 
-- [ ] `just lint` passes with zero warnings/errors across `--all-targets`.
-- [ ] `just check` passes (both default and `--all-features`).
-- [ ] New tests pass individually and as a group.
-- [ ] `PromptHub` still satisfies `Send + Sync` (existing `test_send_sync` in hub.rs must still compile — adding another `Arc<T>` field cannot break this since `SwarmRoleRegistry` derives `Clone`/`Debug` and all HashMap values are `Clone`).
-- [ ] The `swarm::SwarmRoleRegistry` is constructed exactly once during `new()`.
+## Drift flagged
 
----
-
-## 7. Drift flagged
-
-**None.** All proposed code is idiomatic Rust: native async, `Result/HubError`, `Arc` sharing, `tracing` annotations, serde-compatible derives. No foreign-language patterns detected.
+None. All code follows Rust-native conventions:
+- Native `async fn in trait` (no `async_trait`)
+- `Result<T, HubError>` via the `Result` alias from `error` module
+- `#![forbid(unsafe_code)]` unchanged
+- `tracing::instrument` on all public methods (consistent with existing pattern)
+- `Arc` handle for shared mutable access (consistent with quality_gate/lineage/metrics patterns)

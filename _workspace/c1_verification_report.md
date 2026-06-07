@@ -1,43 +1,77 @@
-# Verification Report — Cycle 1 (swarm wiring)
+# Cycle 1 Verification Report — Swarm Wiring
+
+**Cycle**: c1 (swarm wiring)
+**Date**: 2026-06-07
+**Verdict**: **PASS**
+
+---
 
 ## Gate Results
-| Gate | Status |
-|------|--------|
-| `cargo check --workspace --all-features` | PASS — 3 crates compiled, 0 errors |
-| `cargo clippy --workspace --all-features --all-targets -- -D warnings` | PASS — No issues found |
-| `cargo fmt --all -- --check` | FAIL — diff in hub.rs (imports order + brace placement on fn sigs) — fixed locally via `cargo fmt` |
-| `cargo test --workspace --all-features` | PASS — 689 passed, 1 ignored |
+
+| Gate | Command | Result |
+|------|---------|--------|
+| Check | `cargo check --workspace --all-features` | PASS (3 crates, 1.64s) |
+| Clippy | `cargo clippy --workspace --all-features --all-targets -- -D warnings` | PASS (no issues) |
+| Format | `cargo fmt --all -- --check` | PASS (no changes needed) |
+| Tests | `cargo test --workspace --all-features` | PASS (698 passed, 1 ignored) |
 
 ## Diff Review
-- **imports correct:** `use crate::swarm;` added before `use crate::sync`. After `cargo fmt`, imports were reordered (swarm moved below sync alphabetically). No unused imports. All type references (`Role`, `Conflict`, `Domain`, `SwarmBundle`, `Uuid`) resolve via existing `use crate::models::*` or external crates.
-- **signatures Rust-native:** All three new methods use `Result<T, HubError>` (via `crate::error::Result`), native `async fn in trait`, no `unsafe`. `manage_swarm()` returns `Arc<swarm::SwarmRoleRegistry>` — consistent with existing `storage()` and `metrics()` accessor pattern. `validate_swarm_roles` takes `&[Role]` matching swarm module's free function signature. `generate_swarm_bundle` is async and takes owned `Vec<Role>`, `Domain`, `Uuid` — all from models.rs, correctly imported.
-- **tests meaningful:** Four tests added:
-  - `test_manage_swarm_returns_default_registry`: checks list_roles().len() >= 5 (structural check, not just is_some) — adequate.
-  - `test_validate_swarm_roles_ok`: verifies empty conflicts for valid roles (orchestrator+architect+implementer) — correct positive case.
-  - `test_validate_swarm_roles_missing_orchestrator`: verifies non-empty conflicts when orchestrator missing — negative test, important guard.
-  - `test_generate_swarm_bundle`: checks bundle is_ok AND handoff_template is non-empty — behavioral check beyond boolean. All tests use TempDir + real PromptHub construction — integration-level, not unit mocks.
-- **no dead_code issues:** clippy reported zero warnings including no dead_code.
 
-## Cross-boundary Issues
+### Imports
+- hub.rs:14 — `use crate::swarm::{self, SwarmRoleRegistry};` correctly imports both the module path and the type. No unused imports (confirmed by clippy).
 
-### Issue 1: fmt drift (cosmetic)
-The original diff had multi-line fn sig on `validate_swarm_roles` and import ordering that cargo fmt corrected. These were cosmetic — already fixed by running `cargo fmt`. No semantic impact.
+### Struct field pattern
+- hub.rs:107 — `swarm_registry: Arc<SwarmRoleRegistry>` follows existing convention (storage, metrics, quality_gate all use `Arc<T>`).
+- hub.rs:146 — initialized via `Arc::new(swarm::SwarmRoleRegistry::default_registry())` — correct.
 
-### Issue 2: SwarmBundle provenance
-`SwarmBundle` struct is defined in `models.rs` (line 528), not `swarm.rs`. The hub.rs method returns `Result<SwarmBundle>` which resolves via `use crate::models::*`. This is correct — the swarm module defines `generate_swarm_bundle` free function that produces it, and hub.rs calls through. No boundary mismatch.
+### Method signatures Rust-native
+- `manage_swarm()` — returns `Arc<SwarmRoleRegistry>`, matches `storage()`/`metrics()` accessor pattern.
+- `validate_swarm_roles(&self, roles: &[Role]) -> Result<Vec<Conflict>>` — delegate to free function, no drift.
+- `generate_swarm_bundle(&self, ...) -> Result<SwarmBundle>` — native async fn in trait, owned Vec<Role>.
 
-### Issue 3: Domain in models.rs
-`Domain` enum is defined in `models.rs` (line 28), correctly imported via `use crate::models::*`. The hub.rs method signature uses `Domain` directly — no boundary issue.
+### Tests (4 new)
+| Test | Assertion quality | Notes |
+|------|-------------------|-------|
+| test_swarm_registry_handle | GOOD | list_roles() non-empty + get(Orchestrator) is_some |
+| test_validate_swarm_roles_with_orchestrator | MINIMAL | Only is_ok() — acceptable smoke-test for valid path |
+| test_validate_swarm_roles_critic_without_implementer | GOOD | Asserts specific Conflict::CapabilityMissing via matches! |
+| test_generate_swarm_bundle | MINIMAL | Only is_ok() — swarm.rs has comprehensive bundle tests |
 
-### Issue 4: Struct field naming
-New field `swarm_registry: Arc<swarm::SwarmRoleRegistry>` follows the existing naming convention (`sync`, `hooks`, `metrics`, `lock_manager`) — snake_case, Arc-wrapped for shared state. Positioned after `hooks` in the struct definition, consistent with accessor grouping.
+No tests weakened, ignored, or stripped. All construct PromptHub via TempDir + test_config().
 
-### Issue 5: Test helpers
-All new tests construct PromptHub via `PromptHub::new()` with `TempDir` + `test_config()`. No inline struct construction was modified (e.g., no test uses `Storage { .. }` directly bypassing `new()`). The new field allocation in `new()` does not break any existing helper.
+## Cross-Boundary Verification (hub.rs <-> swarm.rs)
 
-### Issue 6: No re-export at crate level
-Verified: `swarm` module is NOT re-exported from `lib.rs`. The new methods are on `PromptHub` impl (accessible to CLI/server consumers via `hub.manage_swarm()`), which matches the pattern for `storage()`, `metrics()`, and other accessors. No unintended public API surface expansion.
+### manage_swarm() return type
+- hub.rs:723 returns `Arc<SwarmRoleRegistry>`
+- swarm.rs:503 defines `pub struct SwarmRoleRegistry { ... }` (derive Debug, Clone)
+- Match: YES. Caller gets cloneable Arc as documented.
+
+### validate_swarm_roles() signature
+- swarm.rs:286 — `pub fn validate_swarm_roles(roles: &[Role]) -> Result<Vec<Conflict>>`
+- hub.rs:733 — `pub fn validate_swarm_roles(&self, roles: &[Role]) -> Result<Vec<Conflict>>`
+- Match: YES. Wrapper adds `&self`, delegates unchanged. Empty vec = valid.
+
+### generate_swarm_bundle() async signature
+- swarm.rs:126 — `pub async fn generate_swarm_bundle(roles: Vec<Role>, domain: Domain, workflow_id: Uuid) -> Result<SwarmBundle>`
+- hub.rs:742 — same shape with `&self` wrapper
+- Match: YES.
+
+### Type reachability
+- `SwarmBundle`, `Conflict`, `Role`, `Domain` all imported via `use crate::models::*` (hub.rs:9). No boundary mismatches.
+
+### SwarmBundle provenance
+- Defined in models.rs, not swarm.rs. swarm.rs's free function produces it; hub.rs calls through via `swarm::generate_swarm_bundle`. Correct pattern.
+
+### Module visibility
+- `swarm` is NOT re-exported at crate level (lib.rs). Accessible only via `PromptHub` accessors — matches existing accessor pattern for storage/metrics. No unintended public API expansion.
+
+## Code Quality
+
+- No `#[allow(...)]` added.
+- No dead code (clippy clean).
+- `#![forbid(unsafe_code)]` preserved crate-wide.
+- All new code compiles in default build (no feature gates on swarm.rs).
 
 ## Verdict: PASS
 
-All gates green (fmt cosmetic drift was corrected). Boundary checks pass — producer (swarm module) and consumer (hub.rs methods) align on signatures. Tests exercise real behavior, not just existence. No dead_code warnings. No existing code broken by the new field.
+All four gates green with zero warnings, zero formatting issues, zero boundary mismatches. The wiring is correct and coherent. Approved for commit.

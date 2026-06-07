@@ -11,6 +11,7 @@ use crate::quality_gate::{QualityGate, QualityResult};
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
+use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,7 @@ pub struct PromptHub {
     hooks: HookRegistry,
     quality_gate: Arc<QualityGate>,
     lineage: LineageTracker,
+    swarm_registry: Arc<SwarmRoleRegistry>,
 }
 
 impl PromptHub {
@@ -141,6 +143,7 @@ impl PromptHub {
             hooks: HookRegistry::new(),
             quality_gate: Arc::new(QualityGate::new()),
             lineage: LineageTracker::new(),
+            swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
         };
 
         // Register default hooks
@@ -709,6 +712,41 @@ impl PromptHub {
     pub fn lineage_roots(&self) -> &[String] {
         self.lineage.roots()
     }
+
+    // - Swarm role registry --------------------------------------------------
+
+    /// Return a cloneable handle to the swarm role registry.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers or
+    /// downstream components. Mutable operations (e.g., registering custom
+    /// roles) use `Arc::get_mut()` on the original.
+    pub fn manage_swarm(&self) -> Arc<SwarmRoleRegistry> {
+        Arc::clone(&self.swarm_registry)
+    }
+
+    /// Validate a set of roles against the swarm dependency DAG.
+    ///
+    /// Returns an empty vec if all roles are valid, or a list of conflicts
+    /// (missing required roles, duplicates, capability gaps, custom-name
+    /// violations).
+    #[instrument(skip(self, roles))]
+    pub fn validate_swarm_roles(&self, roles: &[Role]) -> Result<Vec<Conflict>> {
+        swarm::validate_swarm_roles(roles)
+    }
+
+    /// Generate a swarm bundle for the given roles, domain, and workflow.
+    ///
+    /// Validates the role DAG, builds the dependency graph, generates a
+    /// consistency report, evolution suggestions, and handoff templates.
+    #[instrument(skip(self, roles))]
+    pub async fn generate_swarm_bundle(
+        &self,
+        roles: Vec<Role>,
+        domain: Domain,
+        workflow_id: Uuid,
+    ) -> Result<SwarmBundle> {
+        swarm::generate_swarm_bundle(roles, domain, workflow_id).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1084,5 +1122,66 @@ mod tests {
             hub.lineage_mut()
                 .register_version("v2", "prompt-a", Some("nonexistent"), "bob");
         assert!(result.is_err());
+    }
+
+    // - Swarm role registry tests ------------------------------------------
+
+    #[tokio::test]
+    async fn test_swarm_registry_handle() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let registry = hub.manage_swarm();
+        assert!(!registry.list_roles().is_empty());
+        assert!(registry.get(&Role::Orchestrator).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_validate_swarm_roles_with_orchestrator() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Valid: Orchestrator is the required role.
+        let result = hub.validate_swarm_roles(&[Role::Orchestrator]);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_swarm_roles_critic_without_implementer() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Should produce CapabilityMissing conflict.
+        let result = hub.validate_swarm_roles(&[Role::Orchestrator, Role::Critic]);
+        assert!(result.is_ok());
+        let conflicts = result.unwrap();
+        assert!(
+            conflicts
+                .iter()
+                .any(|c| matches!(c, Conflict::CapabilityMissing))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_generate_swarm_bundle() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let bundle = hub
+            .generate_swarm_bundle(
+                vec![Role::Orchestrator, Role::Architect],
+                Domain::Coding,
+                Uuid::new_v4(),
+            )
+            .await;
+        assert!(bundle.is_ok());
     }
 }
