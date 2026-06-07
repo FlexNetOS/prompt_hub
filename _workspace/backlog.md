@@ -37,8 +37,8 @@ Six modules have `#[cfg(feature = "...")]` gates in lib.rs and **zero** hub.rs w
 | 1b | `circuit_breaker.rs` | 7.9K | 6 | 9 | `"circuit-breaker"` (gated) |
 | ~~1c~~ | ~~`moderation.rs`~~ | ~~9.2K~~ | ~~9~~ | ~~10~~ | ~~`"moderation"` (gated)~~ — wired ✅ s12c1 |
 | ~~1d~~ | ~~`quota.rs`~~ | ~~8.6K~~ | ~~10~~ | ~~10~~ | ~~`"quota"` (stub)~~ — wired ✅ s12c2 |
-| 1e | `preview.rs` | 15.9K | 4 | 7 | `"preview"` (gated) |
-| 1f | `canary.rs` | 3.0K | 4 | 6 | `"canary"` (gated) |
+| ~~1e~~ | ~~`preview.rs`~~ | ~~15.9K~~ | ~~4~~ | ~~7~~ | ~~`"preview"` (gated)~~ — wired ✅ s12c3 |
+| ~~1f~~ | ~~`canary.rs`~~ | ~~3.0K~~ | ~~4~~ | ~~6~~ | ~~`"canary"` (gated)~~ — wired ✅ s12c4 |
 
 **Status update from s10:** LoadBalancer wired ✅ via PR #59, ProviderHealthMonitor wired ✅ via PR #58, satisfaction kept always-in (kept as PromptHub field). These six remain unwired.
 

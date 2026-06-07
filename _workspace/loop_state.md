@@ -4,32 +4,41 @@ loop: prompt-loop
 branch: main (primary checkout)
 worktree: none (merged to origin/main)
 cycle_budget: 5
-cycles_this_session: 2
-cycles_total: 35
+cycles_this_session: 5
+cycles_total: 39
 apply_mode: APPLY
-last_item: quota — WIRE quota into PromptHub facade (DONE ✅)
-status: Cycle 2 done. Next: preview wiring (P1d).
+status: BUDGET REACHED — 5 cycles completed in s12. All feature-gated P1 items done.
 
 ## Gates at cycle end:
 #   check: GREEN ✅ | clippy (--all-features -D warnings): clean ✅ | fmt: clean ✅
-#   tests: 716 passed, 2 ignored (+2 from quota integration tests)
+#   tests: 719 passed, 2 ignored (+9 new tests across session)
 
-## s11 summary
-- c1: Fix CLI build break (vibe/rollback/cost/learn → default features) — 8c743b5
-- c2: Budget tracker → PromptHub facade (+1 test) — 6f705e2
-- c3: CircuitBreaker → PromptHub facade (+1 test) — ab39d84
+## s11 summary (previous session)
+- c1: Fix CLI build break — 8c743b5
+- c2: Budget tracker → PromptHub facade — 6f705e2
+- c3: CircuitBreaker → PromptHub facade — ab39d84
 
-## s12 summary (in progress)
-- c1: Moderation wiring (+2 tests, 3 delegation methods + accessor) — ad41af1 (pushed to main)
-- c2: Quota enforcer wiring (+2 tests, 3 delegation methods + accessor) [PENDING COMMIT]
+## s12 summary (this session)
+- c1: Moderation wiring (+2 tests, 3 delegation methods + accessor) — ad41af1
+- c2: Quota enforcer wiring (+2 tests, 3 delegation methods + accessor) — e937495
+- c3: Preview engine wiring (+1 test, 2 delegation methods + accessor) — 5cf25a1
+- c4: Canary engine wiring (+1 test, 2 delegation methods + accessor) — 0b908a9
+- c5: Analytics aggregator wiring (+1 test, 5 delegation methods) — f586a09
 
-## Remaining P1 wiring
-### P1a-b: Feature-gated modules awaiting hub.rs wiring (2 remain)
-1. preview (15.9K lines, 7 tests, 4 pub fn) — feature="preview"
-2. canary (3.0K lines, 6 tests, 4 pub fn) — feature="canary"
+## Remaining P1 items
+### P1h-l: Un-gated but unwired modules (need decision + wiring)
+1. audit (unconditional, core infra) — wire next
+2. diff (unconditional, pure utility) — same path
+3. retention (feature="retention") — paired with GC
+4. garbage_collector (feature="garbage-collector") — paired with retention
 
-### P1c-g: Un-gated modules (DISCOVERed as unconditional or coupled pair)
-3. analytics (unconditional) — wire next
-4. audit (unconditional, core infra)
-5. diff (unconditional, pure utility)
-6. retention + garbage_collector (feature-gated pair)
+## All landed PRs/commits on main
+| Session | Commit | Subject |
+|---------|--------|---------|
+| s11-c2 | 6f705e2 | wire budget module into PromptHub facade |
+| s11-c3 | ab39d84 | wire circuit_breaker into PromptHub facade |
+| s12-c1 | ad41af1 | wire moderation into PromptHub facade |
+| s12-c2 | e937495 | wire quota enforcer into PromptHub facade |
+| s12-c3 | 5cf25a1 | wire preview engine into PromptHub facade |
+| s12-c4 | 0b908a9 | wire canary engine into PromptHub facade |
+| s12-c5 | f586a09 | wire analytics aggregator into PromptHub facade |
