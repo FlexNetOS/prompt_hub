@@ -17,6 +17,8 @@ use crate::moderation::ModerationEngine;
 use crate::pollination::{CrossAgentPollination, Pattern};
 use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
 use crate::quality_gate::{QualityGate, QualityResult};
+#[cfg(feature = "quota")]
+use crate::quota::QuotaEnforcer;
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
@@ -144,6 +146,8 @@ pub struct PromptHub {
     circuit_breaker: Arc<CircuitBreaker>,
     #[cfg(feature = "moderation")]
     moderation: Arc<ModerationEngine>,
+    #[cfg(feature = "quota")]
+    quota_enforcer: Arc<QuotaEnforcer>,
 }
 
 impl PromptHub {
@@ -209,6 +213,8 @@ impl PromptHub {
             circuit_breaker: Arc::new(CircuitBreaker::default()),
             #[cfg(feature = "moderation")]
             moderation: Arc::new(ModerationEngine::new()),
+            #[cfg(feature = "quota")]
+            quota_enforcer: Arc::new(QuotaEnforcer::default()),
         };
 
         // Register default hooks
@@ -222,6 +228,9 @@ impl PromptHub {
 
         #[cfg(feature = "moderation")]
         info!("Content moderation engine initialized in permissive mode");
+
+        #[cfg(feature = "quota")]
+        info!("Quota enforcer initialized with defaults (daily=1M, hourly=100K, burst=10K)");
 
         Ok(hub)
     }
@@ -1520,6 +1529,36 @@ impl PromptHub {
     pub fn moderation_engine(&self) -> Arc<ModerationEngine> {
         Arc::clone(&self.moderation)
     }
+
+    // ── Token quota ---------------------------------------------------------
+
+    /// Check and consume tokens against configured daily/hourly/burst quotas.
+    ///
+    /// Returns `QuotaStatus::Allowed` if the request fits within all limits,
+    /// or the first exceeded limit (burst > hourly > daily check order).
+    #[cfg(feature = "quota")]
+    #[instrument(skip(self, tokens))]
+    pub fn check_and_consume(&self, tokens: u64) -> Result<crate::quota::QuotaStatus> {
+        self.quota_enforcer.check_and_consume(tokens)
+    }
+
+    /// Return current quota usage snapshot.
+    #[cfg(feature = "quota")]
+    pub fn quota_usage(&self) -> crate::quota::QuotaUsage {
+        self.quota_enforcer.usage()
+    }
+
+    /// Reset all quota counters (admin override or testing).
+    #[cfg(feature = "quota")]
+    pub fn reset_quota(&self) {
+        self.quota_enforcer.reset_all();
+    }
+
+    /// Return a cloneable `Arc` handle to the quota enforcer.
+    #[cfg(feature = "quota")]
+    pub fn quota_enforcer_handle(&self) -> Arc<QuotaEnforcer> {
+        Arc::clone(&self.quota_enforcer)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2309,5 +2348,44 @@ mod tests {
         let engine1 = hub.moderation_engine();
         let engine2 = hub.moderation_engine();
         assert!(std::ptr::eq(Arc::as_ptr(&engine1), Arc::as_ptr(&engine2)));
+    }
+
+    // ── Quota integration tests ────────────────────────────────────────
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_delegation() {
+        use crate::quota::QuotaStatus;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Default enforcer allows small consumption
+        assert_eq!(hub.check_and_consume(1).unwrap(), QuotaStatus::Allowed);
+
+        // Usage snapshot works
+        let usage = hub.quota_usage();
+        assert_eq!(usage.daily_used, 1);
+        assert_eq!(usage.burst_used, 1);
+
+        // Reset clears counters
+        hub.reset_quota();
+        let usage = hub.quota_usage();
+        assert_eq!(usage.daily_used, 0);
+    }
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_handle_returns_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        let h1 = hub.quota_enforcer_handle();
+        let h2 = hub.quota_enforcer_handle();
+        assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
     }
 }
