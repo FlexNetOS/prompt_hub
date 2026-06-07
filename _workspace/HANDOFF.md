@@ -1,88 +1,56 @@
-# HANDOFF — Session 12 (s12) → Next Session
+# HANDOFF — Session 13 (s13) → Next Session
 
-**Worktree:** Primary checkout at `/home/drdave/Desktop/meta/prompt_hub` (on `main`, not a worktree — s12 merged to main)
+**Worktree:** Primary checkout at `/home/drdave/Desktop/meta/prompt_hub` (on `main`)
 **Branch:** `main` (unprotected → APPLY mode: push directly on green)
-**Base:** `origin/main` at `34ea561`
+**Base:** `origin/main` at `9d78b32`
 
 ---
 
-## 1. Backlog Status
+## 1. P1 Wiring Status: COMPLETE ✅
 
-| Category | Count | State |
-|----------|-------|-------|
-| P0 critical | 0 | All green |
-| P1 wiring (feature-gated) | 0 remaining | All wired ✅ |
-| P1 wiring (un-gated, need wiring) | 4 items | audit, diff, retention+gc (decided: unconditional vs pair) |
-| P2 stub cleanup | 3 candidates | sqlcipher, ffi, garbage-collector |
+All 10 feature-gated/un-gated modules are now wired into PromptHub facade:
 
-**Next item:** Wire **audit** module (unconditional — smallest). Followed by diff. Then retention+gc as a feature-gated pair.
+| # | Module | Session | Commit | Tests | Delegation Methods |
+|---|--------|---------|--------|-------|--------------------|
+| 1 | budget | s11-c2 | `6f705e2` | +1 | record_spend, accessor |
+| 2 | circuit_breaker | s11-c3 | `ab39d84` | +1 | call, accessor |
+| 3 | moderation | s12-c1 | `ad41af1` | +2 | check_content, is_content_safe, check_content_batch, accessor |
+| 4 | quota | s12-c2 | `e937495` | +2 | check_and_consume, quota_usage, reset_quota, accessor |
+| 5 | preview | s12-c3 | `5cf25a1` | +1 | preview_generate, preview_artifacts, accessor |
+| 6 | canary | s12-c4 | `0b908a9` | +1 | canary_deploy, canary_should_rollback, accessor |
+| 7 | analytics | s12-c5 | `f586a09` | +1 | record_event, get_usage_report, success_rate, total_cost_usd, reset |
+| 8 | audit | s13-c1 | `8c29a78` | +1 | compute_audit_hash, verify_audit_integrity, soc2_evidence_summary, validate_soc2_schema, anonymize_audit_entry, accessor |
+| 9 | diff | s13-c2 | `3634ea9` | +1 | compute_diff, summarize_diff, is_identical, format_unified_diff |
+| 10 | retention+gc | s13-c3 | `9d78b32` | +1 | set/get retention period, is_expired, run_cleanup, run_gc, purge, stats, gc_enabled/disabled |
 
----
-
-## 2. Session 12 Summary
-
-Session 12 completed all 5 cycle budget items on main.
-
-### Commits
-
-| Hash | Subject |
-|------|---------|
-| `ad41af1` | wire moderation into PromptHub facade (P1c) — +2 tests, 3 delegation methods |
-| `e937495` | wire quota enforcer into PromptHub facade (P1d) — +2 tests, 3 delegation methods |
-| `5cf25a1` | wire preview engine into PromptHub facade (P1e) — +1 test, 2 delegation methods |
-| `0b908a9` | wire canary engine into PromptHub facade (P1f) — +1 test, 2 delegation methods |
-| `f586a09` | wire analytics aggregator into PromptHub facade (P1g) — +1 test, 5 delegation methods |
-| `34ea561` | chore(loop): s12 final — 5 cycles done |
-
-### Gates at end of s12
-- check: GREEN ✅ (3 crates compiled)
-- test: 719 passed, 2 ignored (+9 new tests across session)
-- clippy: clean ✅ (`--all-targets --all-features -D warnings`)
-- fmt: clean ✅
+**Total across all sessions: ~34 delegation methods, +14 new tests, ~600 LOC added to hub.rs.**
 
 ---
 
-## 3. Design Decision — Un-gated modules
-
-All resolved in DISCOVER cycle of s12 (documented in `_workspace/design_decision/unwired_modules.md`).
-
-| Module | Type | Wiring Order |
-|--------|------|-------------|
-| audit | unconditional (core infra) | #1 — wire first |
-| diff | unconditional (pure utility) | #2 |
-| retention | feature="retention" (pair with GC) | #3-4 |
-| garbage_collector | feature="garbage-collector" (pair with retention) | #3-4 |
-
----
-
-## 4. Verify-on-Resume Baseline
+## 2. Verify-on-Resume Baseline
 
 ```bash
 cd /home/drdave/Desktop/meta/prompt_hub
-cargo check --workspace --all-features            # GREEN ✅
-cargo test --workspace --all-features             # 719 passed, 2 ignored
+cargo check --workspace --all-features            # GREEN ✅ (3 crates)
+cargo test --workspace --all-features             # 722 passed, 2 ignored
 cargo clippy --workspace --all-targets --all-features -- -D warnings  # clean
 git status --short                                # only harness files dirty
 ```
 
 ---
 
-## 5. Open Items for Future Sessions
+## 3. Remaining Items (post-P1)
 
-### P1h-k: Un-gated modules awaiting wiring
-See section 3 above for decision + order.
-
-### P2: Stub feature cleanup
-- `sqlcipher = []` — no module, remove if unused
-- `ffi = []` — same treatment
-- `garbage-collector = []` — needs to be promoted alongside retention pair
+### P2: Stub feature cleanup (low priority)
+- `sqlcipher = []` — no module, no source refs
+- `ffi = []` — no module, no source refs
+- `garbage-collector = []` — has a module but now wired under `feature="retention"`
 
 ### P4: Edge cases
-- Default identity lacks Write for non-operator callers (programmatic usage)
+- Default identity lacks Write for non-operator callers
 - defaults.rs seed_database() has empty body with dead parameter
 - i18n module is dead code from hub's perspective
 
 ---
 
-*Handoff written: 2026-06-07T21:45:00Z | Session: s12 → s13+*
-*Total P1 wiring done across all sessions: 8 modules wired (budget, circuit_breaker, moderation, quota, preview, canary, analytics + load_balancer/satisfaction/swarm/pollination/lineage/quality_gate from earlier)*
+*Handoff written: 2026-06-07T23:00:00Z | Session: s13 → s14+*
