@@ -67,7 +67,6 @@ pub mod preview;
 pub mod privacy;
 #[cfg(feature = "provider-health")]
 pub mod provider_health;
-#[cfg(feature = "quality")]
 pub mod quality_gate;
 #[cfg(feature = "quota")]
 pub mod quota;
