@@ -348,7 +348,9 @@ pub mod ort_impl {
     }
 
     impl Embedder for OrtEmbedder {
-        fn dimension(&self) -> usize { self.dim }
+        fn dimension(&self) -> usize {
+            self.dim
+        }
 
         fn embed<'a>(
             &'a self,
@@ -363,14 +365,11 @@ pub mod ort_impl {
             })
         }
 
-        fn name(&self) -> &'static str { "ort" }
+        fn name(&self) -> &'static str {
+            "ort"
+        }
     }
-
 }
-
-
-
-
 
 /// Re-export `OrtEmbedder` for consumers who need to construct it directly.
 #[cfg(feature = "smart-ort")]
@@ -500,7 +499,10 @@ impl SmartEngine {
                 match OrtEmbedder::new(crate::search::ort_impl::DEFAULT_MODEL_NAME) {
                     Ok(ort_embedder) => Arc::new(ort_embedder),
                     Err(e) => {
-                        warn!("Failed to create OrtEmbedder, falling back to HashEmbedder: {}", e);
+                        warn!(
+                            "Failed to create OrtEmbedder, falling back to HashEmbedder: {}",
+                            e
+                        );
                         Arc::new(HashEmbedder::new(dim)) as Arc<dyn Embedder>
                     }
                 }
@@ -508,7 +510,9 @@ impl SmartEngine {
             #[cfg(not(feature = "smart-ort"))]
             crate::config::EmbedderBackend::OnnxRuntime => {
                 // Feature not enabled — fall back to HashEmbedder with a warning.
-                warn!("EmbedderBackend::OnnxRuntime requested but smart-ort feature is disabled; using HashEmbedder");
+                warn!(
+                    "EmbedderBackend::OnnxRuntime requested but smart-ort feature is disabled; using HashEmbedder"
+                );
                 Arc::new(HashEmbedder::new(dim)) as Arc<dyn Embedder>
             }
         };
@@ -523,7 +527,12 @@ impl SmartEngine {
 
     /// Create a new `SmartEngine` — defaults to HashEmbedder (legacy compat).
     pub fn new(model_name: impl Into<String>, storage: Arc<Storage>, dim: usize) -> Self {
-        Self::new_with_backend(model_name, storage, dim, &crate::config::EmbedderBackend::Hash)
+        Self::new_with_backend(
+            model_name,
+            storage,
+            dim,
+            &crate::config::EmbedderBackend::Hash,
+        )
     }
 
     /// Create with the default `all-MiniLM-L6-v2` model (384-d).
