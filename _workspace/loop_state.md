@@ -4,11 +4,11 @@ loop: prompt-loop
 branch: main (primary checkout)
 worktree: none (merged to origin/main)
 cycle_budget: 3            # completed cycles per session before handoff (override via PROMPT_BUDGET)
-cycles_this_session: 2     # DISCOVER + P2 flags + P3 docs (with doctest fix)
-cycles_total: 25           # sessions 1-8 + DISCOVER s9 + s9c1(P2) + s9c2(docs+fix)
+cycles_this_session: 0     # RESUME — counter reset for new session
+cycles_total: 26           # sessions 1-9 + this s10 resume session
 apply_mode: APPLY          # push -> PR -> squash merge on green DONE-gates
-last_item: P3 docs (lib.rs crate docs + README feature flags table) — merged to main
-status: EFFECTIVELY DONE. All impactful work shipped. Remaining items: qodana SARIF (blocked on Docker/QODANA_TOKEN), P4 identity edge case (existing workaround via AgentIdentity::local_operator()). Next session: trivial docs or DISCOVER for new items.
+last_item: P3 API docs for all Hub methods (next unblocked item)
+status: RESUME — verify baseline green. Continuing at P3 API docs task.
 last_update: 2026-06-07T18:45:00Z
 
 ## Gates at DISCOVER completion:

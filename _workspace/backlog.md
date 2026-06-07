@@ -56,14 +56,14 @@ Proposed shippable unit: **Remove dead features + convert stub features to real 
 
 ## P3: Quality & documentation (from TODO.md V section)
 
-- [ ] **Regenerate `docs/audits/qodana.sarif.json`** — committed SARIF (1.4MB, 31961 lines) is stale; fresh CI run exists but output not re-committed
-  — source: TODO.md line 26, V section + CI shows Qodana completed green; blocked on QODANA_TOKEN + Docker locally; provenance: TODO.md
-- [ ] **Complete API documentation for all Hub methods** (`prompt-hub/src/hub.rs`) — add doc comments with examples
-  — source: TODO.md P4 section; hub.rs has ~20+ pub methods, most lack `///` docs; provenance: TODO.md + code inspection
-- [ ] **Document feature flags table in README.md** — map each flag to module and use case
-  — source: README.md currently only documents `tui`; all other flags undocumented for end users; provenance: README.md inspection
-- [ ] **Add crate-level docs in lib.rs** (`//!` doc comment with quickstart example)
-  — source: lib.rs line 8 uses `#![doc = include_str!("../README.md")]` as crate docs — functional but lacks a Rust-specific quickstart example; provenance: TODO.md P4 section
+- [!] **Regenerate `docs/audits/qodana.sarif.json`** — blocked on Docker/QODANA_TOKEN (external tooling wall)
+  — source: TODO.md line 26, V section + CI shows Qodana completed green; provenance: TODO.md
+- [x] **Complete API documentation for all Hub methods** (`prompt-hub/src/hub.rs`) — add doc comments with examples (#56 → merged ✅)
+  — Enhanced 28 pub methods across LockManager + PromptHub impl blocks with comprehensive Rustdoc
+- [x] **Document feature flags table in README.md** — map each flag to module and use case (s9c2 → merged to main)
+  — Comprehensive table covering core, gated, and passthrough features
+- [x] **Add crate-level docs in lib.rs** (`//!` doc comment with quickstart example) (s9c1 → merged to main)
+  — Quickstart doctest showing PromptHub::new/register/search flow
 
 ---
 
