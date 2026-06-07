@@ -55,6 +55,17 @@
 | s3-c3 | (this)   | #43 | chore(loop): architect-scope smart-embedding epic into 5 slices + session-3 handoff |
 - Counters: `cycles_this_session=3` (budget), `cycles_total=9`.
 
+## Session 4 (2026-06-07) — SMART_EMBEDDING EPIC COMPLETE (budget reached)
+- **Slices built:** 1 → 2 → 3 (all merged to origin/main)
+| Cycle | Commit | PR | Subject |
+|-------|--------|----|---------|
+| s4-c1 | `4544a14` | #44 | refactor(search): extract pluggable Embedder trait + HashEmbedder backend (+7 tests, clippy fix) |
+| s4-c2 | `d7f609f` | #45 | feat(search): write prompt embeddings on index via Embedder (storage helpers + integration test) |
+| s4-c3 | `46b630b` | #46 | feat(config,hub): select embedder backend from HubConfig (e2e register→search verified) |
+- Counters: `cycles_total=12`, `cycles_this_session=3`.
+- **SMART_EMBEDDING epic SLICES 1-3 COMPLETE.** Default config path works end-to-end: PromptHub::new → register → SmartEngine embeds via HashEmbedder → persists in embeddings table → search finds by cosine.
+- **Remaining items (next session):** smart Slices 4-5 (blocked on inference-runtime decision), qodana SARIF regen (blocked on QODANA_TOKEN+Docker).
+
 ## 5. Open findings / decisions / dead-ends
 - **`/verify` finding (b) RESOLVED** (s3-c1): CLI now acts as a local operator
   (`AgentIdentity::local_operator` → Read/Write/Admin); RBAC enforcement unchanged. Single chokepoint
