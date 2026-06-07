@@ -7,7 +7,7 @@ cycle_budget: 5
 cycles_this_session: 6 (BUDGET REACHED)
 cycles_total: 54
 apply_mode: APPLY
-status: HAND OFF — P1 wiring COMPLETE milestone reached
+status: TERMINAL — DONE (backlog verified stale, no shippable items)
 
 ## Gates at session close:
 #   check: GREEN ✅
