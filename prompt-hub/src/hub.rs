@@ -6,6 +6,7 @@ use crate::error::{HubError, Result};
 use crate::hooks::{HookRegistry, JunieHook};
 use crate::metrics::MetricsCollector;
 use crate::models::*;
+use crate::quality_gate::{QualityGate, QualityResult};
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
@@ -99,6 +100,7 @@ pub struct PromptHub {
     metrics: Arc<MetricsCollector>,
     sync: SyncManager,
     hooks: HookRegistry,
+    quality_gate: Arc<QualityGate>,
 }
 
 impl PromptHub {
@@ -135,6 +137,7 @@ impl PromptHub {
             metrics: metrics.clone(),
             sync: SyncManager::new(),
             hooks: HookRegistry::new(),
+            quality_gate: Arc::new(QualityGate::new()),
         };
 
         // Register default hooks
@@ -635,6 +638,24 @@ impl PromptHub {
         info!("Learned from feedback by agent {}", agent_id);
         Ok(())
     }
+
+    // ── Quality gate ────────────────────────────────────────────────────
+
+    /// Run the quality gate pipeline against an artifact.
+    ///
+    /// Returns a `QualityResult` with scores and pass/fail for lint,
+    /// security, performance, and accessibility checks registered on the gate.
+    #[instrument(skip(self))]
+    pub async fn run_quality_gate(&self, artifact: &Artifact) -> Result<QualityResult> {
+        let result = self.quality_gate.check(artifact).await?;
+        info!(
+            passed = %result.passed,
+            warnings = %result.warnings.len(),
+            errors = %result.errors.len(),
+            "Quality gate result"
+        );
+        Ok(result)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -834,5 +855,44 @@ mod tests {
             token: "old".to_string(),
         };
         assert!(LockManager::is_expired(&expired));
+    }
+
+    #[tokio::test]
+    async fn test_quality_gate_empty_passes() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let artifact = Artifact::Code {
+            path: "test.rs".to_string(),
+            content: "fn main() {}".to_string(),
+            language: "rust".to_string(),
+        };
+
+        let result = hub.run_quality_gate(&artifact).await.unwrap();
+        assert!(result.passed);
+        assert_eq!(result.lint_score, 1.0);
+        assert_eq!(result.security_score, 1.0);
+        assert_eq!(result.performance_score, 1.0);
+        assert_eq!(result.accessibility_score, 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_quality_gate_result_type() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let artifact = Artifact::Prompt {
+            system: "You are a helpful assistant.".to_string(),
+            user: "Hello".to_string(),
+        };
+
+        let result = hub.run_quality_gate(&artifact).await.unwrap();
+        assert!(result.passed);
+        assert!(result.warnings.is_empty());
+        assert!(result.errors.is_empty());
     }
 }

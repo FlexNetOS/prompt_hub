@@ -28,7 +28,7 @@ _Nothing. All gates green — build, clippy, tests, docs, CI all pass._
 
 Three modules have 70+ lines of tested implementations with public APIs but are **never wired into `PromptHub`** and lack feature-gates in `Cargo.toml`. They are the highest-value candidates for "make them available at runtime."
 
-- [ ] **Wire `swarm::SwarmRoleRegistry` (878 lines, 22 pub items, 23 tests) into PromptHub — add a `manage_swarm()` method to hub.rs that creates/uses a SwarmRoleRegistry and validates role dependency graphs**
+- [x] **Wire `swarm::SwarmRoleRegistry` (878 lines, 22 pub items, 23 tests) into PromptHub — add a `manage_swarm()` method to hub.rs that creates/uses a SwarmRoleRegistry and validates role dependency graphs** (#49 → merged ✅)
   — source: `prompt-hub/src/swarm.rs` (largest unwired module; ADR-0008 vibe architecture references swarm coordination); provenance: self-discovery
 
 - [ ] **Wire `quality_gate::QualityGate` (443 lines, 11 pub items including Linter/SecurityScanner/PerformanceChecker traits) into PromptHub — add a `run_quality_check()` method that invokes the gate pipeline**
