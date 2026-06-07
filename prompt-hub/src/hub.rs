@@ -15,6 +15,8 @@ use crate::error::{HubError, Result};
 #[cfg(feature = "retention")]
 use crate::garbage_collector::GarbageCollector;
 use crate::hooks::{HookRegistry, JunieHook};
+#[cfg(feature = "i18n")]
+use crate::i18n::I18nEngine;
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
 use crate::metrics::MetricsCollector;
@@ -168,6 +170,8 @@ pub struct PromptHub {
     canary_engine: Arc<CanaryEngine>,
     #[cfg(feature = "multimodal")]
     multimodal_engine: MultimodalEngine,
+    #[cfg(feature = "i18n")]
+    i18n_engine: I18nEngine,
     analytics: Arc<std::sync::Mutex<Analytics>>,
     audit_logger: Arc<SqliteAuditLogger>,
     diff_engine: PromptDiff,
@@ -248,6 +252,8 @@ impl PromptHub {
             canary_engine: Arc::new(CanaryEngine),
             #[cfg(feature = "multimodal")]
             multimodal_engine: MultimodalEngine,
+            #[cfg(feature = "i18n")]
+            i18n_engine: I18nEngine::new(),
             analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
             audit_logger: Arc::new(SqliteAuditLogger::new()),
             diff_engine: PromptDiff::new(),
@@ -289,6 +295,9 @@ impl PromptHub {
 
         #[cfg(feature = "multimodal")]
         info!("Multimodal engine initialized (image placeholder support)");
+
+        #[cfg(feature = "i18n")]
+        info!("I18n translation engine initialized");
 
         info!("Analytics aggregator initialized");
 
@@ -1701,6 +1710,35 @@ impl PromptHub {
         MultimodalEngine::extract_placeholder_ids(template)
     }
 
+    // ── I18n (internationalization / translation support) ────────────────
+
+    /// Return a reference to the i18n translation engine.
+    #[cfg(feature = "i18n")]
+    pub fn i18n_engine(&self) -> &I18nEngine {
+        &self.i18n_engine
+    }
+
+    /// Register a new translation for a prompt in a specific locale.
+    #[cfg(feature = "i18n")]
+    pub fn register_translation(&mut self, prompt_id: &str, locale: &str, template: String) {
+        self.i18n_engine
+            .register_translation(prompt_id, locale, template);
+    }
+
+    /// Get the localized template for a prompt in a specific locale.
+    #[cfg(feature = "i18n")]
+    pub fn get_localized_template(&self, prompt_id: &str, locale: &str) -> Option<String> {
+        self.i18n_engine
+            .get_translation(prompt_id, locale)
+            .map(|s| s.to_string())
+    }
+
+    /// Get the fallback chain for a locale.
+    #[cfg(feature = "i18n")]
+    pub fn translation_fallback_chain(&self, locale: &str) -> Vec<String> {
+        crate::i18n::I18nEngine::fallback_chain(locale)
+    }
+
     // ── Analytics ──────────────────────────────────────────────────────
 
     /// Record an analytics event for tracking usage metrics.
@@ -2832,5 +2870,30 @@ mod tests {
         // Placeholder extraction works (format: {{id}})
         let ids = hub.extract_placeholder_ids("Hello {{img1}} World {{img2}}");
         assert_eq!(ids, vec!["img1".to_string(), "img2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_i18n_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Engine handle accessible and valid
+        #[allow(clippy::no_effect)]
+        {
+            let _engine = hub.i18n_engine();
+        }
+
+        // Translation registration works
+        hub.register_translation("prompt-1", "fr", "Bonjour le monde".to_string());
+
+        // Translation retrieval works
+        let fr = hub.get_localized_template("prompt-1", "fr");
+        assert_eq!(fr, Some("Bonjour le monde".to_string()));
+
+        // Fallback chain works
+        let chain = hub.translation_fallback_chain("en-US");
+        assert!(!chain.is_empty());
     }
 }

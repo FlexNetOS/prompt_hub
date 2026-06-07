@@ -47,6 +47,7 @@ retention = ["prompt-hub/retention"]
 satisfaction = ["prompt-hub/satisfaction"]
 analytics = ["prompt-hub/analytics"]
 canary = ["prompt-hub/canary"]
+i18n = ["prompt-hub/i18n"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }

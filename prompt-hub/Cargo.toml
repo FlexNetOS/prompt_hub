@@ -58,6 +58,7 @@ moderation = []
 budget = []
 analytics = []
 preview = []
+i18n = []
 
 # ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,

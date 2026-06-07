@@ -44,6 +44,7 @@ pub mod garbage_collector;
 pub mod health;
 pub mod hooks;
 pub mod hub;
+#[cfg(feature = "i18n")]
 pub mod i18n;
 pub mod junie;
 #[cfg(feature = "learn")]
