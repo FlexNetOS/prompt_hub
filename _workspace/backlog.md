@@ -62,14 +62,9 @@ These five modules have **no feature gate** on their `pub mod` in lib.rs and **z
 
 ---
 
-## P2: Feature flag hygiene (remaining stub features in Cargo.toml)
+## P2: Feature flag hygiene (remaining stub features in Cargo.toml) ✅ DONE
 
-Three passthrough stubs remain for backward compatibility:
-- `sqlcipher = []` — no module, no source refs — safe to remove if no downstream crate references it
-- `ffi = []` — no module, no source refs — same treatment
-- `garbage-collector = []` — has a module (`garbage_collector.rs`) but its `pub mod` is unconditionally compiled with no cfg gate AND not wired into hub.rs
-
-**Shippable unit:** Decide whether `garbage-collector` stub should become a real cfg-gated feature (matching the existing module) or be removed. The other two can be verified-unused and removed if no downstream deps reference them. One cycle for the full sweep of Cargo.toml cleanup.
+- [x] **Remove dead stub features** — `sqlcipher`, `ffi`, and `garbage-collector` passthrough entries removed from all 3 crates. One additional fix: re-gated `garbage_collector` field in hub.rs from `feature = "garbage-collector"` → `feature = "retention"` (was orphaned cfg gate). +4 files changed, -15 lines. Committed as `s14-c1`.
 
 ---
 

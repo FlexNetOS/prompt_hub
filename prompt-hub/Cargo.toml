@@ -60,15 +60,6 @@ analytics = []
 preview = []
 
 # ---------------------------------------------------------------------------
-# Stub features with no corresponding module or source references whatsoever.
-# Kept as empty features for backward-compat (downstream deps may reference them).
-# If/when a downstream crate stops referencing these, they can be removed later.
-# ---------------------------------------------------------------------------
-sqlcipher = []
-ffi = []
-garbage-collector = []
-
-# ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,
 # no hub.rs wiring, and zero meaningful source references:
 #   beta-program, chaos, chaos-automation, cost-limits, gradual-rollout,

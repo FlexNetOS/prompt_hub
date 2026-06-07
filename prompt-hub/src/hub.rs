@@ -247,13 +247,13 @@ impl PromptHub {
             diff_engine: PromptDiff::new(),
             #[cfg(feature = "retention")]
             retention_policy: RetentionPolicy::default(),
-            #[cfg(feature = "garbage-collector")]
+            #[cfg(feature = "retention")]
             garbage_collector: GarbageCollector::new(crate::retention::RetentionPolicy::default()),
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
 
-        #[cfg(all(feature = "retention", feature = "garbage-collector"))]
+        #[cfg(feature = "retention")]
         {
             let retention = crate::retention::RetentionPolicy::default();
             hub.garbage_collector = GarbageCollector::new(retention.clone());
