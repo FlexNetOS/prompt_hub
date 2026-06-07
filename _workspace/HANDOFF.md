@@ -53,14 +53,6 @@ git status --short                                       # clean
 
 Baseline at epic completion: **all green — 685 tests** (684 + smart-ort's 1 new). `clippy --all-targets` clean. fmt clean. `cargo doc --all-features` warning-clean (session 2).
 
-## 6. Key decisions for next session (Slice 5 deep)
-- **OrtEmbedder** is behind `smart-ort` feature flag, struct exists in `search.rs::ort_impl`
-- OrtEmbedder stub returns zero-filled vectors — replace with real inference on first embed call
-- SmartEngine has `new_with_backend()` method that dispatches to Hash/OnnxRuntime based on HubConfig enum
-- Model cache path: `~/.cache/prompthub/models/<owner>/<name>/model.onnx`
-- **NO unsafe** — ort's safe public API is sufficient for downstream forbid(unsafe_code)
-- Run gates in BOTH modes each cycle: default + --all-features
-
-## 7. Open findings / decisions
-- **SMART_EMBEDDING EPIC COMPLETE:** Full config path works: PromptHub::new → register → SmartEngine.index → HashEmbedder embeds → persists in embeddings table → search finds by cosine ✅
-- **Inference runtime = ort** (decision recorded in backlog, not re-litigated)
+## 6. Open findings / decisions
+- **SMART_EMBEDDING EPIC COMPLETE (14 cycles):** Full config path works: PromptHub::new → register → SmartEngine.index → OrtEmbedder real ONNX inference → persists in embeddings table → search finds by cosine ✅
+- **Inference runtime = ort** — verified with real model download + inference (PR #48)
