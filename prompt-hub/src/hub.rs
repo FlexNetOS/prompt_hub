@@ -3,6 +3,8 @@
 use crate::auth::{Action, RbacAuthManager};
 #[cfg(feature = "budget")]
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
+#[cfg(feature = "canary")]
+use crate::canary::CanaryEngine;
 #[cfg(feature = "circuit-breaker")]
 use crate::circuit_breaker::CircuitBreaker;
 use crate::config::HubConfig;
@@ -11,6 +13,7 @@ use crate::hooks::{HookRegistry, JunieHook};
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
 use crate::metrics::MetricsCollector;
+use crate::models::CanaryDeployment;
 use crate::models::*;
 #[cfg(feature = "moderation")]
 use crate::moderation::ModerationEngine;
@@ -152,6 +155,8 @@ pub struct PromptHub {
     quota_enforcer: Arc<QuotaEnforcer>,
     #[cfg(feature = "preview")]
     preview_engine: Arc<PreviewEngine>,
+    #[cfg(feature = "canary")]
+    canary_engine: Arc<CanaryEngine>,
 }
 
 impl PromptHub {
@@ -221,6 +226,8 @@ impl PromptHub {
             quota_enforcer: Arc::new(QuotaEnforcer::default()),
             #[cfg(feature = "preview")]
             preview_engine: Arc::new(PreviewEngine),
+            #[cfg(feature = "canary")]
+            canary_engine: Arc::new(CanaryEngine),
         };
 
         // Register default hooks
@@ -240,6 +247,9 @@ impl PromptHub {
 
         #[cfg(feature = "preview")]
         info!("Preview engine ready for pre-execution rendering");
+
+        #[cfg(feature = "canary")]
+        info!("Canary deployment engine initialized");
 
         Ok(hub)
     }
@@ -1596,6 +1606,32 @@ impl PromptHub {
     pub fn preview_engine_handle(&self) -> Arc<PreviewEngine> {
         Arc::clone(&self.preview_engine)
     }
+
+    // ── Canary deployment ──────────────────────────────────────────────
+
+    /// Deploy a canary version of a feature and return whether the deployment succeeded.
+    #[cfg(feature = "canary")]
+    #[instrument(skip(self, canary))]
+    pub async fn canary_deploy(&self, canary: &CanaryDeployment, user_id: Uuid) -> Result<bool> {
+        CanaryEngine::deploy(canary, user_id).await
+    }
+
+    /// Evaluate whether a canary deployment should be rolled back.
+    #[cfg(feature = "canary")]
+    pub fn canary_should_rollback(
+        &self,
+        canary: &CanaryDeployment,
+        error_rate: f64,
+        latency_p99: f64,
+    ) -> bool {
+        CanaryEngine::should_rollback(canary, error_rate, latency_p99)
+    }
+
+    /// Return a cloneable `Arc` handle to the canary engine.
+    #[cfg(feature = "canary")]
+    pub fn canary_engine_handle(&self) -> Arc<CanaryEngine> {
+        Arc::clone(&self.canary_engine)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2439,6 +2475,22 @@ mod tests {
         // Handle works and returns same Arc
         let h1 = hub.preview_engine_handle();
         let h2 = hub.preview_engine_handle();
+        assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
+    }
+
+    // ── Canary integration test ────────────────────────────────────────
+
+    #[cfg(feature = "canary")]
+    #[tokio::test]
+    async fn test_canary_engine_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Handle works and returns same Arc
+        let h1 = hub.canary_engine_handle();
+        let h2 = hub.canary_engine_handle();
         assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
     }
 }
