@@ -16,6 +16,9 @@ readme = "README.md"
 [features]
 default = ["handlebars"]
 smart = ["dep:ndarray"]
+# Real ONNX runtime inference for smart search (off by default).
+# Gates OrtEmbedder behind this feature. Model download uses reqwest (no extra deps).
+smart-ort = ["dep:ort"]
 # Prometheus text-format metrics exposition via the maintained `prometheus`
 # crate (text encoder only — no protobuf, no discontinued OpenTelemetry exporter).
 otel = ["dep:prometheus"]
@@ -96,6 +99,7 @@ libloading = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true }
+ort = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
