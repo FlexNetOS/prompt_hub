@@ -1,0 +1,37 @@
+# prompt-loop — TERMINAL STATE: ALL WORK COMPLETE
+
+Written 2026-06-07. No backlog items remain to build. All gates green. This is the terminal sentinel; stop (no wakeup).
+
+## Gates at completion
+
+| Gate | Result |
+|------|--------|
+| `cargo build --workspace --all-features` | ✅ 3 crates compiled |
+| `cargo test --workspace --all-features` | ✅ 685 passed, 1 ignored |
+| `cargo clippy --workspace --all-features --all-targets -D warnings` | ✅ No issues found |
+| `cargo fmt --all -- --check` | ✅ Clean |
+
+## What was built across sessions (14 cycles)
+
+| Session | Cycles | Epic | PRs | Commit range |
+|---------|--------|------|-----|-------------|
+| 1-3 | 8 | Initial setup, P0-P5 fixes, local-operator identity, bench compile | #27-#34 (early cycles), #36/#37/#41 | fad25a1..bb401ad |
+| 4 | 3 | SMART_EMBEDDING Slices 1-3 (Embedder trait → embeddings on index → HubConfig selection) | #44/#45/#46 | 4544a14..46b630b |
+| 5 | 1 | SMART_EMBEDDING Slices 4+5 (OrtEmbedder struct + feature-gate scaffolding) | #47 | fb410c1 |
+| **6** | **1** | **SMART_EMBEDDING Slice 5 deep (real ONNX inference)** | **#48** | **d01b5c9** |
+
+## Epic results: SMART_EMBEDDING complete end-to-end
+
+- Full config path verified: `PromptHub::new → register → SmartEngine.index → OrtEmbedder embeds via real ONNX inference → upsert_embedding → search finds prompt by cosine` ✅
+- Lazy model download from HuggingFace, cached on disk
+- Tokenizers crate for sentencepiece/BPE tokenization
+- ort::Session inference with [CLS] token extraction + L2-normalization
+- `smart-ort` feature flag gates the full path
+
+## Blocked items (external tooling — not human walls)
+
+- `docs/audits/qodana.sarif.json`: needs QODANA_TOKEN + Docker; CI skips without token
+
+## Next work
+
+Next cycle requires fresh DISCOVER to identify new epics from TODO.md, audit reports, or user direction.
