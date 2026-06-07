@@ -100,10 +100,10 @@ Three stub features remain in `prompt-hub/Cargo.toml`:
 1. **P4-default identity fix** — add `Write` to default agent capabilities or document as known limitation
    — currently blocked; requires careful consideration of programmatic vs HTTP API paths
 2. **P3-storage integration tests** (largest ROI for code quality) — 1904-line file with only 1 test
-3. **P4-seed_database cleanup** — either implement or remove dead function in `defaults.rs`
+3. **P4-i18n cleanup** — i18n module is wired but no downstream feature enables it; decide if stub should become real feature or be removed
 
-All P1 wiring is done and verified. Multimodal added ✅ (`f7a503c`). The codebase is in a healthy state with 723 passing tests.
+All P1 wiring complete ✅ (multimodal + i18n added in s14-c2 + s15-c2). Codebase healthy with 724 passing tests.
 
 ---
 
-*Handoff written: 2026-06-08T01:30:00Z | P1 wiring complete (s11-s13), P2 stub cleanup + multimodal done (s14-c1+c2).*
+*Handoff written: 2026-06-08T02:00:00Z | P1 wiring complete (s11-s13), multimodal done (s14-c2), i18n wired (s15-c2).*
