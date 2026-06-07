@@ -31,10 +31,10 @@ The 3 highest-value candidates are the largest unwired modules with the most tes
 - [ ] **Wire `swarm::SwarmRoleRegistry` (878 lines, 19 tests, 22 pub items including `validate_swarm_roles`, `generate_full_handoff_chain`) into PromptHub — add `manage_swarm()` accessor + validation/bundle delegation methods**
   — source: `prompt-hub/src/swarm.rs`; PR #49 claimed wiring but was phantom merge (zero .rs changes); provenance: self-discovery
 
-- [ ] **Wire `pollination` module (410 lines, 10 tests) into PromptHub — add a pollination-related Hub method that delegates to its pub API**
+- [x] **Wire `pollination` module (410 lines, 10 tests) into PromptHub — add pollination-related Hub methods (+3 tests)** (#53 → merged ✅)
   — source: `prompt-hub/src/pollination.rs`; large tested module with clear public interface awaiting routing; provenance: self-discovery
 
-- [ ] **Wire `satisfaction::SatisfactionCollector` (374 lines, 14 tests) into PromptHub — add a satisfaction scoring/feedback method**
+- [x] **Wire `satisfaction::SatisfactionCollector` (374 lines, 14 tests) into PromptHub — add CSAT/NPS recording + metrics methods (+6 tests)** (#54 → merged ✅)
   — source: `prompt-hub/src/satisfaction.rs`; module has real tested logic for post-op satisfaction; provenance: self-discovery
 
 ---
