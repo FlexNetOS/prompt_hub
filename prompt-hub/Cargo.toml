@@ -14,7 +14,7 @@ description = "Production-ready prompt management library for LLM agent swarms"
 readme = "README.md"
 
 [features]
-default = ["handlebars"]
+default = ["handlebars", "vibe", "rollback", "cost", "learn"]
 smart = ["dep:ndarray"]
 # ONNX runtime inference for smart search (off by default).
 smart-ort = ["dep:ort"]
