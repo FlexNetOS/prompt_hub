@@ -1,95 +1,88 @@
-# prompt-loop HANDOFF — Session 8 Budget Exhausted (2026-06-07)
+# HANDOFF — Session 12 (s12) → Next Session
 
-> **Authoritative handoff signal.** Written 2026-06-07. State, not story.
-> Next session MUST start with fresh DISCOVER. Remaining items are P2/P3/P4 — no more P1 wiring pending.
+**Worktree:** Primary checkout at `/home/drdave/Desktop/meta/prompt_hub` (on `main`, not a worktree — s12 merged to main)
+**Branch:** `main` (unprotected → APPLY mode: push directly on green)
+**Base:** `origin/main` at `34ea561`
 
-## 1. Resume command
+---
 
-```
-/prompt-loop resume from _workspace/HANDOFF.md
-```
+## 1. Backlog Status
 
-- **Sync first:** `git fetch origin && git reset --hard origin/main`
-- Primary checkout: `/home/drdave/Desktop/meta/prompt_hub`
-- Session worktrees under `~/Desktop/meta/.worktrees/ph-*` — disposable
-- **Per cycle:** fresh worktree+branch off synced origin/main
-  `git worktree add ~/Desktop/meta/.worktrees/ph-<next> -b <branch> origin/main`
-- **Base branch:** `main` (latest: commit `6b95ec6`)
-- **Mode:** APPLY. `main` is **unprotected** → local DONE-gate suite IS the safety net.
-  - ⚠️ **Do NOT use `gh pr merge --auto`**. Use squash + verify:
-    `gh pr merge <n> --squash && gh pr view <n> --json state` (expect `MERGED`)
+| Category | Count | State |
+|----------|-------|-------|
+| P0 critical | 0 | All green |
+| P1 wiring (feature-gated) | 0 remaining | All wired ✅ |
+| P1 wiring (un-gated, need wiring) | 4 items | audit, diff, retention+gc (decided: unconditional vs pair) |
+| P2 stub cleanup | 3 candidates | sqlcipher, ffi, garbage-collector |
 
-## 2. Backlog status (`_workspace/backlog.md` on `main`)
+**Next item:** Wire **audit** module (unconditional — smallest). Followed by diff. Then retention+gc as a feature-gated pair.
 
-- **All P1 items completed.** 3 feature-wiring items wired across PRs #52, #53, #54.
-- **Remaining items are P2/P3/P4:**
-  - P2: Feature flag hygiene (~30 dead flags)
-  - P3: Qodana SARIF regen (QODANA_TOKEN blocked), API docs, README features table, lib.rs crate-level docs
-  - P4: Default identity lacks Write capability
+---
 
-## 3. Epic ledger (all direct-squash-merged to `origin/main`)
+## 2. Session 12 Summary
 
-| Session | Cycles | Subject | PRs | Last Commit |
-|---------|--------|---------|-----|-------------|
-| s1 | 1 | P0: sha2 0.11 build fix + qodana triage + otel | #27-#30, #32 | `fad25a1` |
-| s2 | 3 | metrics CLI + log routing + doc warnings + Docker/cliff | #36-#40 | `db4afbb` |
-| s3 | 3 | local-operator identity + bench compile + loop handoff | #41, #42, #39 | `a7c6ff8` |
-| s4 | 3 | SMART_EMBEDDING Slices 1-3 (trait → index → HubConfig) | #44-#46 | `c41d4f2` |
-| s5 | 1 | SMART_EMBEDDING Slices 4+5 (OrtEmbedder scaffolding) | #47 | `fb410c1` |
-| s6 | 1 | SMART_EMBEDDING Slice 5 deep (real ONNX inference) | #48 | `d01b5c9` |
-| s7 | 3 | SWARM/WIRE EPIC: swarm + quality_gate + lineage | #49-#51 | `47132fe` |
-| **s8** | **3** | **P1 WIREING ROUND 2: swarm + pollination + satisfaction** | **#52-#54** | **`6b95ec6`** |
-| **s9** | **3** | **DISCOVER + P2 feature flag hygiene (#55) + P3 docs (lib.rs README)** | **#55** | **`d1a078d`** |
+Session 12 completed all 5 cycle budget items on main.
 
-Total: 23 cycles (all verified green). Session 9 effectively done — trivial docs remain (blocked or edge-case).
+### Commits
 
-## 4. Session 8 details (PRs #52-#54)
+| Hash | Subject |
+|------|---------|
+| `ad41af1` | wire moderation into PromptHub facade (P1c) — +2 tests, 3 delegation methods |
+| `e937495` | wire quota enforcer into PromptHub facade (P1d) — +2 tests, 3 delegation methods |
+| `5cf25a1` | wire preview engine into PromptHub facade (P1e) — +1 test, 2 delegation methods |
+| `0b908a9` | wire canary engine into PromptHub facade (P1f) — +1 test, 2 delegation methods |
+| `f586a09` | wire analytics aggregator into PromptHub facade (P1g) — +1 test, 5 delegation methods |
+| `34ea561` | chore(loop): s12 final — 5 cycles done |
 
-| Cycle | Item | PR | Tests Added | Gate Summary |
-|-------|------|----|-------------|-------------|
-| c1 | Wire swarm::SwarmRoleRegistry (re-do) | #52 | +4 | check✅ clippy✅ fmt✅ 698t |
-| c2 | Wire pollination CrossAgentPollination | #53 | +3 | check✅ clippy✅ fmt✅ 701t |
-| c3 | Wire satisfaction SatisfactionTracker | #54 | +6 | check✅ clippy✅ fmt✅ 707t |
+### Gates at end of s12
+- check: GREEN ✅ (3 crates compiled)
+- test: 719 passed, 2 ignored (+9 new tests across session)
+- clippy: clean ✅ (`--all-targets --all-features -D warnings`)
+- fmt: clean ✅
 
-## 5. Architecture summary (post-session-8)
+---
 
-**PromptHub façade (`hub.rs`) now has:**
-- storage, search_engine, auth_manager, sanitizer, sync_manager, hook_registry, metrics
-- swarm_registry: Arc<SwarmRoleRegistry>
-- quality_gate: Arc<QualityGate>
-- lineage: LineageTracker
-- pollination: Arc<Mutex<CrossAgentPollination>>
-- satisfaction_tracker: Arc<SatisfactionTracker>
+## 3. Design Decision — Un-gated modules
 
-**SmartEngine:** HashEmbedder (default) + OrtEmbedder (`smart-ort` feature) — real ONNX inference
-**Model cache:** `~/.cache/prompthub/models/<owner>/<name>/model.onnx`
-**Unsafe code:** none — all 49+ library modules have `#![forbid(unsafe_code)]`
+All resolved in DISCOVER cycle of s12 (documented in `_workspace/design_decision/unwired_modules.md`).
 
-## 6. Remaining items for next session (post-P3 docs)
+| Module | Type | Wiring Order |
+|--------|------|-------------|
+| audit | unconditional (core infra) | #1 — wire first |
+| diff | unconditional (pure utility) | #2 |
+| retention | feature="retention" (pair with GC) | #3-4 |
+| garbage_collector | feature="garbage-collector" (pair with retention) | #3-4 |
 
-All impactful work shipped. Remaining items are trivial docs (blocked on external token) or edge cases with existing workarounds. Next DISCOVER recommended to find new high-impact items.
+---
 
-## 6a. Terminal state assessment (session 9 end)
-
-- **P1 wiring**: Complete — all major unwired modules wired (swarm, pollination, satisfaction, quality_gate, lineage)
-- **P2 feature flag hygiene**: Complete — 18 dead features removed, 17 stubs→real gates
-- **P3 docs**: Mostly complete — lib.rs crate docs ✅, README feature flags table ✅, doctest fix ✅
-- **Remaining (low impact)**:
-  - qodana SARIF regeneration — blocked on Docker/QODANA_TOKEN
-  - API docs for all Hub methods — trivial doc comments (~20 methods)
-  - Default identity Write capability — edge case with workaround (`AgentIdentity::local_operator()`)
-
-**Recommendation**: Run fresh DISCOVER in next session to find new high-impact items. The current backlog is exhausted of impactful work.
-
-## 7. Verify-on-resume baseline (run FIRST)
+## 4. Verify-on-Resume Baseline
 
 ```bash
-git fetch origin && git reset --hard origin/main
-cd ~/Desktop/meta/prompt_hub
-cargo check --workspace --all-features
-cargo clippy --workspace --all-features --all-targets -- -D warnings
-cargo fmt --all -- --check
-cargo test --workspace --all-features
+cd /home/drdave/Desktop/meta/prompt_hub
+cargo check --workspace --all-features            # GREEN ✅
+cargo test --workspace --all-features             # 719 passed, 2 ignored
+cargo clippy --workspace --all-targets --all-features -- -D warnings  # clean
+git status --short                                # only harness files dirty
 ```
 
-Baseline: **all green — 707 tests** (694 base + 13 new across all sessions). `clippy --all-targets` clean. fmt clean.
+---
+
+## 5. Open Items for Future Sessions
+
+### P1h-k: Un-gated modules awaiting wiring
+See section 3 above for decision + order.
+
+### P2: Stub feature cleanup
+- `sqlcipher = []` — no module, remove if unused
+- `ffi = []` — same treatment
+- `garbage-collector = []` — needs to be promoted alongside retention pair
+
+### P4: Edge cases
+- Default identity lacks Write for non-operator callers (programmatic usage)
+- defaults.rs seed_database() has empty body with dead parameter
+- i18n module is dead code from hub's perspective
+
+---
+
+*Handoff written: 2026-06-07T21:45:00Z | Session: s12 → s13+*
+*Total P1 wiring done across all sessions: 8 modules wired (budget, circuit_breaker, moderation, quota, preview, canary, analytics + load_balancer/satisfaction/swarm/pollination/lineage/quality_gate from earlier)*
