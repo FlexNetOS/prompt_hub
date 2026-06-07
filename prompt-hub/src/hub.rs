@@ -10,6 +10,7 @@ use crate::models::*;
 use crate::pollination::{CrossAgentPollination, Pattern};
 use crate::quality_gate::{QualityGate, QualityResult};
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
+use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
@@ -107,6 +108,7 @@ pub struct PromptHub {
     lineage: LineageTracker,
     swarm_registry: Arc<SwarmRoleRegistry>,
     pollination: Arc<std::sync::Mutex<CrossAgentPollination>>,
+    satisfaction_tracker: Arc<SatisfactionTracker>,
 }
 
 impl PromptHub {
@@ -147,6 +149,7 @@ impl PromptHub {
             lineage: LineageTracker::new(),
             swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
             pollination: Arc::new(std::sync::Mutex::new(CrossAgentPollination::new())),
+            satisfaction_tracker: Arc::new(SatisfactionTracker::new(1000)),
         };
 
         // Register default hooks
@@ -789,6 +792,42 @@ impl PromptHub {
         let mutex = Arc::get_mut(&mut self.pollination).expect("pollination mutex poisoned");
         mutex.get_mut().expect("pollination lock poisoned")
     }
+
+    // - User satisfaction tracker --------------------------------------------------
+
+    /// Return a cloneable handle to the user satisfaction tracker.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers. Mutable
+    /// operations (e.g., recording ratings) use the provided delegate methods
+    /// or call into the tracker directly via this handle.
+    pub fn satisfaction_tracker(&self) -> Arc<SatisfactionTracker> {
+        Arc::clone(&self.satisfaction_tracker)
+    }
+
+    /// Record a CSAT rating (1-5), delegated to the satisfaction tracker.
+    #[instrument(skip(self))]
+    pub fn record_csat_rating(&self, score: u8, context: &str) {
+        self.satisfaction_tracker.record_csat(score, context);
+    }
+
+    /// Record an NPS rating (1-10), delegated to the satisfaction tracker.
+    #[instrument(skip(self))]
+    pub fn record_nps_rating(&self, score: u8) {
+        self.satisfaction_tracker.record_nps(score);
+    }
+
+    /// Record a success/failure event in the satisfaction funnel.
+    #[instrument(skip(self))]
+    pub fn record_satisfaction_event(&self, prompt_id: &str, successful: bool, attempts: u8) {
+        self.satisfaction_tracker
+            .record_event(prompt_id, successful, attempts);
+    }
+
+    /// Query current satisfaction metrics.
+    #[instrument(skip(self))]
+    pub fn satisfaction_metrics(&self) -> Result<SatisfactionMetrics> {
+        Ok(self.satisfaction_tracker.metrics())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1311,5 +1350,108 @@ mod tests {
             )
             .await;
         assert!(bundle.is_ok());
+    }
+
+    // - Satisfaction tracker tests -------------------------------------------
+
+    #[tokio::test]
+    async fn test_satisfaction_tracker_handle() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let handle1 = hub.satisfaction_tracker();
+        let handle2 = hub.satisfaction_tracker();
+        assert_eq!(Arc::strong_count(&handle1), Arc::strong_count(&handle2));
+        // Default tracker has zero ratings/events.
+        assert_eq!(handle1.rating_count(), 0);
+        assert_eq!(handle1.event_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_record_csat_via_hub() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_csat_rating(5, "Great UX");
+        hub.record_csat_rating(3, "Okay experience");
+
+        let tracker = hub.satisfaction_tracker();
+        assert_eq!(tracker.rating_count(), 2);
+        let metrics = tracker.metrics();
+        assert_eq!(metrics.csat_average, 4.0);
+    }
+
+    #[tokio::test]
+    async fn test_record_nps_via_hub() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_nps_rating(10); // promoter
+        hub.record_nps_rating(9); // promoter
+        hub.record_nps_rating(4); // detractor
+
+        let metrics = hub.satisfaction_metrics().unwrap();
+        // (2 - 1) / 3 * 100 = 33.33...
+        assert!(
+            (metrics.nps_score - 33.33).abs() < 0.1,
+            "NPS score: {}",
+            metrics.nps_score
+        );
+    }
+
+    #[tokio::test]
+    async fn test_record_event_via_hub() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_satisfaction_event("p1", true, 1);
+        hub.record_satisfaction_event("p2", true, 3);
+        hub.record_satisfaction_event("p3", false, 1);
+
+        let tracker = hub.satisfaction_tracker();
+        assert_eq!(tracker.event_count(), 3);
+        assert_eq!(tracker.one_shot_success_rate(), 50.0);
+    }
+
+    #[tokio::test]
+    async fn test_satisfaction_metrics_empty() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let metrics = hub.satisfaction_metrics().unwrap();
+        assert_eq!(metrics.csat_average, 0.0);
+        assert_eq!(metrics.nps_score, 0.0);
+        assert_eq!(metrics.one_shot_success_rate, 0.0);
+        assert_eq!(metrics.total_ratings, 0);
+        assert_eq!(metrics.total_events, 0);
+        assert_eq!(
+            metrics.recent_trend,
+            crate::satisfaction::TrendDirection::Stable
+        );
+    }
+
+    #[tokio::test]
+    async fn test_csat_invalid_silent() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_csat_rating(0, "invalid"); // should be silently ignored
+        hub.record_csat_rating(6, "invalid"); // should be silently ignored
+        hub.record_csat_rating(3, "valid"); // should count
+
+        let tracker = hub.satisfaction_tracker();
+        assert_eq!(tracker.rating_count(), 1);
     }
 }

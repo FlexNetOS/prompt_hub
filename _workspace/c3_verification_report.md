@@ -1,104 +1,77 @@
-# Cycle 3 Verification Report — Lineage Wiring
+# Cycle 3 Verification Report -- Satisfaction Wiring
 
-**Cycle:** C3 (lineage wiring)
-**Feature:** Wire `lineage::LineageTracker` into PromptHub via 7 delegation methods
-**Date:** 2026-06-07
-**Verdict: PASS**
+**Cycle**: 3 (s8c1 / s6-c1 renumbered as C3)
+**Feature**: Wire `satisfaction::SatisfactionTracker` into PromptHub
+**Date**: 2026-06-07
+
+## Verdict: PASS
 
 ---
 
-## Gate Results
+## Gate Results (fresh shell)
 
 | Gate | Result | Details |
 |------|--------|---------|
-| `cargo check --workspace --all-features` | **PASS** | Clean build, 3 crates compiled |
-| `cargo clippy --workspace --all-features --all-targets -D warnings` | **PASS** | No issues found |
-| `cargo fmt --all -- --check` | **PASS** | No formatting changes needed |
-| `cargo test --workspace --all-features` | **PASS** | 694 passed, 1 ignored (10 suites) |
-
-All four gates are green.
+| `cargo check --workspace --all-features` | **PASS** | 3 crates, clean |
+| `cargo clippy --workspace --all-features --all-targets -- -D warnings` | **PASS** | No issues found |
+| `cargo fmt --all -- --check` | **PASS** | Clean (no diff) |
+| `cargo test --workspace --all-features` | **PASS** | 707 passed, 1 ignored |
 
 ---
 
-## Diff Review — `prompt-hub/src/hub.rs`
+## Cross-Boundary Checks
 
-### Imports
-- Line 7: `use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};` — all 4 types are `pub struct` in `lineage.rs`, correctly imported. No unused imports (confirmed by clippy PASS).
+### 1. Import side -- producer (satisfaction.rs) to consumer (hub.rs)
 
-### Struct field
-- `PromptHub` struct (line ~104): `lineage: LineageTracker` — stored inline (not Arc/Mutex), consistent with the design comment in `lineage_mut()`.
+- `hub.rs:13` imports `SatisfactionMetrics, SatisfactionTracker` from `crate::satisfaction`. Both types exist and are `pub` in `satisfaction.rs`.
+- No unused imports added (confirmed by clippy passing with `-D warnings`).
+- Verdict: **PASS** -- import correct, both symbols live, no drift.
 
-### Init
-- `PromptHub::new()` line ~142: `lineage: LineageTracker::new()` — correct initialization.
+### 2. Struct field side -- PromptHub struct to SatisfactionTracker::new(usize)
 
-### Delegation methods (7 total)
+- `hub.rs:111` adds `satisfaction_tracker: Arc<SatisfactionTracker>` to `PromptHub`.
+- Follows existing pattern exactly (cf. `swarm_registry`, `quality_gate`, `pollination`).
+- `hub.rs:152` initialization uses `Arc::new(SatisfactionTracker::new(1000))` -- consistent with 1000 default in satisfaction.rs Default impl.
+- Verdict: **PASS** -- pattern matches, lifetime/ownership correct via Arc.
 
-| # | Hub method | Calls on | Return type match? |
-|---|-----------|----------|---------------------|
-| 1 | `get_lineage_ancestry(&self, version_id: &str) -> Result<AncestryPath>` | `self.lineage.get_ancestry(version_id)` | Exact |
-| 2 | `detect_lineage_forks(&self) -> Vec<Fork>` | `self.lineage.detect_forks()` | Exact |
-| 3 | `get_lineage_descendants(&self, version_id: &str) -> Vec<String>` | `self.lineage.get_descendants(version_id)` | Exact |
-| 4 | `build_lineage_tree(&self, root_version: &str) -> Option<LineageTree>` | `self.lineage.build_tree(root_version)` | Exact |
-| 5 | `lineage_mut(&mut self) -> &mut LineageTracker` | direct field access | — (gives caller raw access) |
-| 6 | `lineage_node_count(&self) -> usize` | `self.lineage.node_count()` | Exact |
-| 7 | `has_lineage_version(&self, version_id: &str) -> bool` | `self.lineage.has_version(version_id)` | Exact |
+### 3. API delegation side -- hub methods to satisfaction.rs public API
 
-Line 710 is the eighth method: `lineage_roots(&self) -> &[String]` calling `self.lineage.roots()` — this brings the total to **8 methods** (7 delegation + 1 direct accessor = 7 core API delegations per plan, plus `lineage_roots` as an additional convenience method).
+| hub.rs method | satisfaction.rs target | Signature match? |
+|---|---|---|
+| `satisfaction_tracker() -> Arc<SatisfactionTracker>` (line 802) | struct field accessor | **PASS** |
+| `record_csat_rating(score: u8, context: &str)` (line 807) | `record_csat(&self, score: u8, context: &str)` | **PASS** -- same params, delegated directly |
+| `record_nps_rating(score: u8)` (line 813) | `record_nps(&self, score: u8)` | **PASS** -- same params |
+| `record_satisfaction_event(prompt_id: &str, successful: bool, attempts: u8)` (line 819) | `record_event(&self, prompt_id: &str, successful: bool, attempts: u8)` | **PASS** -- exact match |
+| `satisfaction_metrics() -> Result<SatisfactionMetrics>` (line 826) | `metrics(&self) -> SatisfactionMetrics` | **PASS** -- wrapped in Ok() to return Result |
 
-All methods use `#[instrument(skip(self))]` or standard doc comments. No `unsafe`, no weakened guards.
+- All 5 delegate methods are thin passthroughs with `#[instrument(skip(self))]`. No logic duplicated.
+- Verdict: **PASS** -- all boundaries align, signatures match exactly.
 
-### Tests
-- 9 `test_lineage_*` tests added (plus 6 others = 15 total tests in hub.rs):
-  1. `test_lineage_register_and_ancestry` — root + child registration, ancestry path check
-  2. `test_lineage_fork_detection` — fork at v1 with 2 branches
-  3. `test_lineage_tree_build` — tree rooted at v1, 2 nodes
-  4. `test_lineage_descendants` — transitive descendants of v1
-  5. `test_lineage_has_version` — true/false cases
-  6. `test_lineage_duplicate_conflict` — duplicate version rejection
-  7. `test_lineage_missing_parent` — missing parent handling
+### 4. Test side -- hub tests to satisfaction behavior
 
----
+| Test name | What it verifies | Verdict |
+|---|---|---|
+| `test_satisfaction_tracker_handle` | Arc handle sharing + default state (zero counts) | **PASS** |
+| `test_record_csat_via_hub` | Hub-delegated CSAT recording + metrics average (4.0 for scores 3+5) | **PASS** |
+| `test_record_nps_via_hub` | Hub-delegated NPS recording + NPS calculation (33.33 for promoters/detractors) | **PASS** |
+| `test_record_event_via_hub` | Hub-delegated event recording + one-shot success rate (50%) | **PASS** |
+| `test_satisfaction_metrics_empty` | Empty-state metrics all zero + Stable trend | **PASS** |
+| `test_csat_invalid_silent` | Out-of-range scores silently ignored, valid counts | **PASS** |
 
-## Cross-Boundary Verification
+- 6 tests cover the full delegation surface: handle sharing, CSAT, NPS, events, empty state, invalid input.
+- All assertions use exact equality or tight tolerance (NPS uses `< 0.1` abs diff -- appropriate for floating point).
+- Tests exercise hub delegation layer, not just satisfaction module internals (which have their own 14 unit tests in `satisfaction.rs`).
+- Verdict: **PASS** -- meaningful coverage of the wiring boundary.
 
-### Types (hub.rs import ←→ lineage.rs export)
-| Type | hub.rs line | lineage.rs definition | Match? |
-|------|-------------|-----------------------|--------|
-| `AncestryPath` | 7 | struct at line 40 | Yes |
-| `Fork` | 7 | struct at line 33 | Yes |
-| `LineageTracker` | 7 | struct at line 12 | Yes |
-| `LineageTree` | 7 | struct at line 48 | Yes |
+### 5. Code quality checks
 
-### Method signatures (hub.rs ←→ lineage.rs)
-All 8 delegation methods have byte-identical return types on both sides:
-- `get_ancestry → Result<AncestryPath>` ✓
-- `detect_forks → Vec<Fork>` ✓
-- `get_descendants → Vec<String>` ✓
-- `build_tree → Option<LineageTree>` ✓
-- `node_count → usize` ✓
-- `has_version → bool` ✓
-- `roots → &[String]` ✓
-
-### Rust-native conventions
-- No `unsafe` code — only `#![forbid(unsafe_code)]` as expected (line 1)
-- Error handling uses `Result<_, HubError>` pattern via `lineage.rs` return types
-- `#[allow(clippy::mutable_key_type)]` on `lineage_mut()` is acceptable — the method returns a direct reference, not a Map key
-- No unused imports (clippy confirms clean)
-- All methods are synchronous (no unnecessary boxing)
-
-### Non-Rust-native constructs: NONE detected. No drift.
-
----
+- No `#[allow(dead_code)]` or other suppression added in this diff.
+- No unused imports (clippy confirms).
+- All delegate methods are `&self` immutably borrow -- consistent with existing accessor pattern (`storage()`, `satisfaction_tracker()`).
+- Minor style note: `satisfaction_metrics()` returns `Result<SatisfactionMetrics>` rather than bare `SatisfactionMetrics`. This is defensible (future-proofs for potential error-gating) but slightly inconsistent with the struct field accessor which returns bare `Arc<SatisfactionTracker>`. The underlying `metrics()` does not produce errors, so wrapping in `Ok()` is technically unnecessary. **Low-priority cleanup if desired** -- not a defect.
 
 ## Summary
 
-| Category | Status |
-|----------|--------|
-| Fresh gates (check/clippy/fmt/test) | ALL GREEN |
-| Diff review (imports, conventions, count) | PASS |
-| Cross-boundary types match | PASS |
-| Cross-boundary method signatures match | PASS |
-| Unsafe code or weakened guards | NONE |
-| Non-Rust-native drift | NONE |
+All gates green. All boundaries align with 0 mismatches. Tests cover the delegation layer and satisfy acceptance criteria (5 delegation methods + 6 tests). The implementation is clean, follows existing patterns, and introduces no new warnings or dead code.
 
-**Verdict: PASS — Cycle 3 lineage wiring is gate-clean and boundary-coherent.**
+**Verdict: PASS -- C3 may be marked complete.**
