@@ -12,6 +12,8 @@ use crate::circuit_breaker::CircuitBreaker;
 use crate::config::HubConfig;
 use crate::diff::PromptDiff;
 use crate::error::{HubError, Result};
+#[cfg(feature = "retention")]
+use crate::garbage_collector::GarbageCollector;
 use crate::hooks::{HookRegistry, JunieHook};
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
@@ -27,6 +29,8 @@ use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
 use crate::quality_gate::{QualityGate, QualityResult};
 #[cfg(feature = "quota")]
 use crate::quota::QuotaEnforcer;
+#[cfg(feature = "retention")]
+use crate::retention::{DataType, RetentionPolicy};
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
@@ -163,6 +167,10 @@ pub struct PromptHub {
     analytics: Arc<std::sync::Mutex<Analytics>>,
     audit_logger: Arc<SqliteAuditLogger>,
     diff_engine: PromptDiff,
+    #[cfg(feature = "retention")]
+    retention_policy: RetentionPolicy,
+    #[cfg(feature = "retention")]
+    garbage_collector: GarbageCollector,
 }
 
 impl PromptHub {
@@ -237,7 +245,20 @@ impl PromptHub {
             analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
             audit_logger: Arc::new(SqliteAuditLogger::new()),
             diff_engine: PromptDiff::new(),
+            #[cfg(feature = "retention")]
+            retention_policy: RetentionPolicy::default(),
+            #[cfg(feature = "garbage-collector")]
+            garbage_collector: GarbageCollector::new(crate::retention::RetentionPolicy::default()),
         };
+
+        // ── Post-struct initialization for feature-gated wiring ───────────
+
+        #[cfg(all(feature = "retention", feature = "garbage-collector"))]
+        {
+            let retention = crate::retention::RetentionPolicy::default();
+            hub.garbage_collector = GarbageCollector::new(retention.clone());
+            hub.retention_policy = retention;
+        }
 
         // Register default hooks
         hub.hooks.register(Box::new(JunieHook));
@@ -265,6 +286,9 @@ impl PromptHub {
         info!("Audit logging initialized (SqliteAuditLogger backend)");
 
         info!("Diff engine initialized (LCS-based text diff)");
+
+        #[cfg(feature = "retention")]
+        info!("Retention policy and garbage collection initialized");
 
         Ok(hub)
     }
@@ -1740,6 +1764,62 @@ impl PromptHub {
     pub fn format_unified_diff(&self, diff: &crate::diff::DiffResult) -> String {
         self.diff_engine.format_unified(diff)
     }
+
+    // ── Retention + Garbage Collection ─────────────────────────────────
+
+    /// Set a retention period for a data type.
+    #[cfg(feature = "retention")]
+    pub fn set_retention_period(&mut self, data_type: DataType, days: u32) {
+        self.retention_policy.set_period(data_type, days);
+    }
+
+    /// Get the retention period (in days) for a data type.
+    #[cfg(feature = "retention")]
+    pub fn get_retention_period(&self, data_type: &DataType) -> u32 {
+        self.retention_policy.get_period(data_type)
+    }
+
+    /// Check if data of a given type has expired based on its retention policy.
+    #[cfg(feature = "retention")]
+    pub fn is_data_expired(&self, data_type: &DataType, age_days: u32) -> bool {
+        self.retention_policy.is_expired(data_type, age_days)
+    }
+
+    /// Run scheduled cleanup and return results for expired items.
+    #[cfg(feature = "retention")]
+    pub fn run_retention_cleanup(&self) -> Vec<crate::retention::CleanupResult> {
+        self.retention_policy.run_cleanup()
+    }
+
+    /// Execute garbage collection across all configured types.
+    #[cfg(feature = "retention")]
+    pub fn run_garbage_collection(&self) -> Result<crate::garbage_collector::GcReport> {
+        self.garbage_collector.collect()
+    }
+
+    /// Purge soft-deleted items and return count of purged rows.
+    #[cfg(feature = "retention")]
+    pub fn purge_soft_deleted(&self) -> Result<u64> {
+        self.garbage_collector.purge_soft_deleted()
+    }
+
+    /// Get garbage collection statistics.
+    #[cfg(feature = "retention")]
+    pub fn gc_stats(&self) -> crate::garbage_collector::GcStats {
+        self.garbage_collector.stats()
+    }
+
+    /// Enable or disable automatic garbage collection.
+    #[cfg(feature = "retention")]
+    pub fn set_gc_enabled(&self, enabled: bool) {
+        self.garbage_collector.set_enabled(enabled);
+    }
+
+    /// Check if automatic garbage collection is enabled.
+    #[cfg(feature = "retention")]
+    pub fn gc_enabled(&self) -> bool {
+        self.garbage_collector.is_enabled()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2677,5 +2757,35 @@ mod tests {
         // Format as unified diff
         let formatted = hub.format_unified_diff(&diff);
         assert!(!formatted.is_empty());
+    }
+
+    // ── Retention + GC integration test ────────────────────────────────
+
+    #[tokio::test]
+    async fn test_retention_gc_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Set and get retention period
+        use crate::retention::DataType;
+        hub.set_retention_period(DataType::AuditLog, 30);
+        let period = hub.get_retention_period(&DataType::AuditLog);
+        assert_eq!(period, 30);
+
+        // Check expiration logic
+        assert!(!hub.is_data_expired(&DataType::AuditLog, 5));
+        assert!(hub.is_data_expired(&DataType::AuditLog, 31));
+
+        // Run retention cleanup
+        let _results = hub.run_retention_cleanup();
+
+        // Garbage collection stats accessible
+        let gc_stats = hub.gc_stats();
+        assert_eq!(gc_stats.prompts_purged_total, 0);
+
+        // GC enabled check
+        assert!(hub.gc_enabled());
     }
 }
