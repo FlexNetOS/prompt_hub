@@ -14,6 +14,7 @@ use crate::diff::PromptDiff;
 use crate::error::{HubError, Result};
 #[cfg(feature = "retention")]
 use crate::garbage_collector::GarbageCollector;
+use crate::health::HealthAggregator;
 use crate::hooks::{HookRegistry, JunieHook};
 #[cfg(feature = "i18n")]
 use crate::i18n::I18nEngine;
@@ -175,6 +176,7 @@ pub struct PromptHub {
     analytics: Arc<std::sync::Mutex<Analytics>>,
     audit_logger: Arc<SqliteAuditLogger>,
     diff_engine: PromptDiff,
+    health_aggregator: HealthAggregator,
     #[cfg(feature = "retention")]
     retention_policy: RetentionPolicy,
     #[cfg(feature = "retention")]
@@ -257,6 +259,7 @@ impl PromptHub {
             analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
             audit_logger: Arc::new(SqliteAuditLogger::new()),
             diff_engine: PromptDiff::new(),
+            health_aggregator: HealthAggregator::new(),
             #[cfg(feature = "retention")]
             retention_policy: RetentionPolicy::default(),
             #[cfg(feature = "retention")]
@@ -304,6 +307,7 @@ impl PromptHub {
         info!("Audit logging initialized (SqliteAuditLogger backend)");
 
         info!("Diff engine initialized (LCS-based text diff)");
+        info!("Health aggregator initialized");
 
         #[cfg(feature = "retention")]
         info!("Retention policy and garbage collection initialized");
