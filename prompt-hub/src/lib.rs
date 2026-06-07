@@ -40,6 +40,7 @@ pub mod error;
 pub mod evolution;
 #[cfg(feature = "fallback")]
 pub mod fallback;
+#[cfg(feature = "retention")]
 pub mod garbage_collector;
 pub mod health;
 pub mod hooks;
@@ -69,6 +70,7 @@ pub mod provider_health;
 pub mod quality_gate;
 #[cfg(feature = "quota")]
 pub mod quota;
+#[cfg(feature = "retention")]
 pub mod retention;
 #[cfg(feature = "rollback")]
 pub mod rollback;
