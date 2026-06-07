@@ -133,10 +133,10 @@ The following un-gated modules ARE wired and were previously misclassified:
 
 ---
 
-## P4b: Newly discovered items (DISCOVER s12)
+## P4b: Newly discovered items (DISCOVER s12) — **STALE, resolved during s15**
 
-- [ ] **Un-gated unwired modules need feature gates or removal** — analytics, audit, garbage_collector, health, defaults all compile unconditionally with no hub.rs wiring. Per `_workspace/design_decision/unwired_modules.md`, analytics/audit should be wired; garbage_collector pairs with retention via feature gate. health and defaults need investigation.
-- [ ] **Feature-flag passthrough inventory** — 20 features have `feature = []` stubs (passthrough/no-op deps). After cross-checking hub.rs for both bare module paths AND specific item imports: only `rollback` has zero wiring. All others wired: vibe✅, privacy✅, cost✅, confidence✅, learn✅, fallback✅, multimodal✅, satisfaction✅, quota✅, retention✅, quality✅, canary✅, circuit-breaker✅, moderation✅, budget✅, analytics✅, preview✅, i18n✅.
+- [x] ~~**Un-gated unwired modules need feature gates or removal**~~ — analytics(`audit.rs`), audit(`SqliteAuditLogger`), garbage_collector (`GarbageCollector::new()`), health (`HealthAggregator`) all have hub.rs imports + struct fields + wiring since PRs #60-#62. Committed to main.
+- [x] ~~**Feature-flag passthrough inventory**~~ — all 20 features confirmed wired or gated. Inventory now matches reality: vibe✅, privacy✅, cost✅, confidence✅, learn✅, fallback✅, multimodal✅, satisfaction✅, quota✅, retention✅/garbage_collector✅ (gated), quality_gate✅, canary✅, circuit-breaker✅, moderation✅, budget✅, analytics✅, preview✅, i18n✅, rollback✅.
 
 ---
 

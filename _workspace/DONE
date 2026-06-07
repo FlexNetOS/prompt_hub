@@ -1,30 +1,70 @@
-# prompt_hub Loop — TERMINAL DONE
+# prompt_hub Loop — TERMINAL ✅ DONE
 
-**Reached: 2026-06-07T12:30:00Z (RESUME)**
-
-## All DONE gates green
-| Gate | Result |
-|------|--------|
-| `cargo build --workspace --all-features` | 3 crates, 0 issues |
-| `cargo test --workspace --all-features` | 724 passed, 2 ignored |
-| `cargo clippy -D warnings` | No issues found |
-| `cargo fmt --check` | clean |
-
-## Backlog assessment (RESUME)
-
-All previously-listed items verified as stale or resolved:
-
-| Claimed Item | Actual State | Verdict |
-|---|---|---|
-| P3 storage.rs integration tests (1 test) | Has 20 unit tests in mod tests block | Stale - backlog data wrong |
-| P3 hub.rs integration tests (2 inline doctests) | Has 9+ integration tests + 33+ across other files | Stale - backlog data wrong |
-| P4b unwired modules (analytics, audit, GC, health, defaults) | All wired in hub.rs as of s15 PRs #60-#62 | Resolved during s15 |
-| TODO.md: CLI tracing to stderr | Fixed at prompthub/src/main.rs:43 | Fixed during s15 |
-
-## Stale backlog items cleaned during this RESUME
-- P3 integration test claims marked as stale (data from s10 no longer accurate)
-- P4b unwired modules confirmed wired and removed from active list
-- All DONE gates re-verified fresh (not trusting in-context reports)
+**Cycle:** RESUME (post-s15, 2026-06-07)
+**Total cycles across all sessions:** 55+
+**Total PRs merged:** 62+
+**Test count:** 724 passed, 2 ignored (up from 671 at s10 baseline → +53 tests)
 
 ---
-*PromptHub P1 milestone: COMPLETE. No shippable items remain. A fresh DISCOVER would be needed to find new work.*
+
+## DONE-Criteria Suite — All Green ✅
+
+| Gate | Command | Result |
+|------|---------|--------|
+| Build | `cargo build --workspace --all-features` | ✅ 3 crates compiled, 0 issues |
+| Test | `cargo test --workspace --all-features` | ✅ 724 passed, 2 ignored (11 suites) |
+| Lint | `cargo clippy --workspace --all-targets --all-features -D warnings` | ✅ No issues found |
+| Format | `cargo fmt --all -- --check` | ✅ clean (exit:0) |
+
+## Backlog — Terminal State
+
+After verifying ALL remaining backlog items against actual code:
+
+### Items marked stale (backlog data from s10 no longer accurate)
+| Item | Stale Claim | Actual State |
+|------|------------|--------------|
+| P3 integration tests for `storage.rs` | "1 test" | **20 unit tests** in `mod tests` block (lines 1500-1897) |
+| P3 integration tests for `hub.rs` | "2 inline doctests" | **9 in test_hub.rs + 33 in test_models.rs + 15 in test_search.rs + 18 in test_security.rs** = 75+ integration tests total |
+| P4b unwired modules (analytics, audit, GC, health, defaults) | "zero hub.rs wiring" | All have **hub.rs imports + struct fields + wiring methods** since PRs #60-#62 |
+| P4b feature-flag passthrough inventory | "only rollback has zero wiring" | All 20 features confirmed wired/gated ✅ |
+| TODO.md CLI tracing to stderr | "needs fix at main.rs:35" | **Fixed** at prompthub/src/main.rs:43 (`.with_writer(std::io::stderr)`) |
+
+### Remaining non-shippable item
+- `[!]` Default identity lacks `Write` capability for programmatic callers — **blocked by design decision**. Server HTTP API grants Read+Write correctly. Programmatic usage workaround documented (`AgentIdentity::local_operator()`). Requires deliberate design review, not a one-cycle build.
+
+## What was achieved across the loop (55+ cycles, 62+ PRs)
+
+### P1: Feature Wiring — ALL COMPLETE
+- **SMART_EMBEDDING epic** (PRs #44-#48): Embedder trait → HashEmbedder → OrtEmbedder → HubConfig selection → ONNX inference with lazy download, tokenizers, L2-normalize
+- **All 20 passthrough features** wired or gated behind feature flags (PRs #50-#62)
+- ~730+ LOC added to hub.rs, ~45 new delegation methods
+
+### P3: Documentation — ALL COMPLETE
+- API documentation for all Hub methods (PR #56)
+- Feature flags table in README.md
+- Crate-level docs in lib.rs
+
+### P2: Feature Flag Hygiene — ALL COMPLETE
+- Dead stub features removed (sqlcipher, ffi, garbage-collector passthroughs)
+- retention/garbage_collector properly feature-gated
+
+### Quality & Infra Across Sessions
+- sha2 0.11 compat fix
+- Qodana dependency cleanup (32 unused deps removed)
+- Prometheus text exposition via otel + `prompthub metrics` CLI subcommand
+- Tracing logs → stderr for clean stdout output
+- Rustdoc flags in CI
+- Docker/Dockerfile verify + .cliff.toml
+- RBAC local operator identity
+
+## Stale Data Lessons Learned
+
+The backlog contained **multiple stale claims** that only resolved through code verification:
+1. Integration test counts were wrong (s10-era grep misses)
+2. "Unwired" modules were actually wired during s15 wiring sweep
+3. TODO.md checked items had been auto-fixed by later sessions
+
+**Verdict: Always verify backlog claims against actual code before building.**
+
+---
+*Loop TERMINAL: 2026-06-07T13:00:00Z — All gates green, all items stale or resolved. A fresh DISCOVER would be needed to find new work. PromptHub P1 milestone: COMPLETE.*
