@@ -1,20 +1,24 @@
-# HANDOFF — All Sessions → Next Session
+# HANDOFF — P1 Wiring COMPLETE Milestone
 
 **Worktree:** Primary checkout at `/home/drdave/Desktop/meta/prompt_hub` (on `main`)
 **Branch:** `main` (unprotected → APPLY mode: push/PR/auto-merge on green)
-**Base:** `origin/main` at `a8d11a4`
+**Base:** `origin/main@a8d11a4` (P1 milestone before rollback wiring)
 
 ---
 
-## 1. Current State: Session Budget Complete ✅
+## 1. MILESTONE REACHED: P1 Wiring Complete ✅
 
-s15 completed **3 cycles** across its budget of 5 cycles. All actionable items from the backlog were resolved:
+All feature-gated and un-gated modules are now fully wired into PromptHub facade or properly gated behind feature flags. **20 passthrough features all accounted for.**
 
-| Cycle | Item | Commit/PR |
-|-------|------|-----------|
-| c1 | Fix seed_database() dead parameter and unused imports | `s15-c1` (merged) |
-| c2 | Gate retention + garbage_collector behind #[cfg(feature = "retention")] in lib.rs | PR #60 (`0b193a5`) |
-| c3 | Wire health aggregator into PromptHub facade (health_check, is_ready, is_alive) | PR #61 (`a8d11a4`) |
+### s15 Sessions Summary
+| Cycle | What | PR | Status |
+|-------|------|-----|--------|
+| c1 | Fix seed_database() dead parameter + unused imports | — | ✅ Merged |
+| c2 | Gate retention + garbage_collector behind #[cfg(feature = "retention")] | #60 (`0b193a5`) | ✅ Merged |
+| c3 | Wire health aggregator (health_check, is_ready, is_alive) | #61 (`a8d11a4`) | ✅ Merged |
+| c4 | Wire rollback SafeDeployer (deploy_with_rollback, restore_snapshot, is_rollback_available) | #62 (`baaa53e`) | ✅ Merged |
+
+**Totals across s11-s15:** ~45 delegation methods added to hub.rs, ~730+ LOC added, 724 tests passing.
 
 ---
 
@@ -30,51 +34,77 @@ just fmt && git diff --quiet                         # clean ✅
 
 ---
 
-## 3. Backlog Status: EFFECTIVELY TERMINAL ✅
+## 3. Backlog Status: P1 COMPLETE — Only deferred P3/P4 remain
 
-### What's complete (confirmed across all sessions):
-- **All 20 passthrough feature flags** wired or properly gated ✅
-- **SMART_EMBEDDING epic** (PRs #44-#48) — Embedder trait, HashEmbedder, OrtEmbedder, HubConfig selection ✅
-- **Feature wiring** (PRs #50-#59): quality_gate, lineage, swarm, pollination, satisfaction, provider_health, load_balancer ✅
-- **analytics** fully wired (5 methods at hub.rs:1742-1773) — confirmed in this session's DISCOVER
-- **audit** fully wired (6 methods at hub.rs:1775-1810) — confirmed in this session's DISCOVER
-- **i18n** confirmed wired (hub.rs:19 + real usage at 1739) — NOT dead code ✅
-- **retention/garbage_collector** properly gated in lib.rs (PR #60) ✅
-- **health aggregator** wired with 3 delegation methods (PR #61) ✅
+### All P1 wiring confirmed done (20/20 features):
+| Module | Feature | Status | PR/Cycle |
+|--------|---------|--------|----------|
+| budget | "budget" | ✅ wired | s11-s14 |
+| circuit_breaker | "circuit-breaker" | ✅ wired | s11-s14 |
+| canary | "canary" | ✅ wired | s12-c4 |
+| moderation | "moderation" | ✅ wired | s12-c1 |
+| quota | "quota" | ✅ wired | s12-c2 |
+| preview | "preview" | ✅ wired | s12-c3 |
+| i18n | "i18n" | ✅ wired + real usage | s15-c2 |
+| multimodal | "multimodal" | ✅ wired + accessor | s14-c2 |
+| quality_gate | (ungated) | ✅ wired | PR #50 |
+| lineage | (ungated) | ✅ wired | PR #51 |
+| swarm | (ungated) | ✅ wired | PR #52 |
+| pollination | (ungated) | ✅ wired | PR #53 |
+| satisfaction | (ungated) | ✅ wired | PR #54 |
+| provider_health | (ungated) | ✅ wired | PR #58 |
+| load_balancer | (ungated) | ✅ wired | PR #59 |
+| analytics | "analytics" stub | ✅ wired | s13-s15 |
+| audit | (bare module) | ✅ wired | s13-s15 |
+| diff | (bare module) | ✅ wired | s13-c2 |
+| health | (ungated) | ✅ wired + 3 methods | PR #61 c3 |
+| rollback | "rollback" stub | ✅ wired + 3 methods | PR #62 c4 |
 
-### Deferred items (low priority, high effort):
-1. **P3 integration tests for storage.rs** — 1904 lines, 1 test; worst coverage ratio
-2. **P3 integration tests for hub.rs** — 2071 lines, 2 inline doctests only
-3. **P4 default identity capability gap** — `AgentIdentity::default()` returns anonymous with empty capabilities; server's HTTP API grants Read+Write but programmatic usage blocked
-
-### Corrections from this session's DISCOVER (critical):
-The s11 backlog had a grep limitation: it only checked for bare module patterns (`crate::X::*`) and missed specific item imports (e.g., `use crate::cost::CostEstimator`). This caused **6 items to be misclassified** as unwired when they were actually wired:
-- budget, circuit_breaker, canary, moderation, quota, preview — all CONFIRMED wired ✅
-- confidence, cost, fallback, learn — all CONFIRMED wired (specific item imports) ✅
+### All other features confirmed wired/gated:
+- confidence ✅, cost ✅, fallback ✅, learn ✅, vibe ✅, privacy ✅ (all specific item imports)
 
 ---
 
-## 4. All Landed Commits on Main (chronological, recent first)
+## 4. Deferred Items (not P1 — lower priority, higher effort)
+
+### P3: Quality & documentation
+1. **Integration tests for `storage.rs`** — 1904 lines with only 1 test; needs coherent integration test file covering create/get/list/update/delete/pagination
+2. **Integration tests for `hub.rs`** — 2071 lines with only 2 inline doctests; needs dedicated integration suite
+
+### P4: Edge cases (blocked by design)
+- **Default identity lacks Write capability** for non-operator callers — `AgentIdentity::default()` returns anonymous with empty capabilities. Server HTTP API grants Read+Write. Workaround: `AgentIdentity::local_operator()`. Blocked because requires careful consideration of programmatic vs HTTP API paths.
+
+---
+
+## 5. Critical Corrections from This Session's DISCOVER
+
+The s11 backlog had a grep limitation — only checked for bare module patterns (`crate::X::*`) and missed specific item imports like `use crate::cost::CostEstimator`. This caused **6 items to be misclassified** as unwired when they were actually wired:
+- budget, circuit_breaker, canary, moderation, quota, preview → all CONFIRMED wired ✅
+- confidence, cost, fallback, learn → all CONFIRMED wired (specific item imports) ✅
+
+Also corrected: i18n was confirmed wired with real usage at hub.rs:1739 (`fallback_chain`), NOT dead code.
+
+---
+
+## 6. All Landed Commits on Main (recent)
 
 | Session | Commit | Subject |
 |---------|--------|---------|
-| s15-c3 | `a8d11a4` | feat: wire health aggregator into PromptHub facade |
-| s15-c2 | `0b193a5` | fix: gate retention and garbage_collector behind feature flag |
-| s15-c1 | `7bd848c` | chore(loop): s15 handoff — seed_database fix done |
-| s14-c2 | `f7a503c` | feat: wire multimodal engine into PromptHub facade (P1-remaining) |
-| s13-final | `d6291c7` | chore(loop): mark i18n wired, refresh next-session recs |
+| s15-c4 | `baaa53e` | feat: wire rollback SafeDeployer into PromptHub facade (P1-final) |
+| s15-c3 | `a8d11a4` | feat: wire health aggregator into PromptHub facade (PR #61) |
+| s15-c2 | `0b193a5` | fix: gate retention and garbage_collector behind feature flag (PR #60) |
+| s15-c1 | `7bd848c` | chore(loop): seed_database() fix + HANDOFF |
+| s14-c2 | `f7a503c` | feat: wire multimodal engine into PromptHub facade |
 
 ---
 
-## 5. Recommendation for Next Session
+## 7. Recommendation for Next Session
 
-**The backlog is effectively exhausted.** All actionable items from the original P1-P4 classifications have been resolved.
-
-If you want to continue building:
-1. **P3 integration tests** — highest remaining ROI for code quality (3905 LOC with only 3 tests)
-2. **P4 default identity fix** — needs design decision on Write capability scope
-3. **New feature discovery** — run DISCOVER again to find genuinely new items from TODO.md, issues, PRs
+**The P1 milestone is complete.** If continuing work on prompt_hub:
+1. **Run new DISCOVER** — backlog was last refreshed at s12; fresh state needed
+2. **P3 integration tests** — highest remaining ROI (3905 LOC with only 3 total tests)
+3. **New feature discovery** — TODO.md, docs/audits, issues may have new items
 
 ---
 
-*Handoff written: 2026-06-08T03:50:00Z | s15 COMPLETE (3/5 cycles). All actionable backlog items resolved.*
+*Handoff written: 2026-06-08T04:35:00Z | P1 WIRING COMPLETE milestone achieved across s11-s15.*
