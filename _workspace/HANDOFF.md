@@ -67,7 +67,19 @@ Total: 23 cycles (all verified green). Session 9 effectively done — trivial do
 
 ## 6. Remaining items for next session (post-P3 docs)
 
-All impactful work shipped. Remaining items are trivial docs (blocked on external token) or edge cases with existing workarounds.
+All impactful work shipped. Remaining items are trivial docs (blocked on external token) or edge cases with existing workarounds. Next DISCOVER recommended to find new high-impact items.
+
+## 6a. Terminal state assessment (session 9 end)
+
+- **P1 wiring**: Complete — all major unwired modules wired (swarm, pollination, satisfaction, quality_gate, lineage)
+- **P2 feature flag hygiene**: Complete — 18 dead features removed, 17 stubs→real gates
+- **P3 docs**: Mostly complete — lib.rs crate docs ✅, README feature flags table ✅, doctest fix ✅
+- **Remaining (low impact)**:
+  - qodana SARIF regeneration — blocked on Docker/QODANA_TOKEN
+  - API docs for all Hub methods — trivial doc comments (~20 methods)
+  - Default identity Write capability — edge case with workaround (`AgentIdentity::local_operator()`)
+
+**Recommendation**: Run fresh DISCOVER in next session to find new high-impact items. The current backlog is exhausted of impactful work.
 
 ## 7. Verify-on-resume baseline (run FIRST)
 
