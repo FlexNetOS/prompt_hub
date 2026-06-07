@@ -7,6 +7,7 @@ pub use crate::models::SearchMode;
 use crate::models::*;
 use crate::storage::Storage;
 use std::collections::HashMap;
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, instrument, warn};
@@ -231,6 +232,167 @@ impl SearchEngine for FastEngine {
 }
 
 // ---------------------------------------------------------------------------
+// Embedder trait — pluggable embedding backend
+// ---------------------------------------------------------------------------
+
+/// Output type for the `Embedder::embed` method.
+type EmbedOutput = Vec<Vec<f32>>;
+
+/// Trait for generating vector embeddings from text.
+///
+/// Implementations can be deterministic (e.g. `HashEmbedder` for testing),
+/// real ML models (ONNX, candle), or remote API calls. All are wrapped in
+/// `Arc<dyn Embedder>` inside `SmartEngine`.
+pub trait Embedder: Send + Sync + std::fmt::Debug {
+    /// Dimension of produced embedding vectors.
+    fn dimension(&self) -> usize;
+
+    /// Produce embeddings for a batch of texts.
+    fn embed<'a>(
+        &'a self,
+        texts: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = Result<EmbedOutput>> + Send + 'a>>;
+
+    /// Human-readable backend name (for logging / diagnostics).
+    fn name(&self) -> &'static str;
+}
+
+/// Deterministic hash-based embedding — produces reproducible vectors from text.
+///
+/// Uses `DefaultHasher` to derive a 384-d vector in [-1, 1]. Ideal for tests and
+/// development where no ML model is available; output is stable across runs so CI
+/// assertions can depend on it.
+#[derive(Debug, Clone)]
+pub struct HashEmbedder {
+    dim: usize,
+}
+
+impl HashEmbedder {
+    /// Create a new `HashEmbedder` with the given dimension.
+    pub fn new(dim: usize) -> Self {
+        Self { dim }
+    }
+
+    /// Produce an embedding for a single text (inlined hash logic).
+    fn embed_single(&self, text: &str) -> Vec<f32> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let hash = hasher.finish();
+        (0..self.dim)
+            .map(|i| {
+                let val = ((hash.wrapping_add(i as u64 * 31)) % 1000) as f32 / 1000.0;
+                val * 2.0 - 1.0 // Range [-1, 1]
+            })
+            .collect()
+    }
+}
+
+impl Embedder for HashEmbedder {
+    fn dimension(&self) -> usize {
+        self.dim
+    }
+
+    fn embed<'a>(
+        &'a self,
+        texts: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Vec<f32>>>> + Send + 'a>> {
+        Box::pin(async move { Ok(texts.iter().map(|t| self.embed_single(t)).collect()) })
+    }
+
+    fn name(&self) -> &'static str {
+        "hash"
+    }
+}
+
+#[cfg(test)]
+mod embedder_tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_embedder_deterministic() {
+        let h = HashEmbedder::new(384);
+        let v1 = h.embed_single("hello world");
+        let v2 = h.embed_single("hello world");
+        assert_eq!(v1, v2);
+        assert_eq!(v1.len(), 384);
+    }
+
+    #[test]
+    fn test_hash_embedder_different_input() {
+        let h = HashEmbedder::new(384);
+        let v1 = h.embed_single("hello");
+        let v2 = h.embed_single("world");
+        // Different inputs → different embeddings (cosine != 1.0)
+        let cos = SmartEngine::cosine_similarity(&v1, &v2);
+        assert!(cos.abs() < 0.99);
+    }
+
+    #[test]
+    fn test_hash_embedder_range() {
+        let h = HashEmbedder::new(10);
+        let v = h.embed_single("test");
+        for val in v {
+            assert!(-1.0 <= val && val <= 1.0, "value out of range: {val}");
+        }
+    }
+
+    #[test]
+    fn test_hash_embedder_trait_dim() {
+        let h = Arc::new(HashEmbedder::new(384));
+        assert_eq!(h.dimension(), 384);
+        assert_eq!(h.name(), "hash");
+    }
+
+    #[test]
+    fn test_embedder_trait_object_safety() {
+        // Verify the trait is object-safe and can be used via dyn
+        let h: Arc<dyn Embedder> = Arc::new(HashEmbedder::new(384));
+        assert_eq!(h.dimension(), 384);
+        assert_eq!(h.name(), "hash");
+    }
+
+    fn in_memory_storage() -> Arc<Storage> {
+        let storage = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(crate::storage::Storage::new(
+                crate::storage::StorageConfig {
+                    db_path: ":memory:".to_string(),
+                    max_connections: 1,
+                    wal_mode: false,
+                    foreign_keys: true,
+                },
+            ))
+            .unwrap();
+        Arc::new(storage)
+    }
+
+    #[test]
+    fn test_smart_engine_embedder_accessor() {
+        let storage = in_memory_storage();
+        let engine = SmartEngine::new("test-model", storage, 384);
+        let e = engine.embedder();
+        assert_eq!(e.dimension(), 384);
+        assert_eq!(e.name(), "hash");
+    }
+
+    #[test]
+    fn test_smart_engine_mock_embed_compat() {
+        let storage = in_memory_storage();
+        let engine = SmartEngine::new("test-model", storage, 384);
+
+        // mock_embed must be deterministic and same dimension as embedder
+        let v1 = engine.mock_embed("query text");
+        let v2 = engine.mock_embed("query text");
+        assert_eq!(v1, v2);
+        assert_eq!(v1.len(), 384);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SMART engine — ONNX embeddings via cosine similarity
 // ---------------------------------------------------------------------------
 
@@ -244,10 +406,11 @@ pub struct SmartEngine {
     model_name: String,
     model_cache_path: std::path::PathBuf,
     storage: Arc<Storage>,
+    embedder: Arc<dyn Embedder>,
 }
 
 impl SmartEngine {
-    pub fn new(model_name: impl Into<String>, storage: Arc<Storage>) -> Self {
+    pub fn new(model_name: impl Into<String>, storage: Arc<Storage>, dim: usize) -> Self {
         let model_name = model_name.into();
         let cache_path = dirs::cache_dir()
             .map(|d| d.join("prompthub").join("models"))
@@ -257,12 +420,39 @@ impl SmartEngine {
             model_name,
             model_cache_path: cache_path,
             storage,
+            embedder: Arc::new(HashEmbedder::new(dim)),
         }
     }
 
-    /// Create with the default `all-MiniLM-L6-v2` model.
+    /// Create with the default `all-MiniLM-L6-v2` model (384-d).
     pub fn default_model(storage: Arc<Storage>) -> Self {
-        Self::new("all-MiniLM-L6-v2", storage)
+        Self::new("all-MiniLM-L6-v2", storage, 384)
+    }
+
+    /// Access the underlying embedder (for benchmarks that need direct access).
+    #[doc(hidden)]
+    pub fn embedder(&self) -> &Arc<dyn Embedder> {
+        &self.embedder
+    }
+
+    /// Generate a deterministic mock embedding from text hash.
+    ///
+    /// Kept public for bench compatibility — delegates to the underlying `Embedder`.
+    #[doc(hidden)]
+    pub fn mock_embed(&self, text: &str) -> Vec<f32> {
+        // Inline the hash logic (same as HashEmbedder::embed_single) so benches
+        // that call engine.mock_embed() directly get deterministic vectors.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let hash = hasher.finish();
+        (0..self.embedder.dimension())
+            .map(|i| {
+                let val = ((hash.wrapping_add(i as u64 * 31)) % 1000) as f32 / 1000.0;
+                val * 2.0 - 1.0 // Range [-1, 1]
+            })
+            .collect()
     }
 
     /// Lazy model loading — first search triggers download.
@@ -331,22 +521,6 @@ impl SmartEngine {
         0.6 * cosine_sim + 0.3 * performance_score + 0.1 * recency_factor
     }
 
-    /// Generate a deterministic mock embedding from text hash.
-    /// Used as a fallback when the ONNX model is not available.
-    pub fn mock_embed(&self, text: &str) -> Vec<f32> {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        text.hash(&mut hasher);
-        let hash = hasher.finish();
-        (0..384)
-            .map(|i| {
-                let val = ((hash.wrapping_add(i as u64 * 31)) % 1000) as f32 / 1000.0;
-                val * 2.0 - 1.0 // Range [-1, 1]
-            })
-            .collect()
-    }
-
     /// Convert a byte slice (little-endian f32 values) into a `Vec<f32>`.
     pub fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
         bytes
@@ -367,10 +541,15 @@ impl SearchEngine for SmartEngine {
         Box::pin(async move {
             debug!("SMART search: '{}' filters={:?}", query, filters);
 
-            // Generate embedding for query (mock embedding when model unavailable)
-            let query_vec = self.mock_embed(query);
+            // Embed query via pluggable backend, fetch prompts with embeddings
+            let query_vec: Vec<f32> = self
+                .embedder
+                .embed(&[query.to_string()])
+                .await?
+                .into_iter()
+                .next()
+                .expect("embedder returned empty batch");
 
-            // Fetch prompts with their embeddings from the database
             let conn = self.storage.acquire().await?;
 
             let mut sql = String::from(

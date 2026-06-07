@@ -115,7 +115,11 @@ impl PromptHub {
 
         let storage = Arc::new(Storage::new(storage_config).await?);
         let fast = Arc::new(FastEngine::new(storage.clone()));
-        let smart = Arc::new(SmartEngine::new(config.embedding_model, storage.clone()));
+        let smart = Arc::new(SmartEngine::new(
+            config.embedding_model,
+            storage.clone(),
+            config.embedding_dimension,
+        ));
         let hybrid = Arc::new(HybridEngine::new(fast, smart));
 
         info!("PromptHub initialized at {:?}", db_path);

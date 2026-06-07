@@ -21,7 +21,7 @@ fn bench_mock_embed(c: &mut Criterion) {
         )
     });
 
-    let engine = SmartEngine::new("all-MiniLM-L6-v2", storage);
+    let engine = SmartEngine::new("all-MiniLM-L6-v2", storage, 384);
 
     let inputs = vec![
         ("short", "Sort a list"),
@@ -70,7 +70,7 @@ fn bench_mock_embed_consistency(c: &mut Criterion) {
         )
     });
 
-    let engine = SmartEngine::new("all-MiniLM-L6-v2", storage);
+    let engine = SmartEngine::new("all-MiniLM-L6-v2", storage, 384);
 
     let mut group = c.benchmark_group("mock_embed_consistency");
     group.bench_function("embed_then_cosine", |b| {
