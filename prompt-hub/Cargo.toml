@@ -16,58 +16,66 @@ readme = "README.md"
 [features]
 default = ["handlebars"]
 smart = ["dep:ndarray"]
-# Real ONNX runtime inference for smart search (off by default).
-# Gates OrtEmbedder behind this feature. Model download uses reqwest (no extra deps).
+# ONNX runtime inference for smart search (off by default).
 smart-ort = ["dep:ort"]
-# Prometheus text-format metrics exposition via the maintained `prometheus`
-# crate (text encoder only — no protobuf, no discontinued OpenTelemetry exporter).
 otel = ["dep:prometheus"]
-sqlcipher = []
 tls = ["dep:tokio-rustls"]
-ffi = []
+# Template engine — pick one at compile time.
 handlebars = ["dep:handlebars"]
 tera = ["dep:tera"]
+# Token counting backends — pick one or both.
 tiktoken = ["dep:tiktoken-rs"]
 tokenizers = ["dep:tokenizers"]
+# Dynamic plugin loading via libloading/inventory inventory.
 plugins = ["dep:libloading", "dep:inventory"]
-qdrant = ["dep:reqwest"]
+
+# ---------------------------------------------------------------------------
+# Stub features converted to real gated features (Category B): real pub API,
+# hub.rs wiring exists, but were feature="[]" no-ops before this cleanup.
+# Each gate adds a #[cfg(feature = "...")] on the module decl + hub wiring.
+# ---------------------------------------------------------------------------
 vibe = []
-preview = []
 privacy = []
-quality = []
-multimodal = []
 rollback = []
 cost = []
 confidence = []
 learn = []
 fallback = []
-gather = []
-voice = []
-accessibility = []
-budget = []
-cost-limits = []
+multimodal = []
+satisfaction = []
+
+# ---------------------------------------------------------------------------
+# Real modules with code (Category C): kept as gated features. No optional
+# deps required — these are pure Rust with existing std/deps already present.
+# ---------------------------------------------------------------------------
 quota = []
+retention = []
+provider-health = []
+quality = []
+canary = []
 circuit-breaker = []
 moderation = []
-malware-scan = []
-sandbox = []
-retention = []
-auto-purge = []
-voice-anonymize = []
-multi-provider = []
-provider-health = []
-load-balance = []
-offline = []
-local-llm = []
-satisfaction = []
+budget = []
 analytics = []
-canary = []
-gradual-rollout = []
-beta-program = []
-mobile = []
-touch = []
-chaos = []
-chaos-automation = []
+preview = []
+load-balance = []
+
+# ---------------------------------------------------------------------------
+# Stub features with no corresponding module or source references whatsoever.
+# Kept as empty features for backward-compat (downstream deps may reference them).
+# If/when a downstream crate stops referencing these, they can be removed later.
+# ---------------------------------------------------------------------------
+sqlcipher = []
+ffi = []
+garbage-collector = []
+
+# ---------------------------------------------------------------------------
+# Dead features — removed from Cargo.toml entirely. These had no module files,
+# no hub.rs wiring, and zero meaningful source references:
+#   beta-program, chaos, chaos-automation, cost-limits, gradual-rollout,
+#   malware-scan, multi-provider, offline, qdrant, sandbox, voice-anonymize,
+#   local-llm, mobile, accessibility, touch, voice, gather, auto-purge
+# ---------------------------------------------------------------------------
 
 [dependencies]
 clap = { workspace = true }

@@ -27,7 +27,6 @@ tera = ["prompt-hub/tera"]
 tiktoken = ["prompt-hub/tiktoken"]
 tokenizers = ["prompt-hub/tokenizers"]
 plugins = ["prompt-hub/plugins"]
-qdrant = ["prompt-hub/qdrant"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }

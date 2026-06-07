@@ -400,6 +400,7 @@ impl PromptHub {
 
     /// Natural-language request → deliverable (Vibe Coding).
     #[instrument(skip(self))]
+    #[cfg(feature = "vibe")]
     pub async fn vibe_code(
         &self,
         request: &str,
@@ -430,6 +431,7 @@ impl PromptHub {
     // ── Cost estimation ───────────────────────────────────────────────────
 
     /// Estimate the cost of an intent in a given project context.
+    #[cfg(feature = "cost")]
     #[instrument(skip(self))]
     pub async fn estimate_cost(
         &self,
@@ -449,6 +451,7 @@ impl PromptHub {
     // ── Privacy scanning ──────────────────────────────────────────────────
 
     /// Scan user input for privacy issues.
+    #[cfg(feature = "privacy")]
     #[instrument(skip(self))]
     pub async fn scan_privacy(&self, input: &UserInput) -> Result<PrivacyReport> {
         use crate::privacy::PrivacyScanner;
@@ -461,6 +464,7 @@ impl PromptHub {
     // ── Confidence scoring ────────────────────────────────────────────────
 
     /// Score confidence for an intent against project context.
+    #[cfg(feature = "confidence")]
     #[instrument(skip(self))]
     pub async fn score_confidence(
         &self,
@@ -526,6 +530,7 @@ impl PromptHub {
     }
 
     /// Rollback a prompt to a previous version.
+    #[cfg(feature = "rollback")]
     #[instrument(skip(self))]
     pub async fn rollback(
         &self,
@@ -611,6 +616,7 @@ impl PromptHub {
     }
 
     /// Execute the fallback chain for an intent.
+    #[cfg(feature = "fallback")]
     #[instrument(skip(self))]
     pub async fn fallback_chain(
         &self,
@@ -628,6 +634,7 @@ impl PromptHub {
     }
 
     /// Learn from user feedback to improve future results.
+    #[cfg(feature = "learn")]
     #[instrument(skip(self))]
     pub async fn learn_from_feedback(
         &self,
@@ -988,6 +995,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "vibe")]
     async fn test_vibe_code() {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
