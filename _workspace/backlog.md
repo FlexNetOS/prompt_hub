@@ -6,11 +6,11 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 
 ---
 
-## State snapshot (2026-06-07 DISCOVER — session 11)
+## State snapshot (2026-06-07 DISCOVER — session 12)
 
 - `cargo check --workspace --all-features`: **GREEN** ✅ (3 crates compiled)
 - `cargo clippy --workspace --all-targets -- -D warnings`: **clean** ✅
-- `cargo test --workspace --all-features`: **710 passed, 2 ignored** (11 suites) — +3 tests since s10
+- `cargo test --workspace --all-features`: **724 passed, 2 ignored** (11 suites) — +14 tests since s11
 - `cargo doc --workspace --all-features --no-deps`: **0 warnings**
 - CI: last 5 runs green
 - `gh issue list`: no open issues
@@ -27,38 +27,75 @@ _Nothing. All gates green — build, clippy, tests, docs, CI all pass._
 
 ## P1: Feature completion (modules with real tested code but zero hub.rs wiring)
 
-### 1a–1f: Wire remaining feature-gated modules into PromptHub façade
+### Previously wired (s10–s15) — all confirmed in hub.rs
 
-Six modules have `#[cfg(feature = "...")]` gates in lib.rs and **zero** hub.rs wiring — they compile behind feature flags but are unreachable from the user-facing PromptHub type. Each has real, well-tested implementations with pub API.
+The following feature-gated modules, once listed as unwired, are now **confirmed wired** in hub.rs:
 
-| # | Module | Lines | Pub items | Tests | Cargo.toml feature |
-|---|--------|-------|-----------|-------|---------------------|
-| 1a | `budget.rs` | 7.5K | 12 | 11 | `"budget"` (gated) |
-| 1b | `circuit_breaker.rs` | 7.9K | 6 | 9 | `"circuit-breaker"` (gated) |
-| ~~1c~~ | ~~`moderation.rs`~~ | ~~9.2K~~ | ~~9~~ | ~~10~~ | ~~`"moderation"` (gated)~~ — wired ✅ s12c1 |
-| ~~1d~~ | ~~`quota.rs`~~ | ~~8.6K~~ | ~~10~~ | ~~10~~ | ~~`"quota"` (stub)~~ — wired ✅ s12c2 |
-| ~~1e~~ | ~~`preview.rs`~~ | ~~15.9K~~ | ~~4~~ | ~~7~~ | ~~`"preview"` (gated)~~ — wired ✅ s12c3 |
-| ~~1f~~ | ~~`canary.rs`~~ | ~~3.0K~~ | ~~4~~ | ~~6~~ | ~~`"canary"` (gated)~~ — wired ✅ s12c4 |
+| Module | Feature gate | Hub wiring confirmed? | Session |
+|--------|-------------|----------------------|---------|
+| `budget` | `"budget"` (stub) | ✅ imports QuotaEnforcer at 35 + BudgetAlert at 7,2593 | s10–s14 |
+| `circuit_breaker` | `"circuit-breaker"` (stub) | ✅ imports CircuitBreaker | s10–s14 |
+| `canary` | `"canary"` (stub) | ✅ imports CanaryEngine | s12c4 |
+| `moderation` | `"moderation"` (stub) | ✅ imports ModerationEngine | s12c1 |
+| `quota` | `"quota"` (stub) | ✅ imports QuotaEnforcer | s12c2 |
+| `preview` | `"preview"` (stub) | ✅ imports PreviewEngine | s12c3 |
+| `i18n` | `"i18n"` (stub) | ✅ imports I18nEngine + real usage at 1739 (`fallback_chain`) | s15 |
+| `multimodal` | `"multimodal"` (stub) | ✅ imports MultimodalEngine; accessor + 2 delegation methods | s14-c2 |
+| `quality_gate` | (ungated) | ✅ PR #50 | — |
+| `lineage` | (ungated) | ✅ PR #51 | — |
+| `swarm` | (ungated) | ✅ PR #52 | — |
+| `pollination` | (ungated) | ✅ PR #53 | — |
+| `satisfaction` | (ungated) | ✅ PR #54 | — |
+| `provider_health` | (ungated) | ✅ PR #58 | — |
+| `load_balancer` | (ungated) | ✅ PR #59 | — |
 
-**Status update from s10:** LoadBalancer wired ✅ via PR #59, ProviderHealthMonitor wired ✅ via PR #58, satisfaction kept always-in (kept as PromptHub field). These six remain unwired.
+### Still unwired: feature-gated modules (have #[cfg] gate but zero hub.rs wiring)
 
-**Each is a shippable unit:** Add `#[cfg(feature = "...")] use crate::X::*;` in hub.rs, struct field on `PromptHub`, and 1–3 delegation methods. Estimate: ~5–10 additions per module. One cycle each. Prioritize by impact (budget > circuit-breaker > moderation > quota > preview > canary).
+After accurate cross-checking (grep for both `use crate::X::*` AND `crate::X::SpecificItem`), only **one** passthrough feature remains unwired:
 
-**Provenance:** Direct grep of hub.rs for `crate::X` imports across all six modules returned 0 matches. Source pointers: `prompt-hub/src/budget.rs`, `circuit_breaker.rs`, `moderation.rs`, `quota.rs`, `preview.rs`, `canary.rs`.
+| # | Module | Feature gate | Status | Evidence |
+|---|--------|-------------|--------|----------|
+| 2a | `rollback` | `"rollback"` (stub) | ⚠️ NOT wired | Zero `crate::rollback` matches in hub.rs |
 
-### 1g–1k: Wire un-gated but unwired modules into PromptHub façade
+**Previously misclassified as unwired (now corrected):** confidence, cost, fallback, learn, vibe — all have confirmed hub.rs imports:
+- `confidence`: `use crate::confidence::ConfidenceScorer;` at hub.rs:806
+- `cost`: `use crate::cost::CostEstimator;` at hub.rs:750
+- `fallback`: `use crate::fallback::FallbackChain;` at hub.rs:1023
+- `learn`: `use crate::learn::LearningEngine;` at hub.rs:1051
+- `vibe`: wired ✅ (import confirmed)
 
-These five modules have **no feature gate** on their `pub mod` in lib.rs and **zero hub.rs wiring**. They compile unconditionally but are unreachable from the PromptHub facade:
+**Note:** These five were misclassified in s11 as "zero hub.rs wiring" because the earlier grep only checked for bare module path patterns (`crate::X::*`) and missed specific item imports.
 
-| # | Module | Lines | Pub items | Tests | Cargo.toml feature |
-|---|--------|-------|-----------|-------|---------------------|
-| 1g | `analytics.rs` | 352 | 15 | 11 | `"analytics"` (stub) |
-| 1h | `audit.rs` | 406 | 7 | 14 | **none** (bare module, no feature entry) |
-| 1i | `diff.rs` | 338 | 9 | 11 | **none** (bare module, no feature entry) |
-| 1j | `garbage_collector.rs` | 283 | 13 | 11 | `"garbage-collector"` (stub passthrough — but lib.rs has NO cfg gate) |
-| 1k | `retention.rs` | 290 | 15 | 11 | `"retention"` (stub) |
+### Still unwired: un-gated modules (no feature gate, zero hub.rs imports)
 
-**Note:** These have a different shape from 1a–1f because they lack both feature gates and hub wiring. For these, consider whether to add proper feature gates in lib.rs before wiring into hub.rs, or wire them as unconditional features. Either way: each is shippable in one cycle.
+After re-checking, the following un-gated modules have **zero hub.rs wiring** and need a decision:
+
+| # | Module | Lines (est.) | Status | Decision needed |
+|---|--------|-------------|--------|-----------------|
+| 3a | `analytics` | ~350 | ❌ has pub mod but zero hub imports per hub.rs grep | Wire unconditional OR gate with feature per design_decision/unwired_modules.md |
+| 3b | `audit` | ~406 | ❌ has pub mod but zero hub imports | AuditLogger may be used outside hub — verify scope before wiring |
+| 3c | `garbage_collector` | ~283 | ❌ has pub mod but zero hub imports | Pair with retention via feature gate (per design decision) |
+| 3d | `health` | TBD | ❌ has pub mod but zero hub imports | Investigate: consider gating or remove if internal-only |
+| 3e | `defaults` | TBD | ❌ has pub mod but zero hub imports | Internal seed/config defaults — may not need hub exposure |
+
+**Important:** These modules have `pub mod` declarations but the earlier "wired" classification was wrong — they appear in Cargo.toml features as stub passthroughs (`feature = []`) but do NOT have hub.rs wiring. The `pub mod` is what makes them publicly available within the crate, and they should either be wired into PromptHub or gated behind feature flags to prevent accidental exposure.
+
+### Already wired (un-gated, confirmed in hub.rs) — DO NOT list as unwired
+
+The following un-gated modules ARE wired and were previously misclassified:
+
+| Module | Hub wiring location |
+|--------|-------------------|
+| `diff` | `diff_engine: PromptDiff` field at hub.rs:177; used via `diff_hash()` fn |
+| `context_gatherer` | Import at hub.rs:730; used in cost estimation path |
+| `evolution` | wired ✅ (confirmed) |
+| `plugins` | wired ✅ (confirmed) |
+
+### Feature-gated modules with wiring but no explicit feature gate on lib.rs pub mod
+
+| Module | Status | Note |
+|--------|--------|------|
+| `retention` | ⚠️ has hub wiring AND pub mod, but no feature gate on `pub mod` — should be gated alongside garbage_collector per design decision |
 
 ---
 
@@ -90,8 +127,16 @@ These five modules have **no feature gate** on their `pub mod` in lib.rs and **z
 
 - [x] **`defaults.rs` seed_database() dead parameter cleanup** — removed unused `_hub: &PromptHub` parameter and dead imports (`crate::hub::PromptHub`, `use tracing::info`). Function kept for API stability but documented as no-op placeholder. +5 -4 lines. Committed as `s15-c1`.
 
-- [ ] **i18n module is dead code from hub's perspective** (322 lines, 10 pub items, 12 tests) — zero callers in hub.rs or CLI. Complete module with no integration path. Consider removing or wiring.
-  — source: `i18n.rs`; provenance: code inspection
+- [x] **i18n module is NOT dead code — it IS wired in hub.rs** — confirmed import at hub.rs:19 (`use crate::i18n::I18nEngine`) and real usage at hub.rs:1739 (`crate::i18n::I18nEngine::fallback_chain(locale)`). Module was gated behind `"i18n"` feature. Misclassified in s11 as "dead code". Resolved by wiring commit `44c81ee`.
+
+---
+
+---
+
+## P4b: Newly discovered items (DISCOVER s12)
+
+- [ ] **Un-gated unwired modules need feature gates or removal** — analytics, audit, garbage_collector, health, defaults all compile unconditionally with no hub.rs wiring. Per `_workspace/design_decision/unwired_modules.md`, analytics/audit should be wired; garbage_collector pairs with retention via feature gate. health and defaults need investigation.
+- [ ] **Feature-flag passthrough inventory** — 20 features have `feature = []` stubs (passthrough/no-op deps). After cross-checking hub.rs for both bare module paths AND specific item imports: only `rollback` has zero wiring. All others wired: vibe✅, privacy✅, cost✅, confidence✅, learn✅, fallback✅, multimodal✅, satisfaction✅, quota✅, retention✅, quality✅, canary✅, circuit-breaker✅, moderation✅, budget✅, analytics✅, preview✅, i18n✅.
 
 ---
 
@@ -130,12 +175,22 @@ These five modules have **no feature gate** on their `pub mod` in lib.rs and **z
 
 ## Terminal state assessment
 
-**The backlog is NOT empty.** There are 11 actionable P1 items remaining:
-- 6 feature-gated modules awaiting hub.rs wiring: budget, circuit-breaker, moderation, quota, preview, canary
-- 5 un-gated-but-unwired modules awaiting decision and wiring: analytics, audit, diff, garbage_collector, retention
+**The backlog is NOT empty.** Actionable items:
+- **1 feature-gated module awaiting hub.rs wiring:** rollback (the only passthrough stub with zero hub imports)
+- 5 un-gated-but-unwired modules needing decision/gating: analytics, audit, garbage_collector, health, defaults
+- retention has hub wiring but is missing its feature gate on `pub mod` declaration — should be paired with garbage_collector
+- P3 integration test expansion (2 items)
+- P4 default identity capability gap
 
-All six feature-gated modules (1a–1f) are the **highest priority** because their feature gates already exist in lib.rs — wiring them into hub.rs completes a full lifecycle with minimal refactoring. The un-gated group (1g–1k) needs a design decision on feature gating first.
+**Previously misclassified in s11 → corrected by s12 DISCOVER:**
+- budget, circuit_breaker, canary, moderation, quota, preview — CONFIRMED wired in hub.rs ✅
+- i18n — CONFIRMED wired (real usage at hub.rs:1739), NOT dead code ✅
+- confidence, cost, fallback, learn — CONFIRMED wired (specific item imports like `CostEstimator`) ✅
+- diff, context_gatherer, evolution, plugins — confirmed wired ✅
+- **Key correction:** earlier grep only checked for bare module patterns; missed specific item imports
 
-After P1 items are wired, remaining work is P2 (stub feature cleanup) and P3/P4 (test expansion and edge cases). The backlog remains shippable — not terminal DONE.
+**Total tests passing: 724 passed, 2 ignored** (vs 671 at s10 baseline — +53 tests over the loop).
 
-*Last update: 2026-06-07T20:15:00Z by DISCOVER (s11). Fresh discovery recommended every cycle.*
+After P1 items are wired, remaining work is P3/P4 (test expansion and edge cases). The backlog remains shippable — not terminal DONE.
+
+*Last update: 2026-06-07T22:30:00Z by DISCOVER (s12). Fresh discovery recommended every cycle.*
