@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::analytics::Analytics;
+use crate::audit::SqliteAuditLogger;
 use crate::auth::{Action, RbacAuthManager};
 #[cfg(feature = "budget")]
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
@@ -159,6 +160,7 @@ pub struct PromptHub {
     #[cfg(feature = "canary")]
     canary_engine: Arc<CanaryEngine>,
     analytics: Arc<std::sync::Mutex<Analytics>>,
+    audit_logger: Arc<SqliteAuditLogger>,
 }
 
 impl PromptHub {
@@ -231,6 +233,7 @@ impl PromptHub {
             #[cfg(feature = "canary")]
             canary_engine: Arc::new(CanaryEngine),
             analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
+            audit_logger: Arc::new(SqliteAuditLogger::new()),
         };
 
         // Register default hooks
@@ -255,6 +258,8 @@ impl PromptHub {
         info!("Canary deployment engine initialized");
 
         info!("Analytics aggregator initialized");
+
+        info!("Audit logging initialized (SqliteAuditLogger backend)");
 
         Ok(hub)
     }
@@ -1670,6 +1675,43 @@ impl PromptHub {
         let mut analytics = self.analytics.lock().unwrap();
         analytics.reset();
     }
+
+    // ── Audit logging ──────────────────────────────────────────────────
+
+    /// Compute the tamper-evident diff hash for an audit entry.
+    /// The hash is SHA256(before_json || after_json || timestamp).
+    pub fn compute_audit_hash(
+        before: &Option<String>,
+        after: &Option<String>,
+        timestamp: &str,
+    ) -> String {
+        SqliteAuditLogger::compute_diff_hash(before, after, timestamp)
+    }
+
+    /// Verify the integrity hash of an existing audit entry.
+    pub fn verify_audit_integrity(&self, entry: &crate::models::AuditEntry) -> bool {
+        SqliteAuditLogger::verify_entry_integrity(entry)
+    }
+
+    /// Generate SOC2 evidence summary for an audit entry.
+    pub fn soc2_evidence_summary(&self, entry: &crate::models::AuditEntry) -> serde_json::Value {
+        SqliteAuditLogger::soc2_evidence_summary(entry)
+    }
+
+    /// Validate that an audit entry conforms to the SOC2 schema.
+    pub fn validate_soc2_schema(&self, entry: &crate::models::AuditEntry) -> Result<()> {
+        SqliteAuditLogger::validate_soc2_schema(entry)
+    }
+
+    /// Anonymize an audit entry for GDPR right-to-erasure.
+    pub fn anonymize_audit_entry(&self, entry: &mut crate::models::AuditEntry) {
+        SqliteAuditLogger::anonymize_entry(entry);
+    }
+
+    /// Return a cloneable `Arc` handle to the audit logger.
+    pub fn audit_logger_handle(&self) -> Arc<SqliteAuditLogger> {
+        Arc::clone(&self.audit_logger)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2555,5 +2597,32 @@ mod tests {
 
         let report = hub.get_usage_report();
         assert_eq!(report.total_prompt_uses, 1);
+    }
+
+    // ── Audit integration test ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_audit_utilities_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let test_hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // compute_hash works through delegation
+        let hash_before = crate::audit::SqliteAuditLogger::compute_diff_hash(
+            &Option::<String>::None,
+            &Option::<String>::None,
+            "2026-01-01T00:00:00Z",
+        );
+        assert_eq!(hash_before.len(), 64); // SHA256 hex digest
+
+        let _hash_after = crate::audit::SqliteAuditLogger::compute_diff_hash(
+            &Some(String::from("before")),
+            &Some(String::from("after")),
+            "2026-01-01T00:00:00Z",
+        );
+
+        // Handle works
+        let _handle = test_hub.audit_logger_handle();
     }
 }
