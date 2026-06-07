@@ -3,6 +3,8 @@
 use crate::auth::{Action, RbacAuthManager};
 #[cfg(feature = "budget")]
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
+#[cfg(feature = "circuit-breaker")]
+use crate::circuit_breaker::CircuitBreaker;
 use crate::config::HubConfig;
 use crate::error::{HubError, Result};
 use crate::hooks::{HookRegistry, JunieHook};
@@ -136,6 +138,8 @@ pub struct PromptHub {
     load_balancer: Arc<std::sync::Mutex<LoadBalancer>>,
     #[cfg(feature = "budget")]
     budget_tracker: Arc<BudgetTracker>,
+    #[cfg(feature = "circuit-breaker")]
+    circuit_breaker: Arc<CircuitBreaker>,
 }
 
 impl PromptHub {
@@ -197,6 +201,8 @@ impl PromptHub {
             ))),
             #[cfg(feature = "budget")]
             budget_tracker: Arc::new(BudgetTracker::default()),
+            #[cfg(feature = "circuit-breaker")]
+            circuit_breaker: Arc::new(CircuitBreaker::default()),
         };
 
         // Register default hooks
@@ -204,6 +210,9 @@ impl PromptHub {
 
         #[cfg(feature = "budget")]
         info!("Budget tracker initialized with default monthly budget");
+
+        #[cfg(feature = "circuit-breaker")]
+        info!("Circuit breaker initialized with defaults (threshold=5, timeout=30s)");
 
         Ok(hub)
     }
@@ -1457,6 +1466,14 @@ impl PromptHub {
     pub fn reset_budget_period(&self) {
         self.budget_tracker.reset_period();
     }
+
+    // ── Circuit breaker ----------------------------------------------------------
+
+    /// Return a cloneable handle to the circuit breaker.
+    #[cfg(feature = "circuit-breaker")]
+    pub fn circuit_breaker(&self) -> Arc<CircuitBreaker> {
+        Arc::clone(&self.circuit_breaker)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2187,5 +2204,27 @@ mod tests {
         hub.reset_budget_period();
         assert_eq!(hub.current_spend_usd(), 0.0);
         assert!(!hub.is_budget_exceeded());
+    }
+
+    #[cfg(feature = "circuit-breaker")]
+    #[tokio::test]
+    async fn test_circuit_breaker_accessor() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        let cb = hub.circuit_breaker();
+        assert_eq!(cb.current_state(), "closed");
+
+        // Verify it can gate a failure
+        let result = cb.call(|| Err::<(), _>(HubError::Internal("test".into())));
+        assert!(result.is_err());
+
+        // After 5 consecutive failures it should open
+        for _ in 0..4 {
+            let _ = cb.call(|| Err::<(), _>(HubError::Internal("test".into())));
+        }
+        assert_eq!(cb.current_state(), "open");
     }
 }
