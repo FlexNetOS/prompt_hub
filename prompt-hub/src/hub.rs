@@ -44,14 +44,27 @@ pub mod lock {
     }
 
     impl LockManager {
-        /// Create a new lock manager
+        /// Create a new lock manager instance with an empty lock store.
+        ///
+        /// The underlying storage is a thread-safe `Mutex<Vec<LockToken>>`
+        /// suitable for in-process coordination across agent tasks.
         pub fn new() -> Self {
             Self {
                 locks: Arc::new(std::sync::Mutex::new(Vec::new())),
             }
         }
 
-        /// Create a lock token for a prompt
+        /// Create a lock token that grants exclusive edit access to *prompt_id*
+        /// for the given *agent_id* until it expires after *ttl_secs*.
+        ///
+        /// # Arguments
+        /// * `prompt_id` — UUID of the prompt to lock
+        /// * `agent_id` — ID of the agent requesting the lock
+        /// * `ttl_secs` — Time-to-live in seconds before the token auto-expires
+        ///
+        /// # Returns
+        /// A [`LockToken`] that can be passed back to [`LockManager::is_expired`]
+        /// or used to prove ownership when calling `unlock`.
         pub fn create_lock(prompt_id: Uuid, agent_id: AgentId, ttl_secs: u64) -> LockToken {
             LockToken {
                 prompt_id,
@@ -61,7 +74,13 @@ pub mod lock {
             }
         }
 
-        /// Check if a lock token has expired
+        /// Check whether *token* has passed its expiry wall-clock time.
+        ///
+        /// # Arguments
+        /// * `token` — A previously created [`LockToken`] to inspect
+        ///
+        /// # Returns
+        /// `true` if `Utc::now() > token.expires_at`, `false` otherwise.
         pub fn is_expired(token: &LockToken) -> bool {
             Utc::now() > token.expires_at
         }
@@ -113,7 +132,21 @@ pub struct PromptHub {
 
 impl PromptHub {
     /// Create a new PromptHub instance backed by SQLite storage and a hybrid
-    /// search engine.
+    /// search engine (FTS5 + optional ONNX embeddings).
+    ///
+    /// Initializes the database connection pool, registers the default Junie
+    /// orchestrator hook, and sets up RBAC, metrics, sync, and satisfaction
+    /// tracking infrastructure.
+    ///
+    /// # Arguments
+    /// * `db_path` — Filesystem path where the libsql/SQLite database will live.
+    ///   Pass `:memory:` for an ephemeral in-process store (useful for tests).
+    /// * `config` — [`HubConfig`] controlling pool size, search defaults,
+    ///   embedding model/dimension/backend, and migration policy.
+    ///
+    /// # Errors
+    /// Returns [`HubError::StorageError`] if the database cannot be opened or
+    /// migrations fail to apply.
     #[instrument]
     pub async fn new(db_path: &Path, config: HubConfig) -> Result<Self> {
         let storage_config = StorageConfig {
@@ -160,12 +193,19 @@ impl PromptHub {
 
     // ── Accessors for server layer ──────────────────────────────────────
 
-    /// Return a cloneable handle to the storage layer.
+    /// Return a cloneable `Arc` handle to the underlying storage layer.
+    ///
+    /// The returned handle can be shared across axum handlers or worker tasks.
+    /// Callers that need direct mutation access should use `Arc::get_mut()`
+    /// on the cloned handle rather than this method (which always returns a clone).
     pub fn storage(&self) -> Arc<Storage> {
         Arc::clone(&self.storage)
     }
 
-    /// Return a cloneable handle to the metrics collector.
+    /// Return a cloneable `Arc` handle to the metrics collector.
+    ///
+    /// The collector accumulates request counts, sanitization stats, lock events,
+    /// and satisfaction signals across the lifetime of this PromptHub instance.
     pub fn metrics(&self) -> Arc<MetricsCollector> {
         Arc::clone(&self.metrics)
     }
@@ -173,6 +213,22 @@ impl PromptHub {
     // ── Prompt CRUD ───────────────────────────────────────────────────────
 
     /// Register a new prompt after sanitization and RBAC checks.
+    ///
+    /// The system-sanitizer evaluates the prompt's `system_prompt` and
+    /// `user_template` for policy violations (PII, injection, content
+    /// restrictions). Blocked prompts produce an error; suspicious ones are
+    /// logged but accepted. On success the prompt is indexed by the search
+    /// engine and persisted to storage.
+    ///
+    /// # Arguments
+    /// * `prompt` — The [`Prompt`] to register. Its `id` must be unique.
+    /// * `identity` — The caller's [`AgentIdentity`] used for RBAC authorization
+    ///   and audit trail population.
+    ///
+    /// # Errors
+    /// - [`HubError::SanitizationError`] if the content is blocked by policy.
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::StorageError`] if persistence fails (e.g. unique constraint).
     #[instrument(skip(self, prompt))]
     pub async fn register(&self, prompt: Prompt, identity: &AgentIdentity) -> Result<Uuid> {
         RbacAuthManager::authorize_action(identity, Action::Write)?;
@@ -227,6 +283,20 @@ impl PromptHub {
     }
 
     /// Retrieve a single prompt by role and intent.
+    ///
+    /// Uses the search engine to find the best matching prompt for the given
+    /// *intent* filtered to those targeting *role*. Returns the top result, or
+    /// `None` if no match is found. This is the primary lookup method used by
+    /// agents at runtime.
+    ///
+    /// # Arguments
+    /// * `role` — The [`Role`] to filter prompts by (e.g. `Developer`, `Architect`).
+    /// * `intent` — Natural-language intent text for relevance ranking.
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC authorization.
+    ///
+    /// # Returns
+    /// `Ok(Some(prompt))` when a match exists, `Ok(None)` when no prompt
+    /// matches the filter, or an error on auth/storage failure.
     #[instrument(skip(self))]
     pub async fn get(
         &self,
@@ -250,6 +320,21 @@ impl PromptHub {
     }
 
     /// Search prompts using the configured search engine.
+    ///
+    /// Delegates to the internal hybrid search pipeline (FTS5 + optional
+    /// embedding-based retrieval) and returns a paginated set of scored matches.
+    /// Filters narrow by role, domain, tags, and status; pagination controls
+    /// page number and per-page count.
+    ///
+    /// # Arguments
+    /// * `query` — Free-text search query against prompt content.
+    /// * `mode` — Search mode selector (`Fast`, `Smart`, or `Hybrid`).
+    /// * `filters` — [`SearchFilters`] for role, domain, tags, status, etc.
+    /// * `pagination` — [`Pagination`] with page number and per-page size limits.
+    ///
+    /// # Returns
+    /// A [`Paginated<ScoredPrompt>`] containing matched prompts sorted by
+    /// relevance score. Empty results produce a valid empty paginated response.
     #[instrument(skip(self))]
     pub async fn search(
         &self,
@@ -263,7 +348,19 @@ impl PromptHub {
             .await
     }
 
-    /// List all prompts with pagination.
+    /// List all prompts with pagination, optionally filtered by status and domain.
+    ///
+    /// This method returns every stored prompt (subject to any optional scope
+    /// filters encoded in *pagination*) without performing a text search. Use
+    /// [`PromptHub::search`] when you need relevance-ranked results.
+    ///
+    /// # Arguments
+    /// * `pagination` — [`Pagination`] with `page` and `per_page` controls the
+    ///   slice of the full prompt catalogue to return.
+    ///
+    /// # Returns
+    /// A [`Paginated<Prompt>`] containing the requested page of prompts and the
+    /// total count across all pages.
     #[instrument(skip(self))]
     pub async fn list(&self, pagination: Pagination) -> Result<Paginated<Prompt>> {
         let offset = (pagination.page.saturating_sub(1)) * pagination.per_page;
@@ -282,7 +379,21 @@ impl PromptHub {
 
     // ── Lock management ───────────────────────────────────────────────────
 
-    /// Acquire an edit lock on a prompt.
+    /// Acquire an edit lock on a prompt for exclusive modification.
+    ///
+    /// Creates a [`LockToken`] that proves the caller's right to edit the given
+    /// prompt until it expires. The token must be returned to [`PromptHub::unlock`]
+    /// before the prompt can be modified again by another agent.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to lock.
+    /// * `agent` — Caller's [`AgentIdentity`] (used for RBAC and audit trail).
+    /// * `ttl` — Time-to-live duration; after this period the token auto-expires
+    ///   and may be acquired by another agent.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *agent* lacks the `Lock` RBAC action.
+    /// - [`HubError::StorageError`] if audit logging fails.
     #[instrument(skip(self))]
     pub async fn lock(
         &self,
@@ -311,7 +422,19 @@ impl PromptHub {
         Ok(token)
     }
 
-    /// Release a previously acquired lock.
+    /// Release a previously acquired lock, revoking the caller's exclusive
+    /// edit access to the locked prompt.
+    ///
+    /// If the *token* has expired, the operation fails and the lock remains in
+    /// effect for another agent to acquire. On success a release audit entry is
+    /// written to storage.
+    ///
+    /// # Arguments
+    /// * `token` — A [`LockToken`] previously returned by [`PromptHub::lock`].
+    ///
+    /// # Errors
+    /// - [`HubError::LockError`] if *token* has expired or is invalid.
+    /// - [`HubError::StorageError`] if the release audit entry cannot be written.
     #[instrument(skip(self))]
     pub async fn unlock(&self, token: LockToken) -> Result<()> {
         if LockManager::is_expired(&token) {
@@ -345,7 +468,19 @@ impl PromptHub {
 
     // ── Audit & ownership ─────────────────────────────────────────────────
 
-    /// Get the audit trail for a prompt.
+    /// Get the full audit trail (all mutations) for a prompt.
+    ///
+    /// Returns every logged action — create, update, evolve, roll-back, lock,
+    /// unlock, ownership transfer — associated with *id*, paginated by page and
+    /// per-page count. Use this to reconstruct a complete change history.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to look up audit entries for.
+    /// * `pagination` — [`Pagination`] controlling which slice of entries to return.
+    ///
+    /// # Returns
+    /// A [`Paginated<AuditEntry>`] containing the requested page and total count
+    /// of audit entries. Empty when no mutations have been logged.
     #[instrument(skip(self))]
     pub async fn audit_trail(
         &self,
@@ -357,7 +492,23 @@ impl PromptHub {
             .await
     }
 
-    /// Transfer prompt ownership between agents (admin only).
+    /// Transfer prompt ownership from one agent to another (admin-only).
+    ///
+    /// Changes the `author` field of the prompt identified by *id* to *to*'s
+    /// agent ID. The caller must hold the `Admin` RBAC action; a full audit
+    /// entry is written with before/after diffs. The original owner (*from*) is
+    /// recorded for audit but not enforced at storage level.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to transfer.
+    /// * `_from` — Current owner's [`AgentIdentity`] (recorded in audit).
+    /// * `to` — New owner's [`AgentIdentity`].
+    /// * `admin` — Admin agent whose credentials authorize this operation.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *admin* lacks `Admin` RBAC action.
+    /// - [`HubError::NotFound`] if the prompt identified by *id* does not exist.
+    /// - [`HubError::StorageError`] on persistence failure.
     #[instrument(skip(self))]
     pub async fn transfer_ownership(
         &self,
@@ -399,6 +550,19 @@ impl PromptHub {
     // ── Vibe Coding ───────────────────────────────────────────────────────
 
     /// Natural-language request → deliverable (Vibe Coding).
+    ///
+    /// Delegates to the VibeEngine (feature-gated) which transforms a free-form user request
+    /// into a structured deliverable with an confidence score, based on the
+    /// requested *level* of skill. Requires the `vibe` feature flag.
+    ///
+    /// # Arguments
+    /// * `request` — Natural-language description of the desired output.
+    /// * `input` — [`UserInput`] carrying auxiliary parameters (files, context, etc.).
+    /// * `level` — Required [`SkillLevel`] for the generated response.
+    ///
+    /// # Returns
+    /// A [`VibeResult`] containing the generated deliverable and a confidence
+    /// score indicating how well the output matches the request.
     #[instrument(skip(self))]
     #[cfg(feature = "vibe")]
     pub async fn vibe_code(
@@ -419,7 +583,20 @@ impl PromptHub {
 
     // ── Context gathering ─────────────────────────────────────────────────
 
-    /// Gather project context from the filesystem.
+    /// Gather project context from the filesystem at *project_path*.
+    ///
+    /// Walks the directory tree to collect Cargo manifests, source files, config
+    /// files, and dependency information, returning a structured [`ProjectContext`]
+    /// suitable for downstream intent classification or cost estimation.
+    ///
+    /// # Arguments
+    /// * `project_path` — Absolute path to the root of the project directory.
+    ///
+    /// # Returns
+    /// A [`ProjectContext`] with file trees, manifests, and inferred metadata.
+    ///
+    /// # Errors
+    /// - [`HubError`] with IO detail if the path cannot be read or is not a directory.
     #[instrument(skip(self))]
     pub async fn gather_context(&self, project_path: &Path) -> Result<ProjectContext> {
         use crate::context_gatherer::ContextGatherer;
@@ -430,7 +607,19 @@ impl PromptHub {
 
     // ── Cost estimation ───────────────────────────────────────────────────
 
-    /// Estimate the cost of an intent in a given project context.
+    /// Estimate the cost of executing an *intent* within the given *context*.
+    ///
+    /// Analyzes the intent's complexity against project metadata (crate count,
+    /// file sizes, dependency depth) to produce a dollar-cost projection.
+    /// Requires the `cost` feature flag.
+    ///
+    /// # Arguments
+    /// * `intent` — The [`Intent`] whose cost should be estimated.
+    /// * `context` — A [`ProjectContext`] describing the target codebase.
+    ///
+    /// # Returns
+    /// A [`CostEstimate`] with USD cost, token counts (input/output), and a
+    /// breakdown by component (analysis, generation, testing).
     #[cfg(feature = "cost")]
     #[instrument(skip(self))]
     pub async fn estimate_cost(
@@ -450,7 +639,18 @@ impl PromptHub {
 
     // ── Privacy scanning ──────────────────────────────────────────────────
 
-    /// Scan user input for privacy issues.
+    /// Scan user input for potential privacy violations (PII, secrets, credentials).
+    ///
+    /// Runs the configured privacy scanner over every field in *input* and
+    /// returns a categorized report of detected issues with severity levels.
+    /// Requires the `privacy` feature flag.
+    ///
+    /// # Arguments
+    /// * `input` — The [`UserInput`] to scan for privacy-sensitive content.
+    ///
+    /// # Returns
+    /// A [`PrivacyReport`] with a risk level (low / medium / high), detected
+    /// issues by category, and suggested mitigations.
     #[cfg(feature = "privacy")]
     #[instrument(skip(self))]
     pub async fn scan_privacy(&self, input: &UserInput) -> Result<PrivacyReport> {
@@ -463,7 +663,19 @@ impl PromptHub {
 
     // ── Confidence scoring ────────────────────────────────────────────────
 
-    /// Score confidence for an intent against project context.
+    /// Score confidence for an *intent* against a given project *context*.
+    ///
+    /// Evaluates how well the intent aligns with existing code patterns, module
+    /// structure, and dependency graph to produce a confidence score (0.0–1.0).
+    /// Requires the `confidence` feature flag.
+    ///
+    /// # Arguments
+    /// * `intent` — The [`Intent`] to evaluate.
+    /// * `context` — A [`ProjectContext`] describing the target codebase structure.
+    ///
+    /// # Returns
+    /// A [`ConfidenceScore`] with a numeric score (0.0–1.0), supporting factors,
+    /// and confidence breakdown by dimension (domain fit, pattern match, etc.).
     #[cfg(feature = "confidence")]
     #[instrument(skip(self))]
     pub async fn score_confidence(
@@ -480,7 +692,15 @@ impl PromptHub {
 
     // ── Graceful shutdown helper ──────────────────────────────────────────
 
-    /// Gracefully shut down the hub: close storage, drain metrics.
+    /// Gracefully shut down the hub: optimize storage, drain metrics.
+    ///
+    /// Flushes pending WAL checkpoints to disk (via `optimize_on_close`),
+    /// stops metric collection, and releases background resources. Intended
+    /// for use at process exit or during hot-reload cycles.
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or a [`HubError::StorageError`] if the WAL flush
+    /// fails (which would indicate potential data loss).
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down PromptHub storage...");
@@ -491,7 +711,22 @@ impl PromptHub {
 
     // ── Prompt lifecycle ──────────────────────────────────────────────────
 
-    /// Update an existing prompt.
+    /// Update an existing prompt with the given *patch* and audit the change.
+    ///
+    /// Applies only the fields set in *patch* (e.g. `system_prompt`,
+    /// `user_template`, `tags`). The caller's *identity* is recorded in the
+    /// audit trail along with a before/after diff hash for tamper evidence.
+    /// RBAC requires `Write` capability.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to update.
+    /// * `patch` — [`PromptPatch`] containing only the fields to change.
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC and audit trail.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::NotFound`] if no prompt with *id* exists.
+    /// - [`HubError::StorageError`] on persistence failure.
     #[instrument(skip(self))]
     pub async fn update(
         &self,
@@ -529,7 +764,21 @@ impl PromptHub {
         Ok(updated)
     }
 
-    /// Rollback a prompt to a previous version.
+    /// Rollback a prompt to a previous version identified by *to_version*.
+    ///
+    /// Restores the prompt stored under *id* to its state at the named
+    /// *to_version*, then re-indexes it in the search engine and logs an
+    /// audit entry. Requires the `rollback` feature flag and `Write` RBAC.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to roll back.
+    /// * `to_version` — Version string (e.g. `"v1.2.0"`) to restore.
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC and audit trail.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::NotFound`] if the prompt or target version does not exist.
+    /// - [`HubError::StorageError`] on persistence failure.
     #[cfg(feature = "rollback")]
     #[instrument(skip(self))]
     pub async fn rollback(
@@ -568,7 +817,23 @@ impl PromptHub {
         Ok(rolled)
     }
 
-    /// Evolve a prompt using the specified strategy.
+    /// Evolve a prompt using the specified *strategy*, producing a new version.
+    ///
+    /// Applies the given [`EvolutionStrategy`] (mutate, crossover, etc.) to the
+    /// existing prompt identified by *id*. The result is persisted as a **new**
+    /// prompt (different UUID) and indexed for search; the original is preserved
+    /// in storage for lineage tracing.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the base prompt to evolve.
+    /// * `strategy` — The [`EvolutionStrategy`] to apply (`Mutate`, `Crossover`, etc.).
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC and audit trail.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::NotFound`] if no prompt with *id* exists.
+    /// - [`HubError::Internal("No crossover candidates")`] for `Crossover` when
+    ///   no other prompts are available to act as parents.
     #[instrument(skip(self))]
     pub async fn evolve_prompt(
         &self,
@@ -615,7 +880,19 @@ impl PromptHub {
         Ok(evolved)
     }
 
-    /// Execute the fallback chain for an intent.
+    /// Execute the configured fallback chain for an *intent* within a given *context*.
+    ///
+    /// Tries each fallback strategy in order (e.g. direct generation → template
+    /// injection → handoff to orchestrator) until one succeeds. Requires the
+    /// `fallback` feature flag.
+    ///
+    /// # Arguments
+    /// * `intent` — The [`Intent`] to resolve via fallback strategies.
+    /// * `context` — A [`ProjectContext`] providing codebase metadata for resolution.
+    ///
+    /// # Returns
+    /// An [`Artifact`] (code, prompt, or other output type) produced by the first
+    /// strategy that succeeds, or an error if all fallbacks fail.
     #[cfg(feature = "fallback")]
     #[instrument(skip(self))]
     pub async fn fallback_chain(
@@ -634,6 +911,15 @@ impl PromptHub {
     }
 
     /// Learn from user feedback to improve future results.
+    ///
+    /// Records the *correction* string alongside the original *intent* in the
+    /// learning engine's history so that future requests for similar intents can
+    /// benefit from this correction. Requires the `learn` feature flag.
+    ///
+    /// # Arguments
+    /// * `correction` — Free-text description of what was wrong and how to fix it.
+    /// * `intent` — The [`Intent`] that triggered the feedback (for indexing).
+    /// * `agent_id` — UUID of the agent providing the correction (audit trail).
     #[cfg(feature = "learn")]
     #[instrument(skip(self))]
     pub async fn learn_from_feedback(
@@ -678,25 +964,53 @@ impl PromptHub {
 
     // ── Version lineage ───────────────────────────────────────────────
 
-    /// Get the ancestry path for a version.
+    /// Get the ancestry path (from root to *version_id*) in the version graph.
+    ///
+    /// Returns the ordered chain of ancestor version IDs and the depth of the
+    /// tree branch ending at *version_id*.
+    ///
+    /// # Arguments
+    /// * `version_id` — The version whose ancestry path to resolve.
+    ///
+    /// # Returns
+    /// An [`AncestryPath`] with `path` (ordered root-first) and `depth`.
+    ///
+    /// # Errors
+    /// - [`HubError::NotFound`] if *version_id* is not tracked.
     #[instrument(skip(self))]
     pub fn get_lineage_ancestry(&self, version_id: &str) -> Result<AncestryPath> {
         self.lineage.get_ancestry(version_id)
     }
 
     /// Detect all forks in the lineage graph.
+    ///
+    /// A fork occurs when a single version has two or more children (i.e.
+    /// multiple branches diverge from one parent). This is useful for
+    /// identifying parallel evolution of prompts.
     #[instrument(skip(self))]
     pub fn detect_lineage_forks(&self) -> Vec<Fork> {
         self.lineage.detect_forks()
     }
 
-    /// Get all descendant version IDs for a root version.
+    /// Get all descendant version IDs reachable from *version_id*.
+    ///
+    /// Traverses the full descendant graph (not just direct children) and returns
+    /// every reachable version ID in breadth-first order.
+    ///
+    /// # Arguments
+    /// * `version_id` — The root version to traverse descendants of.
     #[instrument(skip(self))]
     pub fn get_lineage_descendants(&self, version_id: &str) -> Vec<String> {
         self.lineage.get_descendants(version_id)
     }
 
-    /// Build a lineage tree rooted at the given version ID.
+    /// Build a lineage tree rooted at *root_version*, including all descendants.
+    ///
+    /// Returns `None` if the root is not tracked. The tree encodes parent-child
+    /// edges and fork points for visualization or diffing.
+    ///
+    /// # Arguments
+    /// * `root_version` — The version to root the tree at.
     #[instrument(skip(self))]
     pub fn build_lineage_tree(&self, root_version: &str) -> Option<LineageTree> {
         self.lineage.build_tree(root_version)
@@ -711,12 +1025,14 @@ impl PromptHub {
         &mut self.lineage
     }
 
-    /// Number of registered version nodes.
+    /// Number of registered version nodes in the lineage graph.
+    #[inline]
     pub fn lineage_node_count(&self) -> usize {
         self.lineage.node_count()
     }
 
-    /// Check whether a specific version is tracked.
+    /// Check whether a specific *version_id* is tracked in the lineage graph.
+    #[inline]
     pub fn has_lineage_version(&self, version_id: &str) -> bool {
         self.lineage.has_version(version_id)
     }
@@ -771,13 +1087,34 @@ impl PromptHub {
         Arc::clone(&self.pollination)
     }
 
-    /// Extract reusable prompt patterns from a prompt.
+    /// Extract reusable prompt patterns from a prompt for cross-agent sharing.
+    ///
+    /// Analyzes the prompt's `system_prompt` and `user_template` to detect
+    /// structural patterns (e.g. step-by-step, few-shot, chain-of-thought) that
+    /// could be reused by other agents in the swarm.
+    ///
+    /// # Arguments
+    /// * `prompt` — The [`Prompt`] to extract patterns from.
+    ///
+    /// # Returns
+    /// A vector of [`Pattern`] structs, each describing a detected structural
+    /// pattern with its confidence score and applicable domain tags.
     #[instrument(skip(self, prompt))]
     pub fn extract_pollination_patterns(&self, prompt: &Prompt) -> Result<Vec<Pattern>> {
         Ok(CrossAgentPollination::extract_patterns(prompt))
     }
 
-    /// Rank all patterns in the pool by composite score.
+    /// Rank all patterns in the pollination pool by composite score.
+    ///
+    /// Scores combine usage frequency, success rate, and domain diversity to
+    /// produce a ranking of reusable patterns. Only returns the top *num_domains*
+    /// distinct-domain representatives.
+    ///
+    /// # Arguments
+    /// * `num_domains` — Maximum number of distinct domains to return (i.e. result count).
+    ///
+    /// # Returns
+    /// A vector of `(pattern_name, score)` tuples sorted descending by score.
     #[instrument(skip(self))]
     pub fn rank_pollination_patterns(&self, num_domains: usize) -> Result<Vec<(String, f64)>> {
         let engine = self
@@ -812,25 +1149,49 @@ impl PromptHub {
     }
 
     /// Record a CSAT rating (1-5), delegated to the satisfaction tracker.
+    ///
+    /// Scores outside the valid range 1..=5 are silently ignored. The optional
+    /// *context* string is stored alongside the rating for later segmentation.
+    ///
+    /// # Arguments
+    /// * `score` — CSAT score on a 1-5 Likert scale (1=Dissatisfied, 5=Satisfied).
+    /// * `context` — Free-form context describing the user's experience.
     #[instrument(skip(self))]
     pub fn record_csat_rating(&self, score: u8, context: &str) {
         self.satisfaction_tracker.record_csat(score, context);
     }
 
     /// Record an NPS rating (1-10), delegated to the satisfaction tracker.
+    ///
+    /// Scores outside the valid range 1..=10 are silently ignored. The aggregate
+    /// NPS score is computed as `(promoters - detractors) / total`.
+    ///
+    /// # Arguments
+    /// * `score` — NPS score on a 1-10 scale (9-10=promoter, 7-8=passive, 1-6=detractor).
     #[instrument(skip(self))]
     pub fn record_nps_rating(&self, score: u8) {
         self.satisfaction_tracker.record_nps(score);
     }
 
     /// Record a success/failure event in the satisfaction funnel.
+    ///
+    /// Tracks whether a prompt resolution was ultimately successful and how many
+    /// attempts it took. Events feed into the one-shot success rate metric.
+    ///
+    /// # Arguments
+    /// * `prompt_id` — Identifier of the prompt involved in this interaction.
+    /// * `successful` — Whether the user's goal was achieved on this attempt.
+    /// * `attempts` — Number of attempts before resolution (1 = solved immediately).
     #[instrument(skip(self))]
     pub fn record_satisfaction_event(&self, prompt_id: &str, successful: bool, attempts: u8) {
         self.satisfaction_tracker
             .record_event(prompt_id, successful, attempts);
     }
 
-    /// Query current satisfaction metrics.
+    /// Query current satisfaction metrics (CSAT average, NPS score, success rate).
+    ///
+    /// Returns aggregate statistics across all recorded ratings and events. When
+    /// no data has been collected, all numeric fields default to 0.0.
     #[instrument(skip(self))]
     pub fn satisfaction_metrics(&self) -> Result<SatisfactionMetrics> {
         Ok(self.satisfaction_tracker.metrics())
