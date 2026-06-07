@@ -1422,6 +1422,7 @@ impl PromptHub {
 
     /// Deploy a prompt with automatic rollback capability.
     /// Requires the `rollback` feature flag and Write RBAC.
+    #[cfg(feature = "rollback")]
     pub async fn deploy_with_rollback(
         &self,
         artifact: &crate::models::Artifact,
@@ -1433,11 +1434,13 @@ impl PromptHub {
     }
 
     /// Restore a prompt to a previously saved snapshot by ID.
+    #[cfg(feature = "rollback")]
     pub async fn restore_snapshot(&self, id: &str) -> Result<()> {
         self.safe_deployer.restore_snapshot(id).await
     }
 
     /// Check if a specific rollback snapshot is available.
+    #[cfg(feature = "rollback")]
     pub fn is_rollback_available(&self, snapshot_id: &str) -> bool {
         self.safe_deployer.is_rollback_available(snapshot_id)
     }
