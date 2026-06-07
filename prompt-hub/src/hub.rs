@@ -8,6 +8,7 @@ use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::metrics::MetricsCollector;
 use crate::models::*;
 use crate::pollination::{CrossAgentPollination, Pattern};
+use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
 use crate::quality_gate::{QualityGate, QualityResult};
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
@@ -128,6 +129,7 @@ pub struct PromptHub {
     swarm_registry: Arc<SwarmRoleRegistry>,
     pollination: Arc<std::sync::Mutex<CrossAgentPollination>>,
     satisfaction_tracker: Arc<SatisfactionTracker>,
+    health_monitor: Arc<std::sync::Mutex<ProviderHealthMonitor>>,
 }
 
 impl PromptHub {
@@ -183,6 +185,7 @@ impl PromptHub {
             swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
             pollination: Arc::new(std::sync::Mutex::new(CrossAgentPollination::new())),
             satisfaction_tracker: Arc::new(SatisfactionTracker::new(1000)),
+            health_monitor: Arc::new(std::sync::Mutex::new(ProviderHealthMonitor::new())),
         };
 
         // Register default hooks
@@ -1196,6 +1199,96 @@ impl PromptHub {
     pub fn satisfaction_metrics(&self) -> Result<SatisfactionMetrics> {
         Ok(self.satisfaction_tracker.metrics())
     }
+
+    // ── Provider health monitor ---------------------------------------------------
+
+    /// Return a cloneable handle to the provider health monitor.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers. Mutable
+    /// operations (e.g., registering providers, recording latencies) use the
+    /// provided delegate methods or call into the monitor directly via this handle.
+    pub fn health_monitor(&self) -> Arc<std::sync::Mutex<ProviderHealthMonitor>> {
+        Arc::clone(&self.health_monitor)
+    }
+
+    /// Register an LLM provider for health monitoring.
+    ///
+    /// Adds a new named provider to the monitor's registry. Subsequent calls
+    /// with the same *name* will overwrite the previous URL and reset any
+    /// accumulated latency/error metrics.
+    ///
+    /// # Arguments
+    /// * `name` — Unique identifier for this provider (e.g., `"gpt-4o"`).
+    /// * `url` — Base URL or endpoint string for the provider.
+    #[instrument(skip(self))]
+    pub fn register_provider(&self, name: &str, url: &str) {
+        let monitor = self.health_monitor();
+        monitor.lock().unwrap().register(name, url);
+        info!(provider = name, url = url, "Registered LLM provider");
+    }
+
+    /// Record a successful API call for the named provider.
+    ///
+    /// The *latency_ms* is stored alongside the current timestamp and used to
+    /// compute rolling averages for latency-based health thresholds.
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    /// * `latency_ms` — Round-trip latency in milliseconds.
+    #[instrument(skip(self))]
+    pub fn record_success(&self, provider_name: &str, latency_ms: u64) {
+        let monitor = self.health_monitor();
+        monitor
+            .lock()
+            .unwrap()
+            .record_success(provider_name, latency_ms);
+        info!(
+            provider = provider_name,
+            latency_ms = latency_ms,
+            "Recorded provider success"
+        );
+    }
+
+    /// Record a failed API call for the named provider.
+    ///
+    /// Each failure increments the error rate used by health thresholds. If the
+    /// rolling error rate exceeds the configured threshold, the provider's status
+    /// transitions to `HealthStatus::Unhealthy`.
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    #[instrument(skip(self))]
+    pub fn record_failure(&self, provider_name: &str) {
+        let monitor = self.health_monitor();
+        monitor.lock().unwrap().record_failure(provider_name);
+        warn!(provider = provider_name, "Recorded provider failure");
+    }
+
+    /// Check whether the named provider is currently considered healthy.
+    ///
+    /// A provider is healthy when its rolling error rate stays below the configured
+    /// threshold and its average latency is within bounds. Returns `false` if the
+    /// provider has never been registered or probed.
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    #[instrument(skip(self))]
+    pub fn is_healthy(&self, provider_name: &str) -> bool {
+        let monitor = self.health_monitor();
+        let healthy = monitor.lock().unwrap().is_healthy(provider_name);
+        info!(provider = provider_name, healthy = healthy, "Health check");
+        healthy
+    }
+
+    /// Retrieve the full health summary for all registered providers.
+    ///
+    /// Returns a [`HealthSummary`] containing per-provider status, average latency,
+    /// error rate, and total call counts. Providers that have been registered but
+    /// never probed appear with `HealthStatus::Unknown` status.
+    pub fn get_health_summary(&self) -> HealthSummary {
+        let monitor = self.health_monitor();
+        monitor.lock().unwrap().summary()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1822,5 +1915,56 @@ mod tests {
 
         let tracker = hub.satisfaction_tracker();
         assert_eq!(tracker.rating_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_provider_health_register_and_summary() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Register providers and record metrics
+        hub.register_provider("gpt-4o", "https://api.openai.com/v1");
+        hub.register_provider("claude", "https://api.anthropic.com/v1");
+
+        hub.record_success("gpt-4o", 150);
+        hub.record_success("gpt-4o", 200);
+        // gpt-4o: 0% error rate, avg latency 175ms < 5000ms threshold → Healthy
+
+        let summary = hub.get_health_summary();
+        assert_eq!(summary.providers.len(), 2);
+        assert!(hub.is_healthy("gpt-4o")); // 0% errors, latency well under threshold
+
+        // Record a failure for claude — with default error_rate_threshold=50%,
+        // 1/1 = 100% >= 50% → Unhealthy
+        hub.record_failure("claude");
+        assert!(!hub.is_healthy("claude"));
+
+        let gpt_status = hub.health_monitor().lock().unwrap().get_health("gpt-4o");
+        assert!(gpt_status.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_provider_health_failure_threshold() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.register_provider("flaky", "https://api.example.com/v1");
+
+        // Configure thresholds via the monitor directly
+        {
+            let monitor = hub.health_monitor();
+            monitor.lock().unwrap().configure(100, 50); // latency=100ms, error_rate=50%
+        }
+
+        // Record many failures to push over the threshold
+        for _ in 0..6 {
+            hub.record_failure("flaky");
+        }
+
+        assert!(!hub.is_healthy("flaky"));
     }
 }
