@@ -1,130 +1,125 @@
-# HANDOFF — P1 Wiring COMPLETE Milestone
+# HANDOFF — P1 Recovery Rebuild (2026-06-07T14:30Z)
 
 **Worktree:** Primary checkout at `/home/drdave/Desktop/meta/prompt_hub` (on `main`)
 **Branch:** `main` (unprotected → APPLY mode: push/PR/auto-merge on green)
-**Base:** `origin/main@a8d11a4` (P1 milestone before rollback wiring)
+**Base:** latest main commit
 
 ---
 
-## 1. MILESTONE REACHED: P1 Wiring Complete ✅
+## 1. SESSION PURPOSE: Rebuild backlog with removed features + gap analysis
 
-All feature-gated and un-gated modules are now fully wired into PromptHub facade or properly gated behind feature flags. **20 passthrough features all accounted for.**
+The previous session declared the backlog TERMINAL based on stale verification. This session **rebuilt the backlog** to include all product commitments that were prematurely erased during s11-s15 wiring cleanup.
 
-### s15 Sessions Summary
-| Cycle | What | PR | Status |
-|-------|------|-----|--------|
-| c1 | Fix seed_database() dead parameter + unused imports | — | ✅ Merged |
-| c2 | Gate retention + garbage_collector behind #[cfg(feature = "retention")] | #60 (`0b193a5`) | ✅ Merged |
-| c3 | Wire health aggregator (health_check, is_ready, is_alive) | #61 (`a8d11a4`) | ✅ Merged |
-| c4 | Wire rollback SafeDeployer (deploy_with_rollback, restore_snapshot, is_rollback_available) | #62 (`baaa53e`) | ✅ Merged |
-
-**Totals across s11-s15:** ~45 delegation methods added to hub.rs, ~730+ LOC added, 724 tests passing.
+### Why the previous TERMINAL claim was wrong
+- Only verified what WAS in the backlog against code → confirmed stale items were resolved
+- Missed the root error: 17 product features were removed from Cargo.toml during cleanup, treated as "dead" when they are **product commitments**
+- The gap analysis found additional structural gaps beyond just stale items
 
 ---
 
-## 2. VERIFY-ON-RESUME Baseline
+## 2. GAP ANALYSIS FINDINGS — Full codebase audit (verified against live code)
 
-```bash
-cd /home/drdave/Desktop/meta/prompt_hub
-cargo check --workspace --all-features              # GREEN ✅ (3 crates)
-cargo test --workspace --all-features               # 724 passed, 2 ignored
-cargo clippy --workspace --all-targets --all-features -D warnings  # clean ✅
-just fmt && git diff --quiet                         # clean ✅
+### Critical Gaps (must fix before building new features)
+| # | Issue | File:Line | Fix |
+|---|-------|-----------|-----|
+| CRIT-1 | `quality = []` stub feature has no module file (`quality.rs` doesn't exist) | Cargo.toml:54 | Create module or remove from Cargo.toml |
+| CRIT-2 | Rollback pub methods lack `#[cfg(feature = "rollback")]` gates matching struct field | hub.rs:1425/1436/1441 vs :187 | Add cfg gates to 3 methods |
+| CRIT-3 | Server routes.rs:215 bypasses hub.get() for direct `storage().get_prompt()` — skips RBAC | prompthub-server/src/routes.rs:215 | Route through hub.get() + identity |
+
+### High Gaps (structural, not urgent)
+| # | Issue | Scope |
+|---|-------|-------|
+| HIGH-1 | 7 dead/stub modules with pub mod but zero product exposure (~1,345 LOC) | defaults, shutdown, multimodal_input, plugins, templates, tokens, junie |
+| HIGH-2 | ~60 hub.rs pub methods have NO server route (only 8 of 70+ covered) | vibe_code, budget(8), load_balancer(6), satisfaction(5), etc. |
+| HIGH-3 | Migration 0008_generation_params.sql is all comments (~1 line SQL) — version marker only | Data integrity for new databases |
+| HIGH-4 | 20+ CLI commands dispatched inline in main.rs without dedicated command files | Rollback, evolve, vibe, deploy, feedback, etc. |
+
+### Medium Gaps
+| # | Issue |
+|---|-------|
+| MED-1 | hooks.rs — core orchestrator infrastructure with ZERO test coverage |
+| MED-2 | templates.rs + tokens.rs (450+ LOC) have real impls but zero callers |
+| MED-3 | satisfaction stub passthrough creates feature/gate confusion |
+
+### Low Gaps
+| # | Issue |
+|---|-------|
+| LOW-1 | Orphaned "Load balancer" section header at hub.rs:1419 with no methods |
+| LOW-2 | No ADR for multi-module scaffolding strategy (51 modules, varying completeness) |
+| LOW-3 | CHANGELOG.md only 59 lines for a project with 62+ PRs |
+
+---
+
+## 3. REMOVED FEATURES — Must be rebuilt as P1 recovery
+
+**17 features removed from Cargo.toml during s11-s15 cleanup (marked "dead") are product commitments:**
+
+### P1 Recovery Priority Order (17 items)
+| # | Feature | Category | Priority | Estimated Scope |
+|---|---------|----------|----------|-----------------|
+| 1 | `cost-limits` | Infrastructure | HIGH | Multi-dimensional cost enforcement (~80 LOC) |
+| 2 | `beta-program` | Deployment | HIGH | Beta cohort tracking with rollout mgmt (~150 LOC) |
+| 3 | `multi-provider` | Infrastructure | HIGH | Vendor-agnostic model routing (~200 LOC) |
+| 4 | `sandbox` | Security | HIGH | Sandboxed prompt execution (~250 LOC) |
+| 5 | `voice` | Product | HIGH | Voice input/output pipeline (~180 LOC) |
+| 6 | `local-llm` | Platform | MED-HIGH | Ollama/Llama.cpp on-device inference (~200 LOC) |
+| 7 | `chaos` | Security | MEDIUM | Adversarial prompt testing framework (~150 LOC) |
+| 8 | `gradual-rollout` | Deployment | MEDIUM | Percentage-based canary rollout (~120 LOC) |
+| 9 | `touch` | UX | MED-LOW | Touch interaction layer for TUI (~100 LOC) |
+| 10 | `gather` | Platform | MEDIUM | Project-aware context extraction (~80 LOC) |
+| 11 | `accessibility` | UX | MEDIUM | WCAG-compliant output formatting (~100 LOC) |
+| 12 | `malware-scan` | Security | MEDIUM | Artifact upload malware detection (~150 LOC) |
+| 13 | `offline` | Platform | MEDIUM | Local-first mode with eventual sync (~200 LOC) |
+| 14 | `auto-purge` | Operations | MEDIUM | TTL-based auto-deletion/archiving (~120 LOC) |
+| 15 | `voice-anonymize` | Privacy | MED-LOW | PII scrubbing for voice transcripts (~80 LOC) |
+| 16 | `mobile` | Platform | LOW | Mobile SDK with sync optimization (~300 LOC) |
+| 17 | `qdrant` | Platform | LOW-MED | External vector search backend (~250 LOC) |
+| 18 | `chaos-automation` | Security | MEDIUM | Automated chaos test scheduling (~100 LOC) |
+
+**Total estimated: ~850-1,200 LOC across 17 features**
+
+---
+
+## 4. PRIORITY ORDER FOR NEXT SESSION
+
+### Phase 1: Fix critical bugs (must-do before anything else)
+1. **Fix quality.rs** — create module file OR remove from Cargo.toml (CRIT-1)
+2. **Add cfg gates to rollback methods** at hub.rs:1425/1436/1441 (CRIT-2)
+3. **Fix server routes.rs:215** — replace direct storage access with hub.get() (CRIT-3)
+
+### Phase 2: P1 recovery — rebuild removed features (priority order above)
+1. cost-limits → beta-program → multi-provider → sandbox → voice → local-llm
+2. chaos → gradual-rollout → touch → gather → accessibility → malware-scan
+3. offline → auto-purge → voice-anonymize → mobile → qdrant → chaos-automation
+
+### Phase 3: Gap analysis fixes (structural improvements)
+1. Wire top hub methods to server routes (vibe_code, budget, load_balancer)
+2. Add tests for hooks.rs + hub.get() method
+3. Move inline CLI commands to dedicated files
+4. Fix migration 0008 DDL
+
+---
+
+## 5. Current Gates (verified before handoff)
+| Gate | Result |
+|------|--------|
+| `cargo check --workspace --all-features` | GREEN ✅ |
+| `cargo clippy -D warnings` | clean ✅ |
+| `cargo test` | 724 passed, 2 ignored ✅ |
+| `cargo fmt --check` | clean ✅ |
+
+---
+
+## 6. What was committed out (deleted from Cargo.toml during s11-s15)
+```
+beta-program, chaos, chaos-automation, cost-limits, gradual-rollout,
+malware-scan, multi-provider, offline, qdrant, sandbox, voice-anonymize,
+local-llm, mobile, accessibility, touch, voice, gather, auto-purge
 ```
 
----
-
-## 3. Backlog Status: P1 COMPLETE — Only deferred P3/P4 remain
-
-### All P1 wiring confirmed done (20/20 features):
-| Module | Feature | Status | PR/Cycle |
-|--------|---------|--------|----------|
-| budget | "budget" | ✅ wired | s11-s14 |
-| circuit_breaker | "circuit-breaker" | ✅ wired | s11-s14 |
-| canary | "canary" | ✅ wired | s12-c4 |
-| moderation | "moderation" | ✅ wired | s12-c1 |
-| quota | "quota" | ✅ wired | s12-c2 |
-| preview | "preview" | ✅ wired | s12-c3 |
-| i18n | "i18n" | ✅ wired + real usage | s15-c2 |
-| multimodal | "multimodal" | ✅ wired + accessor | s14-c2 |
-| quality_gate | (ungated) | ✅ wired | PR #50 |
-| lineage | (ungated) | ✅ wired | PR #51 |
-| swarm | (ungated) | ✅ wired | PR #52 |
-| pollination | (ungated) | ✅ wired | PR #53 |
-| satisfaction | (ungated) | ✅ wired | PR #54 |
-| provider_health | (ungated) | ✅ wired | PR #58 |
-| load_balancer | (ungated) | ✅ wired | PR #59 |
-| analytics | "analytics" stub | ✅ wired | s13-s15 |
-| audit | (bare module) | ✅ wired | s13-s15 |
-| diff | (bare module) | ✅ wired | s13-c2 |
-| health | (ungated) | ✅ wired + 3 methods | PR #61 c3 |
-| rollback | "rollback" stub | ✅ wired + 3 methods | PR #62 c4 |
-
-### All other features confirmed wired/gated:
-- confidence ✅, cost ✅, fallback ✅, learn ✅, vibe ✅, privacy ✅ (all specific item imports)
+These were documented in Cargo.toml:63-69 as "dead features" but are product commitments. **They must be rebuilt.**
 
 ---
 
-## 4. Deferred Items (not P1 — lower priority, higher effort)
-
-### P3: Quality & documentation
-1. **Integration tests for `storage.rs`** — 1904 lines with only 1 test; needs coherent integration test file covering create/get/list/update/delete/pagination
-2. **Integration tests for `hub.rs`** — 2071 lines with only 2 inline doctests; needs dedicated integration suite
-
-### P4: Edge cases (blocked by design)
-- **Default identity lacks Write capability** for non-operator callers — `AgentIdentity::default()` returns anonymous with empty capabilities. Server HTTP API grants Read+Write. Workaround: `AgentIdentity::local_operator()`. Blocked because requires careful consideration of programmatic vs HTTP API paths.
-
----
-
-## 5. Critical Corrections from This Session's DISCOVER
-
-The s11 backlog had a grep limitation — only checked for bare module patterns (`crate::X::*`) and missed specific item imports like `use crate::cost::CostEstimator`. This caused **6 items to be misclassified** as unwired when they were actually wired:
-- budget, circuit_breaker, canary, moderation, quota, preview → all CONFIRMED wired ✅
-- confidence, cost, fallback, learn → all CONFIRMED wired (specific item imports) ✅
-
-Also corrected: i18n was confirmed wired with real usage at hub.rs:1739 (`fallback_chain`), NOT dead code.
-
----
-
-## 6. All Landed Commits on Main (recent)
-
-| Session | Commit | Subject |
-|---------|--------|---------|
-| s15-c4 | `baaa53e` | feat: wire rollback SafeDeployer into PromptHub facade (P1-final) |
-| s15-c3 | `a8d11a4` | feat: wire health aggregator into PromptHub facade (PR #61) |
-| s15-c2 | `0b193a5` | fix: gate retention and garbage_collector behind feature flag (PR #60) |
-| s15-c1 | `7bd848c` | chore(loop): seed_database() fix + HANDOFF |
-| s14-c2 | `f7a503c` | feat: wire multimodal engine into PromptHub facade |
-
----
-
----
-
-## 7. RESUME (2026-06-07): Backlog TERMINAL ✅
-
-A RESUME was executed to verify the backlog state:
-
-| Claimed Item | Actual State | Verdict |
-|---|---|---|
-| P3 storage.rs integration tests (1 test) | Has **20 unit tests** in `mod tests` block | Stale data from s10 |
-| P3 hub.rs integration tests (2 inline doctests) | Has **9+ integration + 33+ across other test files** | Stale data from s10 |
-| P4b unwired modules (analytics, audit, GC, health, defaults) | All wired in hub.rs as of s15 PRs #60-#62 | Resolved during s15 |
-
-All DONE gates re-verified fresh: build ✅ test(724) ✅ clippy ✅ fmt ✅.
-`_workspace/DONE` written with full evidence.
-
-**No shippable items remain.** A fresh DISCOVER would be needed to find new work.
-
----
-
-## 8. Recommendation for Next Session
-
-**Do NOT continue the loop without a fresh DISCOVER.** The P1 milestone is complete, backlog items are stale, and there are no genuine feature development tasks remaining.
-
-If continuing prompt_hub work:
-1. **Run new DISCOVER** — scan TODO.md, docs/audits, issues for genuinely new items
-2. Or consider this project loop **COMPLETE** (54 cycles, 62 PRs merged, P1 milestone achieved)
-
----
-
-*Handoff written: 2026-06-08T04:35:00Z | P1 WIRING COMPLETE milestone achieved across s11-s15.*
+*Handoff written: 2026-06-07T14:35:00Z | P1 recovery rebuild started. Backlog restored with all removed features + gap analysis findings.*
+**Critical note for next session:** The previous TERMINAL claim was incorrect. The backlog is NOT terminal — the prior verification only confirmed stale items were resolved, not that new work needed to be added.
