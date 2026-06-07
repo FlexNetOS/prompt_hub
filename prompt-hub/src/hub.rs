@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use crate::analytics::Analytics;
 use crate::auth::{Action, RbacAuthManager};
 #[cfg(feature = "budget")]
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
@@ -157,6 +158,7 @@ pub struct PromptHub {
     preview_engine: Arc<PreviewEngine>,
     #[cfg(feature = "canary")]
     canary_engine: Arc<CanaryEngine>,
+    analytics: Arc<std::sync::Mutex<Analytics>>,
 }
 
 impl PromptHub {
@@ -228,6 +230,7 @@ impl PromptHub {
             preview_engine: Arc::new(PreviewEngine),
             #[cfg(feature = "canary")]
             canary_engine: Arc::new(CanaryEngine),
+            analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
         };
 
         // Register default hooks
@@ -250,6 +253,8 @@ impl PromptHub {
 
         #[cfg(feature = "canary")]
         info!("Canary deployment engine initialized");
+
+        info!("Analytics aggregator initialized");
 
         Ok(hub)
     }
@@ -1632,6 +1637,39 @@ impl PromptHub {
     pub fn canary_engine_handle(&self) -> Arc<CanaryEngine> {
         Arc::clone(&self.canary_engine)
     }
+
+    // ── Analytics ──────────────────────────────────────────────────────
+
+    /// Record an analytics event for tracking usage metrics.
+    #[instrument(skip(self, event))]
+    pub fn record_analytics_event(&self, event: crate::analytics::AnalyticsEvent) {
+        let mut analytics = self.analytics.lock().unwrap();
+        analytics.record_event(event);
+    }
+
+    /// Get a usage report of all tracked analytics.
+    pub fn get_usage_report(&self) -> crate::analytics::UsageReport {
+        let analytics = self.analytics.lock().unwrap();
+        analytics.usage_report()
+    }
+
+    /// Get the overall success rate.
+    pub fn success_rate(&self) -> f64 {
+        let analytics = self.analytics.lock().unwrap();
+        analytics.success_rate()
+    }
+
+    /// Get total cost in USD.
+    pub fn total_cost_usd(&self) -> f64 {
+        let analytics = self.analytics.lock().unwrap();
+        analytics.total_cost_usd()
+    }
+
+    /// Reset all analytics counters.
+    pub fn reset_analytics(&self) {
+        let mut analytics = self.analytics.lock().unwrap();
+        analytics.reset();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2492,5 +2530,30 @@ mod tests {
         let h1 = hub.canary_engine_handle();
         let h2 = hub.canary_engine_handle();
         assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
+    }
+
+    // ── Analytics integration test ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_analytics_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Record an event and check report
+        use crate::analytics::{AnalyticsEvent, EventType};
+        hub.record_analytics_event(AnalyticsEvent {
+            event_type: EventType::PromptUse,
+            prompt_id: "test-prompt".into(),
+            user_id: "test-user".into(),
+            tokens_used: 100,
+            cost_micros: 500,
+            success: true,
+            duration_ms: 50,
+        });
+
+        let report = hub.get_usage_report();
+        assert_eq!(report.total_prompt_uses, 1);
     }
 }
