@@ -10,6 +10,7 @@ use crate::canary::CanaryEngine;
 #[cfg(feature = "circuit-breaker")]
 use crate::circuit_breaker::CircuitBreaker;
 use crate::config::HubConfig;
+use crate::diff::PromptDiff;
 use crate::error::{HubError, Result};
 use crate::hooks::{HookRegistry, JunieHook};
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
@@ -161,6 +162,7 @@ pub struct PromptHub {
     canary_engine: Arc<CanaryEngine>,
     analytics: Arc<std::sync::Mutex<Analytics>>,
     audit_logger: Arc<SqliteAuditLogger>,
+    diff_engine: PromptDiff,
 }
 
 impl PromptHub {
@@ -234,6 +236,7 @@ impl PromptHub {
             canary_engine: Arc::new(CanaryEngine),
             analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
             audit_logger: Arc::new(SqliteAuditLogger::new()),
+            diff_engine: PromptDiff::new(),
         };
 
         // Register default hooks
@@ -260,6 +263,8 @@ impl PromptHub {
         info!("Analytics aggregator initialized");
 
         info!("Audit logging initialized (SqliteAuditLogger backend)");
+
+        info!("Diff engine initialized (LCS-based text diff)");
 
         Ok(hub)
     }
@@ -1712,6 +1717,29 @@ impl PromptHub {
     pub fn audit_logger_handle(&self) -> Arc<SqliteAuditLogger> {
         Arc::clone(&self.audit_logger)
     }
+
+    // ── Text diff engine ───────────────────────────────────────────────
+
+    /// Compute a unified diff between two text documents.
+    pub fn compute_diff(&self, old: &str, new: &str) -> crate::diff::DiffResult {
+        self.diff_engine.compute(old, new, "v0", "v1")
+    }
+
+    /// Summarize a diff with line counts and changed sections.
+    pub fn summarize_diff(&self, diff: &crate::diff::DiffResult) -> crate::diff::ChangeSummary {
+        self.diff_engine.summarize(diff)
+    }
+
+    /// Check if two documents are identical (no diff needed).
+    pub fn is_identical(&self, old: &str, new: &str) -> bool {
+        let diff = self.compute_diff(old, new);
+        self.diff_engine.is_identical(&diff)
+    }
+
+    /// Format a diff as unified diff text.
+    pub fn format_unified_diff(&self, diff: &crate::diff::DiffResult) -> String {
+        self.diff_engine.format_unified(diff)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2624,5 +2652,30 @@ mod tests {
 
         // Handle works
         let _handle = test_hub.audit_logger_handle();
+    }
+
+    // ── Diff integration test ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_diff_engine_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Compute a diff between two strings
+        let old_text = "line 1\nline 2\nline 3";
+        let new_text = "line 1\nchanged line\nline 3";
+        let diff = hub.compute_diff(old_text, new_text);
+        assert!(hub.is_identical("identical", "identical"));
+
+        // Summarize the diff
+        let summary = hub.summarize_diff(&diff);
+        assert!(summary.total_changes >= 1);
+        assert!(summary.change_ratio > 0.0);
+
+        // Format as unified diff
+        let formatted = hub.format_unified_diff(&diff);
+        assert!(!formatted.is_empty());
     }
 }
