@@ -5,6 +5,7 @@ use crate::config::HubConfig;
 use crate::error::{HubError, Result};
 use crate::hooks::{HookRegistry, JunieHook};
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
+use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
 use crate::metrics::MetricsCollector;
 use crate::models::*;
 use crate::pollination::{CrossAgentPollination, Pattern};
@@ -130,6 +131,7 @@ pub struct PromptHub {
     pollination: Arc<std::sync::Mutex<CrossAgentPollination>>,
     satisfaction_tracker: Arc<SatisfactionTracker>,
     health_monitor: Arc<std::sync::Mutex<ProviderHealthMonitor>>,
+    load_balancer: Arc<std::sync::Mutex<LoadBalancer>>,
 }
 
 impl PromptHub {
@@ -186,6 +188,9 @@ impl PromptHub {
             pollination: Arc::new(std::sync::Mutex::new(CrossAgentPollination::new())),
             satisfaction_tracker: Arc::new(SatisfactionTracker::new(1000)),
             health_monitor: Arc::new(std::sync::Mutex::new(ProviderHealthMonitor::new())),
+            load_balancer: Arc::new(std::sync::Mutex::new(LoadBalancer::new(
+                RoutingStrategy::Weighted,
+            ))),
         };
 
         // Register default hooks
@@ -1289,6 +1294,81 @@ impl PromptHub {
         let monitor = self.health_monitor();
         monitor.lock().unwrap().summary()
     }
+
+    // ── Load balancer -----------------------------------------------------------
+
+    /// Return a cloneable handle to the load balancer.
+    pub fn load_balancer(&self) -> Arc<std::sync::Mutex<LoadBalancer>> {
+        Arc::clone(&self.load_balancer)
+    }
+
+    /// Add a provider to the load balancer pool.
+    ///
+    /// The *weight* parameter controls how often this provider is selected
+    /// during weighted round-robin routing (higher weight = more requests).
+    ///
+    /// # Arguments
+    /// * `name` — Unique identifier for the provider (e.g., `"gpt-4o-primary"`).
+    /// * `url` — Endpoint URL for the provider.
+    /// * `weight` — Relative traffic share (default 1 = equal weight).
+    #[instrument(skip(self))]
+    pub fn add_lb_provider(&self, name: &str, url: &str, weight: u32) {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().add_provider(name, url, weight);
+        info!(
+            provider = name,
+            weight = weight,
+            "Added provider to load balancer"
+        );
+    }
+
+    /// Select the next healthy provider according to the configured routing strategy.
+    ///
+    /// For `WeightedRoundRobin`, returns a [`ProviderSelection`] with the selected
+    /// provider's details and computed weight for the current round. Returns an error
+    /// if no providers are registered or all are marked unhealthy.
+    /// Select the next healthy provider according to the configured routing strategy.
+    ///
+    /// For `Weighted` strategy, returns a [`ProviderSelection`] with the selected
+    /// provider's details and computed weight for the current round. Returns an error
+    /// if no providers are registered or all are marked unhealthy.
+    #[instrument(skip(self))]
+    pub fn select_provider(&self) -> Result<ProviderSelection> {
+        let lb = self.load_balancer();
+        let binding = lb.lock().unwrap();
+        binding.select_provider()
+    }
+
+    /// Record latency metrics for a specific provider in the load balancer pool.
+    ///
+    /// Used by health monitors or probes to update latency statistics that
+    /// may influence routing decisions (e.g., preferring faster providers).
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    /// * `latency_ms` — Measured round-trip latency in milliseconds.
+    #[instrument(skip(self))]
+    pub fn record_lb_latency(&self, provider_name: &str, latency_ms: u64) {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().record_latency(provider_name, latency_ms);
+    }
+
+    /// Record a failure event for the named provider in the load balancer pool.
+    ///
+    /// Increments the error counter used by health-aware routing. Providers with
+    /// too many errors may be temporarily excluded from the rotation.
+    #[instrument(skip(self))]
+    pub fn record_lb_failure(&self, provider_name: &str) {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().record_error(provider_name);
+        warn!(provider = provider_name, "Recorded load balancer failure");
+    }
+
+    /// Return current stats for all providers in the load balancer pool.
+    pub fn get_lb_stats(&self) -> Vec<ProviderStats> {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().stats()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1966,5 +2046,26 @@ mod tests {
         }
 
         assert!(!hub.is_healthy("flaky"));
+    }
+
+    #[tokio::test]
+    async fn test_load_balancer_add_and_select() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.add_lb_provider("gpt-4o", "https://api.openai.com/v1", 2);
+        hub.add_lb_provider("claude", "https://api.anthropic.com/v1", 1);
+
+        let stats = hub.get_lb_stats();
+        assert_eq!(stats.len(), 2);
+
+        for _ in 0..3 {
+            let selection = hub.select_provider();
+            assert!(selection.is_ok());
+            let sel = selection.unwrap();
+            assert!(sel.provider_name == "gpt-4o" || sel.provider_name == "claude");
+        }
     }
 }

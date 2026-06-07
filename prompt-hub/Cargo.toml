@@ -58,7 +58,6 @@ moderation = []
 budget = []
 analytics = []
 preview = []
-load-balance = []
 
 # ---------------------------------------------------------------------------
 # Stub features with no corresponding module or source references whatsoever.
