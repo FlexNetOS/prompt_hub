@@ -43,7 +43,7 @@ quota = ["prompt-hub/quota"]
 circuit-breaker = ["prompt-hub/circuit-breaker"]
 moderation = ["prompt-hub/moderation"]
 retention = ["prompt-hub/retention"]
-provider-health = ["prompt-hub/provider-health"]
+
 load-balance = ["prompt-hub/load-balance"]
 satisfaction = ["prompt-hub/satisfaction"]
 analytics = ["prompt-hub/analytics"]

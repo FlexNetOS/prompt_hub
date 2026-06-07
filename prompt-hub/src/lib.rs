@@ -65,7 +65,6 @@ pub mod pollination;
 pub mod preview;
 #[cfg(feature = "privacy")]
 pub mod privacy;
-#[cfg(feature = "provider-health")]
 pub mod provider_health;
 pub mod quality_gate;
 #[cfg(feature = "quota")]
