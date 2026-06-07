@@ -4,6 +4,7 @@ use crate::auth::{Action, RbacAuthManager};
 use crate::config::HubConfig;
 use crate::error::{HubError, Result};
 use crate::hooks::{HookRegistry, JunieHook};
+use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::metrics::MetricsCollector;
 use crate::models::*;
 use crate::quality_gate::{QualityGate, QualityResult};
@@ -101,6 +102,7 @@ pub struct PromptHub {
     sync: SyncManager,
     hooks: HookRegistry,
     quality_gate: Arc<QualityGate>,
+    lineage: LineageTracker,
 }
 
 impl PromptHub {
@@ -138,6 +140,7 @@ impl PromptHub {
             sync: SyncManager::new(),
             hooks: HookRegistry::new(),
             quality_gate: Arc::new(QualityGate::new()),
+            lineage: LineageTracker::new(),
         };
 
         // Register default hooks
@@ -656,6 +659,56 @@ impl PromptHub {
         );
         Ok(result)
     }
+
+    // ── Version lineage ───────────────────────────────────────────────
+
+    /// Get the ancestry path for a version.
+    #[instrument(skip(self))]
+    pub fn get_lineage_ancestry(&self, version_id: &str) -> Result<AncestryPath> {
+        self.lineage.get_ancestry(version_id)
+    }
+
+    /// Detect all forks in the lineage graph.
+    #[instrument(skip(self))]
+    pub fn detect_lineage_forks(&self) -> Vec<Fork> {
+        self.lineage.detect_forks()
+    }
+
+    /// Get all descendant version IDs for a root version.
+    #[instrument(skip(self))]
+    pub fn get_lineage_descendants(&self, version_id: &str) -> Vec<String> {
+        self.lineage.get_descendants(version_id)
+    }
+
+    /// Build a lineage tree rooted at the given version ID.
+    #[instrument(skip(self))]
+    pub fn build_lineage_tree(&self, root_version: &str) -> Option<LineageTree> {
+        self.lineage.build_tree(root_version)
+    }
+
+    /// Mutable access to the lineage tracker (caller owns mutation).
+    ///
+    /// Prefer using this over storing a separate Arc/Mutex — it avoids
+    /// double-allocation and keeps the tracker inline with PromptHub.
+    #[allow(clippy::mutable_key_type)]
+    pub fn lineage_mut(&mut self) -> &mut LineageTracker {
+        &mut self.lineage
+    }
+
+    /// Number of registered version nodes.
+    pub fn lineage_node_count(&self) -> usize {
+        self.lineage.node_count()
+    }
+
+    /// Check whether a specific version is tracked.
+    pub fn has_lineage_version(&self, version_id: &str) -> bool {
+        self.lineage.has_version(version_id)
+    }
+
+    /// Get the set of root versions (no parents).
+    pub fn lineage_roots(&self) -> &[String] {
+        self.lineage.roots()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -894,5 +947,142 @@ mod tests {
         assert!(result.passed);
         assert!(result.warnings.is_empty());
         assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_lineage_register_and_ancestry() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Register a root version.
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        assert_eq!(hub.lineage_node_count(), 1);
+        assert_eq!(hub.lineage_roots().len(), 1);
+
+        // Register a child version.
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+
+        let ancestry = hub.get_lineage_ancestry("v2").unwrap();
+        assert_eq!(ancestry.path, vec!["v1", "v2"]);
+        assert_eq!(ancestry.depth, 2);
+    }
+
+    #[tokio::test]
+    async fn test_lineage_fork_detection() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v3", "prompt-a", Some("v1"), "charlie")
+            .unwrap();
+
+        let forks = hub.detect_lineage_forks();
+        assert_eq!(forks.len(), 1);
+        assert_eq!(forks[0].fork_point_version, "v1");
+        assert_eq!(forks[0].branches.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_lineage_tree_build() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+
+        let tree = hub.build_lineage_tree("v1").unwrap();
+        assert_eq!(tree.root, "v1");
+        assert_eq!(tree.nodes.len(), 2);
+        assert_eq!(tree.fork_count, 0); // only one child of v1
+    }
+
+    #[tokio::test]
+    async fn test_lineage_descendants() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v3", "prompt-a", Some("v2"), "charlie")
+            .unwrap();
+
+        let descs = hub.get_lineage_descendants("v1");
+        assert_eq!(descs.len(), 2);
+        assert!(descs.contains(&"v2".to_string()));
+        assert!(descs.contains(&"v3".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_lineage_has_version() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        assert!(!hub.has_lineage_version("v99"));
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+
+        assert!(hub.has_lineage_version("v1"));
+        assert!(!hub.has_lineage_version("v99"));
+    }
+
+    #[tokio::test]
+    async fn test_lineage_duplicate_conflict() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+
+        let result = hub
+            .lineage_mut()
+            .register_version("v1", "prompt-b", None, "bob");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_lineage_missing_parent() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let result =
+            hub.lineage_mut()
+                .register_version("v2", "prompt-a", Some("nonexistent"), "bob");
+        assert!(result.is_err());
     }
 }
