@@ -1,34 +1,35 @@
 # Loop state — prompt-loop
-session_started: 2026-06-07T19:50:00Z   # s11
+session_started: 2026-06-07T21:00:00Z   # s12
 loop: prompt-loop
 branch: main (primary checkout)
 worktree: none (merged to origin/main)
-cycle_budget: 3
-cycles_this_session: 3   # BUDGET REACHED — hand off
-cycles_total: 30         # sessions 1-9 + s10(3) + budget-fix(1) + budget(1) + circuit_breaker(1)
+cycle_budget: 5
+cycles_this_session: 1
+cycles_total: 34
 apply_mode: APPLY
-last_item: circuit_breaker — WIRE circuit_breaker into PromptHub facade (DONE ✅)
-status: BUDGET REACHED — write HANDOFF.md. 4 more P1 items wired; 5+5 remain.
+last_item: moderation — WIRE moderation into PromptHub facade (DONE ✅)
+status: Cycle 1 done. Next: quota wiring.
 
-## Gates at end:
-#   check: GREEN ✅ | clippy (--all-targets -D warnings): clean ✅ | fmt: clean ✅
-#   tests: 712 passed, 2 ignored | CI: all green
+## Gates at cycle end:
+#   check: GREEN ✅ | clippy (--all-features -D warnings): clean ✅ | fmt: clean ✅
+#   tests: 714 passed, 2 ignored (+2 from moderation integration tests)
 
 ## s11 summary
 - c1: Fix CLI build break (vibe/rollback/cost/learn → default features) — 8c743b5
 - c2: Budget tracker → PromptHub facade (+1 test) — 6f705e2
 - c3: CircuitBreaker → PromptHub facade (+1 test) — ab39d84
 
-## Remaining P1 wiring
-### P1a-f: Feature-gated modules awaiting hub.rs wiring (5 remain)
-1. moderation (9.2K lines, 10 tests, 9 pub fn) — feature="moderation"
-2. quota (8.6K lines, 10 tests, 10 pub fn) — feature="quota"
-3. preview (15.9K lines, 7 tests, 4 pub fn) — feature="preview"
-4. canary (3.0K lines, 6 tests, 4 pub fn) — feature="canary"
+## s12 summary (in progress)
+- c1: Moderation wiring (+2 tests, 3 delegation methods + accessor) [PENDING COMMIT]
 
-### P1g-k: Un-gated but unwired modules (need design decision on gating first)
-5. analytics (352L, 11 tests, 15 pub fn)
-6. audit (406L, 14 tests, 7 pub fn)
-7. diff (338L, 11 tests, 9 pub fn)
-8. garbage_collector (283L, 11 tests, 13 pub fn)
-9. retention (290L, 11 tests, 15 pub fn)
+## Remaining P1 wiring
+### P1a-d: Feature-gated modules awaiting hub.rs wiring (3 remain)
+1. quota (8.6K lines, 10 tests, 10 pub fn) — feature="quota"
+2. preview (15.9K lines, 7 tests, 4 pub fn) — feature="preview"
+3. canary (3.0K lines, 6 tests, 4 pub fn) — feature="canary"
+
+### P1e-i: Un-gated but wired modules (after DISCOVER decision)
+4. analytics (unconditional) — wire after moderation → quota path
+5. audit (unconditional, core infra) — same path
+6. diff (unconditional, pure utility) — same path
+7. retention + garbage_collector (feature-gated pair) — coupled wiring

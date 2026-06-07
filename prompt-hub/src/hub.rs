@@ -12,6 +12,8 @@ use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
 use crate::metrics::MetricsCollector;
 use crate::models::*;
+#[cfg(feature = "moderation")]
+use crate::moderation::ModerationEngine;
 use crate::pollination::{CrossAgentPollination, Pattern};
 use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
 use crate::quality_gate::{QualityGate, QualityResult};
@@ -140,6 +142,8 @@ pub struct PromptHub {
     budget_tracker: Arc<BudgetTracker>,
     #[cfg(feature = "circuit-breaker")]
     circuit_breaker: Arc<CircuitBreaker>,
+    #[cfg(feature = "moderation")]
+    moderation: Arc<ModerationEngine>,
 }
 
 impl PromptHub {
@@ -203,6 +207,8 @@ impl PromptHub {
             budget_tracker: Arc::new(BudgetTracker::default()),
             #[cfg(feature = "circuit-breaker")]
             circuit_breaker: Arc::new(CircuitBreaker::default()),
+            #[cfg(feature = "moderation")]
+            moderation: Arc::new(ModerationEngine::new()),
         };
 
         // Register default hooks
@@ -213,6 +219,9 @@ impl PromptHub {
 
         #[cfg(feature = "circuit-breaker")]
         info!("Circuit breaker initialized with defaults (threshold=5, timeout=30s)");
+
+        #[cfg(feature = "moderation")]
+        info!("Content moderation engine initialized in permissive mode");
 
         Ok(hub)
     }
@@ -1474,6 +1483,43 @@ impl PromptHub {
     pub fn circuit_breaker(&self) -> Arc<CircuitBreaker> {
         Arc::clone(&self.circuit_breaker)
     }
+
+    // ── Content moderation ────────────────────────────────────────────
+
+    /// Moderate user input for harmful content before processing.
+    ///
+    /// Runs the prompt against all configured moderation categories
+    /// (hate, violence, self-harm, sexual, illegal, harassment) and returns
+    /// a [`ModerationReport`] with allow/block/flag result.
+    ///
+    /// Requires the `moderation` feature flag.
+    #[cfg(feature = "moderation")]
+    #[instrument(skip(self, prompt))]
+    pub fn check_content(&self, prompt: &str) -> Result<crate::moderation::ModerationReport> {
+        self.moderation.check(prompt)
+    }
+
+    /// Quick boolean check: returns `true` if the content passes moderation.
+    #[cfg(feature = "moderation")]
+    #[instrument(skip(self, prompt))]
+    pub fn is_content_safe(&self, prompt: &str) -> bool {
+        self.moderation.is_allowed(prompt)
+    }
+
+    /// Moderate multiple prompts in sequence for bulk operations.
+    #[cfg(feature = "moderation")]
+    pub fn check_content_batch(
+        &self,
+        prompts: &[String],
+    ) -> Vec<Result<crate::moderation::ModerationReport>> {
+        self.moderation.check_batch(prompts)
+    }
+
+    /// Return a cloneable handle to the moderation engine.
+    #[cfg(feature = "moderation")]
+    pub fn moderation_engine(&self) -> Arc<ModerationEngine> {
+        Arc::clone(&self.moderation)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2226,5 +2272,42 @@ mod tests {
             let _ = cb.call(|| Err::<(), _>(HubError::Internal("test".into())));
         }
         assert_eq!(cb.current_state(), "open");
+    }
+
+    // ── Moderation integration tests ───────────────────────────────────
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_delegation() {
+        use crate::moderation::ModerationResult;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Safe content passes
+        assert!(hub.is_content_safe("Hello, how are you today?"));
+
+        // check_content returns Allow for safe content
+        let report = hub.check_content("What is Rust?").unwrap();
+        assert!(matches!(report.result, ModerationResult::Allow));
+
+        // handle works across feature gate
+        let handle = hub.moderation_engine();
+        assert!(handle.is_allowed("Hello world"));
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_handle_returns_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        let engine1 = hub.moderation_engine();
+        let engine2 = hub.moderation_engine();
+        assert!(std::ptr::eq(Arc::as_ptr(&engine1), Arc::as_ptr(&engine2)));
     }
 }
