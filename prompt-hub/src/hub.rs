@@ -161,6 +161,8 @@ pub struct PromptHub {
     load_balancer: Arc<std::sync::Mutex<LoadBalancer>>,
     #[cfg(feature = "budget")]
     budget_tracker: Arc<BudgetTracker>,
+    #[cfg(feature = "cost-limits")]
+    cost_limiter: std::sync::Arc<crate::cost_limits::CostLimiter>,
     #[cfg(feature = "circuit-breaker")]
     circuit_breaker: Arc<CircuitBreaker>,
     #[cfg(feature = "moderation")]
@@ -246,6 +248,8 @@ impl PromptHub {
             ))),
             #[cfg(feature = "budget")]
             budget_tracker: Arc::new(BudgetTracker::default()),
+            #[cfg(feature = "cost-limits")]
+            cost_limiter: std::sync::Arc::new(crate::cost_limits::CostLimiter::default()),
             #[cfg(feature = "circuit-breaker")]
             circuit_breaker: Arc::new(CircuitBreaker::default()),
             #[cfg(feature = "moderation")]
@@ -1614,6 +1618,63 @@ impl PromptHub {
         self.budget_tracker.reset_period();
     }
 
+    // ── Cost limits (multi-dimensional budget enforcement) -----------------------
+
+    /// Record spend against an entity's resource bucket with overage enforcement.
+    ///
+    /// Returns the [`LimitStatus`] after recording the spend, indicating whether
+    /// it was allowed, flagged as over-limit, or blocked.
+    #[cfg(feature = "cost-limits")]
+    #[instrument(skip(self))]
+    pub async fn check_cost_limits(
+        &self,
+        entity_id: &str,
+        resource: crate::cost_limits::Resource,
+        amount_usd: f64,
+    ) -> crate::cost_limits::LimitStatus {
+        self.cost_limiter
+            .check_and_record(entity_id, resource, amount_usd)
+    }
+
+    /// Add or update a cost limit for an entity-resource pair.
+    #[cfg(feature = "cost-limits")]
+    #[instrument(skip(self))]
+    pub fn set_cost_limit(
+        &self,
+        entity_id: &str,
+        resource: crate::cost_limits::Resource,
+        budget_usd: f64,
+        policy: crate::cost_limits::OveragePolicy,
+    ) -> crate::cost_limits::LimitEntry {
+        self.cost_limiter
+            .set_limit(entity_id, resource, budget_usd, policy)
+    }
+
+    /// Get utilization percentage for an entity-resource pair.
+    #[cfg(feature = "cost-limits")]
+    pub fn cost_utilization(
+        &self,
+        entity_id: &str,
+        resource: crate::cost_limits::Resource,
+    ) -> Option<f64> {
+        self.cost_limiter.utilization(entity_id, resource)
+    }
+
+    /// Get all tracked entities and their limit statuses.
+    #[cfg(feature = "cost-limits")]
+    pub fn cost_limit_status(&self) -> Vec<(String, f64, crate::cost_limits::OveragePolicy)> {
+        self.cost_limiter
+            .entity_ids()
+            .into_iter()
+            .flat_map(|id| {
+                self.cost_limiter
+                    .entity_status(&id)
+                    .into_iter()
+                    .map(move |(_res, util, pol)| (id.clone(), util, pol))
+            })
+            .collect()
+    }
+
     // ── Circuit breaker ----------------------------------------------------------
 
     /// Return a cloneable handle to the circuit breaker.
@@ -2925,6 +2986,7 @@ mod tests {
         assert_eq!(ids, vec!["img1".to_string(), "img2".to_string()]);
     }
 
+    #[cfg(feature = "i18n")]
     #[tokio::test]
     async fn test_i18n_accessible() {
         let dir = tempfile::tempdir().unwrap();

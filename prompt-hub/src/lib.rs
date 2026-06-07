@@ -34,6 +34,8 @@ pub mod config;
 pub mod context_gatherer;
 #[cfg(feature = "cost")]
 pub mod cost;
+#[cfg(feature = "cost-limits")]
+pub mod cost_limits;
 pub mod defaults;
 pub mod diff;
 pub mod error;

@@ -5,10 +5,10 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 0
-cycles_total: 56+
+cycles_this_session: 3
+cycles_total: 59
 apply_mode: APPLY (default for /prompt-loop)
-status: REBUILD — backlog restored with all removed features + gap analysis findings
+status: Building P1 recovery — CRIT-1/2/3 fixed, next: cost-limits feature
 
 ## This session's purpose
 
