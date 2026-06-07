@@ -65,6 +65,7 @@ These five modules have **no feature gate** on their `pub mod` in lib.rs and **z
 ## P2: Feature flag hygiene (remaining stub features in Cargo.toml) ✅ DONE
 
 - [x] **Remove dead stub features** — `sqlcipher`, `ffi`, and `garbage-collector` passthrough entries removed from all 3 crates. One additional fix: re-gated `garbage_collector` field in hub.rs from `feature = "garbage-collector"` → `feature = "retention"` (was orphaned cfg gate). +4 files changed, -15 lines. Committed as `s14-c1`.
+- [x] **Wire remaining module: multimodal** — 8 pub items, 21 tests but ZERO hub.rs wiring. Added import, struct field, accessor (`multimodal_engine()`), and 2 delegation methods (`validate_image_mime_type`, `extract_placeholder_ids`). +45 LOC, +1 test (723 total). Committed as `s14-c2`.
 
 ---
 

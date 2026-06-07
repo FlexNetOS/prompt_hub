@@ -102,8 +102,8 @@ Three stub features remain in `prompt-hub/Cargo.toml`:
 2. **P3-storage integration tests** (largest ROI for code quality) — 1904-line file with only 1 test
 3. **P4-seed_database cleanup** — either implement or remove dead function in `defaults.rs`
 
-All P1 wiring is done and verified. P2 stub cleanup done ✅ (`b3d3aca`). The codebase is in a healthy state with 722 passing tests.
+All P1 wiring is done and verified. Multimodal added ✅ (`f7a503c`). The codebase is in a healthy state with 723 passing tests.
 
 ---
 
-*Handoff written: 2026-06-08T01:15:00Z | P1 wiring complete (s11-s13), P2 stub cleanup complete (s14-c1).*
+*Handoff written: 2026-06-08T01:30:00Z | P1 wiring complete (s11-s13), P2 stub cleanup + multimodal done (s14-c1+c2).*
