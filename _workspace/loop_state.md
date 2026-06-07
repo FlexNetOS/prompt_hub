@@ -4,11 +4,11 @@ loop: prompt-loop
 branch: main (primary checkout)
 worktree: none (merged to origin/main)
 cycle_budget: 3            # completed cycles per session before handoff (override via PROMPT_BUDGET)
-cycles_this_session: 0     # new DISCOVER session started
-cycles_total: 22           # sessions 1-8 + DISCOVER s9
-apply_mode: APPLY          # push -> PR -> DIRECT squash merge on green DONE-gates
-last_item: DISCOVER
-status: DISCOVER complete — backlog verified against real state. Next: P2 feature flag hygiene.
+cycles_this_session: 1     # DISCOVER + 1 build cycle (P2 feature flag hygiene)
+cycles_total: 23           # sessions 1-8 + DISCOVER s9 + s9c1 (P2 flags)
+apply_mode: APPLY          # push -> PR -> squash merge on green DONE-gates
+last_item: P2 feature flag hygiene (#55 merged)
+status: Cycle 1 complete — P2 feature flag hygiene built + verified + merged. Backlog has P3 items remaining (trivial docs).
 last_update: 2026-06-07T18:45:00Z
 
 ## Gates at DISCOVER completion:

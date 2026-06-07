@@ -45,9 +45,12 @@ Audit discovered the full picture. Of 49 feature declarations:
 
 Proposed shippable unit: **Remove dead features + convert stub features to real cfg gates** — one coherent refactor of Cargo.toml with corresponding module-level gating in lib.rs/hub.rs. Splitting this into multiple cycles is possible but defeats the purpose; one item covering all three categories (dead/unused, stub→real, orphan modules) is a single Cargo.toml + import refactoring session.
 
-- [ ] **Audit and clean up 49 feature flags in `prompt-hub/Cargo.toml`: remove dead features, convert stub features to real cfg gates or delete the feature key entirely**
-  — source: direct grep of Cargo.toml `[features]` section vs `grep -rn 'cfg(feature' prompt-hub/src/` + module pub-count cross-reference; provenance: self-discovery
-  — scope: remove ~32 dead features, gate 9 stub features behind real `#[cfg]`, or delete feature keys from modules that should be always-on
+- [x] **Audit and clean up 49 feature flags in `prompt-hub/Cargo.toml`: remove dead features, convert stub features to real cfg gates** (#55 → merged ✅)
+  — Removed 18 dead features (zero module existence): beta-program, chaos, chaos-automation, cost-limits, gradual-rollout, malware-scan, multi-provider, offline, qdrant, sandbox, voice-anonymize, local-llm, mobile, accessibility, touch, voice, gather, auto-purge
+  — Kept 3 stub passthroughs for backward compat: sqlcipher, ffi, garbage-collector  
+  — Converted 17 stub→real cfg gates: budget, canary, circuit-breaker, confidence, cost, fallback, learn, load-balance, moderation, multimodal, preview, privacy, provider-health, quality, quota, rollback, vibe
+  — satisfaction kept always-in (deeply wired as PromptHub field)
+  — source: direct grep of Cargo.toml `[features]` vs `grep -rn 'cfg(feature' prompt-hub/src/`; provenance: self-discovery
 
 ---
 

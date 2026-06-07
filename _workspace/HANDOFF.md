@@ -39,6 +39,7 @@
 | s6 | 1 | SMART_EMBEDDING Slice 5 deep (real ONNX inference) | #48 | `d01b5c9` |
 | s7 | 3 | SWARM/WIRE EPIC: swarm + quality_gate + lineage | #49-#51 | `47132fe` |
 | **s8** | **3** | **P1 WIREING ROUND 2: swarm + pollination + satisfaction** | **#52-#54** | **`6b95ec6`** |
+| **s9** | **2** | **DISCOVER + P2 feature flag hygiene (remove dead + stub→gate)** | **#55** | **pending** |
 
 Total: 20 cycles. All PRs verified merged with CI green.
 
@@ -64,11 +65,15 @@ Total: 20 cycles. All PRs verified merged with CI green.
 **Model cache:** `~/.cache/prompthub/models/<owner>/<name>/model.onnx`
 **Unsafe code:** none — all 49+ library modules have `#![forbid(unsafe_code)]`
 
-## 6. Remaining items for next DISCOVER
+## 6. Remaining items for next session (post-P2)
+
+P3 docs are trivial copy-editing (no code gates). P4 is an edge case. All impactful work done.
+
+## 6a. Original remaining items for next DISCOVER (pre-P2 merge)
 
 | Priority | Item | Source | Status |
 |----------|------|--------|--------|
-| P2 | Feature flag hygiene (~30 dead flags) | Cargo.toml self-discovery | open |
+| ~~P2~~ | ~~Feature flag hygiene (~30 dead flags)~~ | ~~Cargo.toml self-discovery~~ | **✅ merged #55** |
 | P3 | Regenerate qodana SARIF | TODO.md V section | blocked (QODANA_TOKEN) |
 | P3 | Complete API docs for all Hub methods | TODO.md P4 | open |
 | P3 | Document feature flags table in README.md | TODO.md P4 | open |
