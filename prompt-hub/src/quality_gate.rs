@@ -120,10 +120,34 @@ pub struct QualityResult {
 /// and accessibility checkers to produce an overall quality verdict.
 #[derive(Default)]
 pub struct QualityGate {
+    #[allow(dead_code)]
     pub linters: Vec<Box<dyn Linter>>,
+    #[allow(dead_code)]
     pub security_scanners: Vec<Box<dyn SecurityScanner>>,
+    #[allow(dead_code)]
     pub performance_checkers: Vec<Box<dyn PerformanceChecker>>,
+    #[allow(dead_code)]
     pub accessibility_checkers: Vec<Box<dyn AccessibilityChecker>>,
+}
+
+impl std::fmt::Debug for QualityGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QualityGate")
+            .field("linters", &format_args!("{} items", self.linters.len()))
+            .field(
+                "security_scanners",
+                &format_args!("{} items", self.security_scanners.len()),
+            )
+            .field(
+                "performance_checkers",
+                &format_args!("{} items", self.performance_checkers.len()),
+            )
+            .field(
+                "accessibility_checkers",
+                &format_args!("{} items", self.accessibility_checkers.len()),
+            )
+            .finish()
+    }
 }
 
 impl QualityGate {
