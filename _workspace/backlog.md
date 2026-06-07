@@ -31,7 +31,7 @@ Three modules have 70+ lines of tested implementations with public APIs but are 
 - [x] **Wire `swarm::SwarmRoleRegistry` (878 lines, 22 pub items, 23 tests) into PromptHub — add a `manage_swarm()` method to hub.rs that creates/uses a SwarmRoleRegistry and validates role dependency graphs** (#49 → merged ✅)
   — source: `prompt-hub/src/swarm.rs` (largest unwired module; ADR-0008 vibe architecture references swarm coordination); provenance: self-discovery
 
-- [ ] **Wire `quality_gate::QualityGate` (443 lines, 11 pub items including Linter/SecurityScanner/PerformanceChecker traits) into PromptHub — add a `run_quality_check()` method that invokes the gate pipeline**
+- [x] **Wire `quality_gate::QualityGate` (443 lines, 11 pub items including Linter/SecurityScanner/PerformanceChecker traits) into PromptHub — add a `run_quality_gate()` method that invokes the gate pipeline** (#50 → merged ✅)
   — source: `prompt-hub/src/quality_gate.rs`; ADR-0008 mentions "QualityGate" as a pipeline stage; provenance: self-discovery
 
 - [ ] **Wire `lineage::LineageTracker` (439 lines, 16 pub items, 15 tests) into PromptHub — add `get_prompt_lineage()` and `track_prompt_evolution()` methods that record prompt version ancestry**
