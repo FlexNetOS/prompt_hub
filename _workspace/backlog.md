@@ -34,7 +34,7 @@ Three modules have 70+ lines of tested implementations with public APIs but are 
 - [x] **Wire `quality_gate::QualityGate` (443 lines, 11 pub items including Linter/SecurityScanner/PerformanceChecker traits) into PromptHub — add a `run_quality_gate()` method that invokes the gate pipeline** (#50 → merged ✅)
   — source: `prompt-hub/src/quality_gate.rs`; ADR-0008 mentions "QualityGate" as a pipeline stage; provenance: self-discovery
 
-- [ ] **Wire `lineage::LineageTracker` (439 lines, 16 pub items, 15 tests) into PromptHub — add `get_prompt_lineage()` and `track_prompt_evolution()` methods that record prompt version ancestry**
+- [x] **Wire `lineage::LineageTracker` (439 lines, 16 pub items, 15 tests) into PromptHub — add lineage delegation methods (+7 tests)** (#51 → merged ✅)
   — source: `prompt-hub/src/lineage.rs`; models already have `VersionRecord` (added PR #32); provenance: TODO.md V section gap + existing VersionRecord struct awaiting usage
 
 ---
