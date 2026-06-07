@@ -340,6 +340,35 @@ impl Storage {
         }
     }
 
+    /// Upsert an embedding blob for a prompt.
+    ///
+    /// The `embedding` slice must contain f32 values encoded as little-endian bytes.
+    #[instrument(skip(self, embedding))]
+    pub async fn upsert_embedding(&self, prompt_id: Uuid, embedding: &[u8]) -> Result<()> {
+        let conn = self.acquire().await?;
+        conn.execute(
+            "INSERT INTO embeddings (prompt_id, embedding) VALUES (?1, ?2) \
+             ON CONFLICT(prompt_id) DO UPDATE SET embedding = ?2;",
+            params!(prompt_id.to_string(), embedding),
+        )
+        .await
+        .map_err(|e| HubError::StorageError(format!("Upsert embedding: {e}")))?;
+        Ok(())
+    }
+
+    /// Delete the embedding row for a prompt.
+    #[instrument(skip(self))]
+    pub async fn delete_embedding(&self, prompt_id: Uuid) -> Result<()> {
+        let conn = self.acquire().await?;
+        conn.execute(
+            "DELETE FROM embeddings WHERE prompt_id = ?1;",
+            params!(prompt_id.to_string()),
+        )
+        .await
+        .map_err(|e| HubError::StorageError(format!("Delete embedding: {e}")))?;
+        Ok(())
+    }
+
     /// Fetch a single active (not soft-deleted) prompt by its UUID.
     #[instrument(skip(self))]
     pub async fn get_prompt(&self, id: Uuid) -> Result<Option<Prompt>> {

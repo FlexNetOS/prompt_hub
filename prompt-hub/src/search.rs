@@ -334,7 +334,7 @@ mod embedder_tests {
         let h = HashEmbedder::new(10);
         let v = h.embed_single("test");
         for val in v {
-            assert!(-1.0 <= val && val <= 1.0, "value out of range: {val}");
+            assert!((-1.0..=1.0).contains(&val), "value out of range: {val}");
         }
     }
 
@@ -623,19 +623,39 @@ impl SearchEngine for SmartEngine {
 
     fn index<'a>(
         &'a self,
-        _prompt: &'a Prompt,
+        prompt: &'a Prompt,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            // Embedding generation is handled separately by an embedding pipeline.
-            debug!("SMART index: embeddings handled by pipeline");
+            // Compose embedding text from prompt content fields.
+            let text = format!(
+                "{}\n{}\n{}",
+                prompt.name, prompt.system_prompt, prompt.user_template
+            );
+            if text.is_empty() {
+                warn!("SMART index: empty prompt — skipping embedding");
+                return Ok(());
+            }
+
+            // Embed via pluggable backend.
+            let batch = self.embedder.embed(&[text]).await?;
+            let embedding_vec: Vec<f32> = batch
+                .into_iter()
+                .next()
+                .ok_or_else(|| HubError::InvalidInput("embedder returned empty batch".into()))?;
+
+            // Convert f32 → LE bytes and persist.
+            let bytes: Vec<u8> = embedding_vec.iter().flat_map(|f| f.to_le_bytes()).collect();
+            self.storage.upsert_embedding(prompt.id, &bytes).await?;
+
+            info!(prompt_id = %prompt.id, dim = %embedding_vec.len(), "SMART index: prompt embedded");
             Ok(())
         })
     }
 
     fn remove(&self, prompt_id: Uuid) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
-            // Embeddings table has CASCADE DELETE.
-            debug!("SMART remove: id={prompt_id} — handled by cascade");
+            self.storage.delete_embedding(prompt_id).await?;
+            debug!("SMART remove: id={prompt_id} — embedding row deleted");
             Ok(())
         })
     }
@@ -1526,26 +1546,28 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_index_and_remove() {
         let storage = in_memory_storage().await;
+
+        // Insert the prompt into storage first (FK requires it exists).
+        let mut prompt = Prompt::new("hybrid-test", "Testing hybrid index/remove.");
+        prompt.domain = Domain::Coding;
+        storage.insert_prompt(&prompt).await.unwrap();
+
         let engine = HybridEngine::default_engines(storage);
-        let prompt = Prompt {
-            id: Uuid::new_v4(),
-            name: "hybrid-test".to_string(),
-            version: semver::Version::new(1, 0, 0),
-            status: Status::Active,
-            system_prompt: "sys".to_string(),
-            user_template: "user".to_string(),
-            required_vars: vec![],
-            domain: Domain::Coding,
-            tags: vec![],
-            target_roles: vec![],
-            metadata: PromptMeta::default(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            deleted_at: None,
-            generation_params: None,
-            ..Default::default()
-        };
+
+        // Index → verify embedding persisted; remove → verify it's cleared.
         assert!(engine.index(&prompt).await.is_ok());
+
+        // Verify the embedding exists by searching.
+        let results = engine
+            .search("hybrid", &SearchFilters::default(), &Pagination::default())
+            .await
+            .unwrap();
+        assert!(
+            results.items.iter().any(|s| s.prompt.name == "hybrid-test"),
+            "Smart engine should find the indexed prompt"
+        );
+
+        // Remove and verify gone.
         assert!(engine.remove(prompt.id).await.is_ok());
     }
 
