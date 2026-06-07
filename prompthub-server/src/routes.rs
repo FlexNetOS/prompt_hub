@@ -199,7 +199,8 @@ pub async fn list_prompts(
 
 /// Get a single prompt by its UUID.
 ///
-/// Queries the real storage layer via PromptHub.storage().get_prompt().
+/// Queries the real PromptHub storage layer with RBAC authorization via the
+/// default agent identity (grants Read+Write for HTTP operations).
 #[instrument(skip(state))]
 pub async fn get_prompt(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     info!("Fetching prompt {}", id);
@@ -212,7 +213,10 @@ pub async fn get_prompt(State(state): State<Arc<AppState>>, Path(id): Path<Strin
         }
     };
 
-    match state.hub.storage().get_prompt(uuid).await {
+    // Use hub.get_by_id() for exact-UUID lookup with RBAC authorization.
+    // Previously used state.hub.storage().get_prompt(uuid) directly which
+    // bypassed hub's RBAC intent logic present in all other CRUD routes.
+    match state.hub.get_by_id(uuid, &default_agent()).await {
         Ok(Some(prompt)) => success(json!({
             "id": prompt.id.to_string(),
             "name": prompt.name,

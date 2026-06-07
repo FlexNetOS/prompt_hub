@@ -448,6 +448,23 @@ impl PromptHub {
         Ok(results.items.into_iter().next().map(|sp| sp.prompt))
     }
 
+    /// Get a single prompt by its UUID with RBAC authorization.
+    ///
+    /// Performs an exact-UUID lookup through the storage layer, gated by
+    /// [`RbacAuthManager`] Read authorization for the provided identity.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to retrieve.
+    /// * `identity` — Caller's [`AgentIdentity`] (used for RBAC).
+    ///
+    /// # Returns
+    /// `Ok(Some(prompt))` if found, `Ok(None)` if not, or an error on failure.
+    pub async fn get_by_id(&self, id: Uuid, identity: &AgentIdentity) -> Result<Option<Prompt>> {
+        RbacAuthManager::authorize_action(identity, Action::Read)?;
+        self.metrics.record_request();
+        self.storage.get_prompt(id).await
+    }
+
     /// Search prompts using the configured search engine.
     ///
     /// Delegates to the internal hybrid search pipeline (FTS5 + optional
