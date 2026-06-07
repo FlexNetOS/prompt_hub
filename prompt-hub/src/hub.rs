@@ -36,6 +36,8 @@ use crate::quality_gate::{QualityGate, QualityResult};
 use crate::quota::QuotaEnforcer;
 #[cfg(feature = "retention")]
 use crate::retention::{DataType, RetentionPolicy};
+#[cfg(feature = "rollback")]
+use crate::rollback::SafeDeployer;
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
@@ -181,6 +183,8 @@ pub struct PromptHub {
     retention_policy: RetentionPolicy,
     #[cfg(feature = "retention")]
     garbage_collector: GarbageCollector,
+    #[cfg(feature = "rollback")]
+    safe_deployer: SafeDeployer,
 }
 
 impl PromptHub {
@@ -264,6 +268,7 @@ impl PromptHub {
             retention_policy: RetentionPolicy::default(),
             #[cfg(feature = "retention")]
             garbage_collector: GarbageCollector::new(crate::retention::RetentionPolicy::default()),
+            safe_deployer: SafeDeployer::new(),
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
@@ -1412,6 +1417,29 @@ impl PromptHub {
     }
 
     // ── Load balancer -----------------------------------------------------------
+
+    // ── Rollback (safe deployment) --------------------------------------------
+
+    /// Deploy a prompt with automatic rollback capability.
+    /// Requires the `rollback` feature flag and Write RBAC.
+    pub async fn deploy_with_rollback(
+        &self,
+        artifact: &crate::models::Artifact,
+        rollback_enabled: bool,
+    ) -> Result<crate::rollback::DeployResult> {
+        self.safe_deployer.deploy_with_rollback(artifact, rollback_enabled).await
+    }
+
+    /// Restore a prompt to a previously saved snapshot by ID.
+    pub async fn restore_snapshot(&self, id: &str) -> Result<()> {
+        self.safe_deployer.restore_snapshot(id).await
+    }
+
+    /// Check if a specific rollback snapshot is available.
+    pub fn is_rollback_available(&self, snapshot_id: &str) -> bool {
+        self.safe_deployer.is_rollback_available(snapshot_id)
+    }
+
 
     /// Return a cloneable handle to the load balancer.
     pub fn load_balancer(&self) -> Arc<std::sync::Mutex<LoadBalancer>> {
