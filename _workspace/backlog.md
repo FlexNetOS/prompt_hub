@@ -77,12 +77,12 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       test (embed→search finds it→remove clears it). Gates green: check/clippy(-D warnings)/fmt/683 tests.
       Landed via PR #45._
 
-- [ ] **Slice 3 — `feat(config,hub): select embedder backend from HubConfig`** (deps: Slices 1-2).
-      Build `Arc<dyn Embedder>` from config in `hub.rs:108-119` (default `HashEmbedder` with
-      `config.embedding_dimension`); optional `lib.rs` re-export of `Embedder`/`HashEmbedder`.
-      Acceptance: `PromptHub::new` default config → register→search returns the prompt end-to-end.
-      Same 4 gates. Risk: Low-Medium (touches `lib.rs` re-exports + `HubConfig`; keep default
-      deterministic so hub tests stay green).
+- [x] **Slice 3 — `feat(config,hub): select embedder backend from HubConfig`** (deps: Slices 1-2).
+      _Cycle 10 (2026-06-07). Default `PromptHub::new` with default config constructs `HashEmbedder(384)`
+      via `SmartEngine::new(model, storage, dim)`. The full path works: register → SmartEngine.index
+      → HashEmbedder embeds → upsert_embedding → search finds prompt by cosine. No re-exports needed
+      (search module is already pub). Added e2e integration test verifying the full flow. Gates green:
+      check/clippy(-D warnings)/fmt/684 tests. Landed via PR #46._
 
 - [!] **blocked: Slice 4 — `feat(search): gate real-model embedder backend behind `smart` (scaffold)`.**
       Needs the inference-runtime decision (see plan "Open decisions"). Make `smart` meaningful: a
