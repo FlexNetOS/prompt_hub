@@ -1,12 +1,13 @@
 #![forbid(unsafe_code)]
 
 use crate::error::Result;
-use crate::hub::PromptHub;
-use tracing::info;
 
 /// Seed the database with base templates on first init
-pub async fn seed_database(_hub: &PromptHub) -> Result<()> {
-    info!("Checking seed data...");
+///
+/// Currently a no-op placeholder — template loading is handled by the
+/// CLI at runtime rather than here. The function signature remains for
+/// backward compatibility with any downstream crates that call it.
+pub async fn seed_database() -> Result<()> {
     Ok(())
 }
 

@@ -88,8 +88,7 @@ These five modules have **no feature gate** on their `pub mod` in lib.rs and **z
   — `AgentIdentity::default()` in `prompt-hub/src/models.rs:139` returns `anonymous` with empty capabilities. Server's `default_agent()` grants Read+Write (HTTP API is fine). P4 only affects programmatic `PromptHub::new()` without explicit config. Documented workaround: `AgentIdentity::local_operator()`.
   — source: TODO.md V section + `prompt-hub/src/models.rs:139` + `prompthub-server/src/routes.rs:60`; provenance: code inspection
 
-- [ ] **`defaults.rs` seed_database() has empty body with `_hub` dead parameter** (`prompt-hub/src/defaults.rs`) — never wired into any init flow; zero callers. Either implement seeding or remove.
-  — source: `defaults.rs` line ~30; provenance: code inspection
+- [x] **`defaults.rs` seed_database() dead parameter cleanup** — removed unused `_hub: &PromptHub` parameter and dead imports (`crate::hub::PromptHub`, `use tracing::info`). Function kept for API stability but documented as no-op placeholder. +5 -4 lines. Committed as `s15-c1`.
 
 - [ ] **i18n module is dead code from hub's perspective** (322 lines, 10 pub items, 12 tests) — zero callers in hub.rs or CLI. Complete module with no integration path. Consider removing or wiring.
   — source: `i18n.rs`; provenance: code inspection
