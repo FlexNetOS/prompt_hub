@@ -97,13 +97,13 @@ Three stub features remain in `prompt-hub/Cargo.toml`:
 
 **Pick any item below based on priority:**
 
-1. **P2 stub cleanup** (fastest, safest) — remove `sqlcipher`, `ffi`, and redundant `garbage-collector` entries from Cargo.toml
-2. **P4-default identity fix** — add `Write` to default agent capabilities or document as known limitation
-3. **P3-storage integration tests** (largest ROI for code quality) — 1904-line file with only 1 test
+1. **P4-default identity fix** — add `Write` to default agent capabilities or document as known limitation
+   — currently blocked; requires careful consideration of programmatic vs HTTP API paths
+2. **P3-storage integration tests** (largest ROI for code quality) — 1904-line file with only 1 test
+3. **P4-seed_database cleanup** — either implement or remove dead function in `defaults.rs`
 
-All P1 wiring is done and verified. The codebase is in a healthy state with 722 passing tests.
+All P1 wiring is done and verified. P2 stub cleanup done ✅ (`b3d3aca`). The codebase is in a healthy state with 722 passing tests.
 
 ---
 
-*Handoff written: 2026-06-08T00:00:00Z | All P1 wiring complete across sessions s11-s13.*
-*Previous handoffs: HANDOFF.md files from s11/s12 superseded by this version.*
+*Handoff written: 2026-06-08T01:15:00Z | P1 wiring complete (s11-s13), P2 stub cleanup complete (s14-c1).*
