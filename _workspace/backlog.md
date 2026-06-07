@@ -10,11 +10,11 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 
 - `cargo check --workspace --all-features`: **0 errors** (3 crates compiled)
 - `cargo clippy --workspace --all-targets -- -D warnings`: **clean**
-- `cargo test --workspace --all-features`: **685 passed, 1 ignored**
+- `cargo test --workspace --all-features`: **694 passed, 1 ignored**
 - `cargo doc --workspace --all-features --no-deps`: **0 warnings**
-- CI (last 5 runs): all green (CI/Qodana/Security/Push)
+- CI (last 5 runs): all green (Qodana/CI/Security/Push)
 - `gh issue list`: no open issues
-- SMART_EMBEDDING epic shipped via PR #44–#48, all merged to main
+- swarm PR #49 was a phantom merge — zero `.rs` files changed. Swarm module (878 lines, 19 tests) remains completely unwired.
 
 ---
 
@@ -24,31 +24,30 @@ _Nothing. All gates green — build, clippy, tests, docs, CI all pass._
 
 ---
 
-## P1: Feature completion (scaffold → wire)
+## P1: Feature completion (largest unwired modules with real tested code → wire into PromptHub)
 
-Three modules have 70+ lines of tested implementations with public APIs but are **never wired into `PromptHub`** and lack feature-gates in `Cargo.toml`. They are the highest-value candidates for "make them available at runtime."
+The 3 highest-value candidates are the largest unwired modules with the most tests and clear pub APIs. Each is a self-contained domain ready to be wired behind its own method on `PromptHub`.
 
-- [x] **Wire `swarm::SwarmRoleRegistry` (878 lines, 22 pub items, 23 tests) into PromptHub — add a `manage_swarm()` method to hub.rs that creates/uses a SwarmRoleRegistry and validates role dependency graphs** (#49 → merged ✅)
-  — source: `prompt-hub/src/swarm.rs` (largest unwired module; ADR-0008 vibe architecture references swarm coordination); provenance: self-discovery
+- [ ] **Wire `swarm::SwarmRoleRegistry` (878 lines, 19 tests, 22 pub items including `validate_swarm_roles`, `generate_full_handoff_chain`) into PromptHub — add `manage_swarm()` accessor + validation/bundle delegation methods**
+  — source: `prompt-hub/src/swarm.rs`; PR #49 claimed wiring but was phantom merge (zero .rs changes); provenance: self-discovery
 
-- [x] **Wire `quality_gate::QualityGate` (443 lines, 11 pub items including Linter/SecurityScanner/PerformanceChecker traits) into PromptHub — add a `run_quality_gate()` method that invokes the gate pipeline** (#50 → merged ✅)
-  — source: `prompt-hub/src/quality_gate.rs`; ADR-0008 mentions "QualityGate" as a pipeline stage; provenance: self-discovery
+- [ ] **Wire `pollination` module (410 lines, 10 tests) into PromptHub — add a pollination-related Hub method that delegates to its pub API**
+  — source: `prompt-hub/src/pollination.rs`; large tested module with clear public interface awaiting routing; provenance: self-discovery
 
-- [x] **Wire `lineage::LineageTracker` (439 lines, 16 pub items, 15 tests) into PromptHub — add lineage delegation methods (+7 tests)** (#51 → merged ✅)
-  — source: `prompt-hub/src/lineage.rs`; models already have `VersionRecord` (added PR #32); provenance: TODO.md V section gap + existing VersionRecord struct awaiting usage
+- [ ] **Wire `satisfaction::SatisfactionCollector` (374 lines, 14 tests) into PromptHub — add a satisfaction scoring/feedback method**
+  — source: `prompt-hub/src/satisfaction.rs`; module has real tested logic for post-op satisfaction; provenance: self-discovery
 
 ---
 
-## P2: Feature flag hygiene (dead flags → dead_code → remove)
+## P2: Feature flag hygiene (~30 dead features → audit, gate, or remove)
 
-Five feature flags in `prompt-hub/Cargo.toml` are **declarations with zero `cfg(feature = "...")` gating any source file** — they gate nothing and should be either wired-in or removed.
+Many feature declarations have zero `cfg(feature = "...")` gates on any source file. Some correspond to modules that exist (and are wired into hub.rs), others are orphaned declarations with no module at all.
 
-- [!] **Audit/resolve dead feature flags: `vibe`, `multimodal`, `chaos`, `chaos-automation`, `tokenizers`**
-  — `vibe`: module exists (717 lines) and IS wired via `hub.vibe_code()` but without a feature gate → either add `cfg(feature = "vibe")` or remove from features table
-  — `multimodal`: module exists (`multimodal.rs`, 294 lines with real MIME validation logic) but no `#[cfg]` gates it → needs wiring OR removal
-  — `chaos` / `chaos-automation`: empty feature arrays `[ ]`, no dependent code at all → candidates for removal
-  — `tokenizers`: declared with `dep:tokenizers` dependency but no `cfg(feature = "tokenizers")` anywhere → the dep is consumed by `search.rs` unconditionally (smart-ort path) — either gate via feature or remove from features table
-  — source: `prompt-hub/Cargo.toml` feature declarations vs. actual `grep -rl 'cfg(feature ...' src/` results; provenance: self-discovery
+- [ ] **Audit the 30+ dead feature flags in `prompt-hub/Cargo.toml` — for each, decide: wire behind a real cfg gate, remove from features table, or keep as stub for planned work**
+  — Modules with NO corresponding feature: `audit`, `auth`, `config`, `defaults`, `error`, `hooks`, `hub`, `lib`, `lock`, `metrics`, `models`, `search`, `storage`, `sync`, `templates`, `tokens` (all are always-on, which is fine)
+  — Features with module but no cfg gate: `vibe`(wired via hub.vibe_code()), `multimodal`(309 lines/21 tests), `preview`(477/1), `privacy`(wired via hub.scan_privacy()), `quality`/`quality_gate`, `rollback`(wired via hub.rollback()), `cost`(wired via hub.estimate_cost()), `confidence`(wired via hub.score_confidence()), `learn`(wired via hub.learn_from_feedback()), `fallback`(wired via hub.fallback_chain())
+  — Features with NO module at all (true dead): `accessibility`, `auto-purge`, `beta-program`, `chaos`, `chaos-automation`, `cost-limits`, `ffi`, `gather`, `gradual-rollout`, `load-balance`, `local-llm`, `malware-scan`, `mobile`, `multi-provider`, `offline`, `qdrant`, `sandbox`, `touch`, `voice`, `voice-anonymize`
+  — source: `prompt-hub/Cargo.toml` feature table vs. `grep -rl 'cfg(feature' prompt-hub/src/`; provenance: self-discovery
 
 ---
 
@@ -71,7 +70,7 @@ Five feature flags in `prompt-hub/Cargo.toml` are **declarations with zero `cfg(
 ## P4: Configuration hardening (from TODO.md V section — pre-existing)
 
 - [!] **Default identity lacks `Write` capability for non-operator callers**
-  — The local CLI was fixed by PR #41 (`cli_identity()` returns `local_operator` with Read+Write+Admin), but the server's `default_agent()` and any direct `PromptHub::new()` without explicit config still produce `anonymous` (Read-only) identity. Any programmatic user who constructs a `PromptHub` directly gets write-denied mutations.
+  — The CLI was fixed by PR #41 (`cli_identity()` returns `local_operator` with Read+Write+Admin), but the server's `default_agent()` and any direct `PromptHub::new()` without explicit config still produce `anonymous` (Read-only) identity. Any programmatic user who constructs a `PromptHub` directly gets write-denied mutations.
   — source: TODO.md line 20–24, V section; `prompthub-server/src/routes.rs` line ~64 (`default_agent()`); provenance: TODO.md + code inspection
 
 ---
@@ -84,6 +83,11 @@ Five feature flags in `prompt-hub/Cargo.toml` are **declarations with zero `cfg(
 - Select embedder backend from HubConfig (e2e verified)
 - Wire ort-based OrtEmbedder behind smart-ort feature + HubConfig selection
 - Real ONNX inference: lazy model download, tokenizers, ort::Session, [CLS] extraction, L2-normalize
+
+### Feature wiring (PRs #49–#51 — verify status)
+- [x] Wire `quality_gate::QualityGate` (467 lines) → hub.rs `run_quality_gate()` + field (PR #50, real 138-line .rs diff)
+- [x] Wire `lineage::LineageTracker` (439 lines) → hub.rs delegation methods + field (PR #51, real 227-line .rs diff)
+- [ ] Wire `swarm::SwarmRoleRegistry` (878 lines) — **PHANTOM**: PR #49 had zero .rs changes; module exists but is NOT wired
 
 ### Initial setup cycles (PRs #27/#30–#48)
 - sha2 0.11 build fix
