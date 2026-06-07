@@ -49,7 +49,6 @@ pub mod junie;
 #[cfg(feature = "learn")]
 pub mod learn;
 pub mod lineage;
-#[cfg(feature = "load-balance")]
 pub mod load_balancer;
 pub mod lock;
 pub mod metrics;

@@ -44,7 +44,7 @@ circuit-breaker = ["prompt-hub/circuit-breaker"]
 moderation = ["prompt-hub/moderation"]
 retention = ["prompt-hub/retention"]
 
-load-balance = ["prompt-hub/load-balance"]
+
 satisfaction = ["prompt-hub/satisfaction"]
 analytics = ["prompt-hub/analytics"]
 canary = ["prompt-hub/canary"]
