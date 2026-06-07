@@ -99,8 +99,8 @@
 
 - [x] **Run `cargo fmt --all -- --check`** — ✅ clean (2026-06-05).
 
-- [ ] **Run `cargo doc --workspace --all-features --no-deps`**
-  - Fix documentation warnings (now unblocked — was blocked by the P0 build error). Next-to-build.
+- [x] **Run `cargo doc --workspace --all-features --no-deps`**
+  - ✅ green — fixed crate-level doctest in lib.rs.
 
 ## Audits
 
@@ -108,6 +108,7 @@
   - 18 live `RsUnnecessaryQualifications` fixed; rest stale/already-fixed or subjective won't-fix.
   - ⚠️ The SARIF is now stale — see **V** section: regenerate it before the next triage.
   - File: `docs/audits/qodana.sarif.json`
+
 ## P3 — Testing
 
 - [x] **Run `cargo test -p prompt-hub --lib`** — ✅ green (part of 671-test workspace pass, 2026-06-05).
@@ -124,15 +125,15 @@
 
 ## P4 — Documentation
 
-- [ ] **Complete API documentation for all 20 Hub methods**
+- [x] **Complete API documentation for all 20 Hub methods**
   - Add doc comments with examples
   - File: `prompt-hub/src/hub.rs`
 
-- [ ] **Document feature flags table in README.md**
-  - Map each flag to module and use case
+- [x] **Document feature flags table in README.md**
+  - Comprehensive table covering all real features, P2 gates, and passthrough
 
-- [ ] **Add crate-level docs in lib.rs**
-  - `//!` doc comment with quickstart example
+- [x] **Add crate-level docs in lib.rs**
+  - `//!` doc comment with quickstart example (verified: `cargo doc --all-features` clean)
 
 ## P5 — Polish (last)
 
@@ -142,8 +143,8 @@
 - [ ] **Verify CI workflow passes**
   - Check `.github/workflows/ci.yml` syntax
 
-- [ ] **Add git-cliff configuration** (`.cliff.toml`)
-  - For automated changelog generation
+- [x] **Add git-cliff configuration** (`.cliff.toml`) — already present.
+  - Configured for Conventional Commits; consumed by CI `changelog` job + `just changelog`.
 
 ## Done
 

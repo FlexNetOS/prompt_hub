@@ -1,4 +1,19 @@
 #![forbid(unsafe_code)]
+//! Production-ready prompt management for LLM agent swarms. Rust 2024 Edition.
+//!
+//! ```rust,no_run
+//! use prompthub::{models::SearchMode, HubConfig, PromptHub};
+//! use std::path::Path;
+//!
+//! # async fn example() -> prompthub::Result<()> {
+//! let hub = PromptHub::new(Path::new("prompthub.db"), HubConfig::default()).await?;
+//! let prompt = prompthub::models::Prompt::new("hello", "Hello, world!");
+//! hub.register(prompt.clone(), &Default::default()).await?;
+//! let results = hub.search("hello", SearchMode::Fast).await?;
+//! println!("Found {} prompt(s)", results.len());
+//! # Ok(())
+//! # }
+//! ```
 // This crate is still being built out: many modules are scaffolded ahead of the
 // features that will wire them in, so dead-code is expected for now. The search
 // and storage traits intentionally use native `async fn` (Rust 2024 Edition, no
