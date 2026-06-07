@@ -22,6 +22,8 @@ use crate::models::CanaryDeployment;
 use crate::models::*;
 #[cfg(feature = "moderation")]
 use crate::moderation::ModerationEngine;
+#[cfg(feature = "multimodal")]
+use crate::multimodal::MultimodalEngine;
 use crate::pollination::{CrossAgentPollination, Pattern};
 #[cfg(feature = "preview")]
 use crate::preview::PreviewEngine;
@@ -164,6 +166,8 @@ pub struct PromptHub {
     preview_engine: Arc<PreviewEngine>,
     #[cfg(feature = "canary")]
     canary_engine: Arc<CanaryEngine>,
+    #[cfg(feature = "multimodal")]
+    multimodal_engine: MultimodalEngine,
     analytics: Arc<std::sync::Mutex<Analytics>>,
     audit_logger: Arc<SqliteAuditLogger>,
     diff_engine: PromptDiff,
@@ -242,6 +246,8 @@ impl PromptHub {
             preview_engine: Arc::new(PreviewEngine),
             #[cfg(feature = "canary")]
             canary_engine: Arc::new(CanaryEngine),
+            #[cfg(feature = "multimodal")]
+            multimodal_engine: MultimodalEngine,
             analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
             audit_logger: Arc::new(SqliteAuditLogger::new()),
             diff_engine: PromptDiff::new(),
@@ -280,6 +286,9 @@ impl PromptHub {
 
         #[cfg(feature = "canary")]
         info!("Canary deployment engine initialized");
+
+        #[cfg(feature = "multimodal")]
+        info!("Multimodal engine initialized (image placeholder support)");
 
         info!("Analytics aggregator initialized");
 
@@ -1672,6 +1681,26 @@ impl PromptHub {
         Arc::clone(&self.canary_engine)
     }
 
+    // ── Multimodal (multimodal input support) ──────────────────────────
+
+    /// Return a reference to the multimodal engine.
+    #[cfg(feature = "multimodal")]
+    pub fn multimodal_engine(&self) -> &MultimodalEngine {
+        &self.multimodal_engine
+    }
+
+    /// Validate that an image MIME type is supported by the multimodal engine.
+    #[cfg(feature = "multimodal")]
+    pub fn validate_image_mime_type(&self, mime: &str) -> bool {
+        MultimodalEngine::validate_mime_type(mime)
+    }
+
+    /// Extract all placeholder IDs from a template string.
+    #[cfg(feature = "multimodal")]
+    pub fn extract_placeholder_ids(&self, template: &str) -> Vec<String> {
+        MultimodalEngine::extract_placeholder_ids(template)
+    }
+
     // ── Analytics ──────────────────────────────────────────────────────
 
     /// Record an analytics event for tracking usage metrics.
@@ -2787,5 +2816,21 @@ mod tests {
 
         // GC enabled check
         assert!(hub.gc_enabled());
+    }
+
+    #[tokio::test]
+    async fn test_multimodal_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Functional assertions: MIME validation and placeholder extraction
+        assert!(hub.validate_image_mime_type("image/png"));
+        assert!(!hub.validate_image_mime_type("application/octet-stream"));
+
+        // Placeholder extraction works (format: {{id}})
+        let ids = hub.extract_placeholder_ids("Hello {{img1}} World {{img2}}");
+        assert_eq!(ids, vec!["img1".to_string(), "img2".to_string()]);
     }
 }
