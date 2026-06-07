@@ -18,6 +18,7 @@ path = "src/main.rs"
 [features]
 default = ["prompt-hub/handlebars"]
 smart = ["prompt-hub/smart"]
+smart-ort = ["prompt-hub/smart-ort"]
 otel = ["prompt-hub/otel"]
 sqlcipher = ["prompt-hub/sqlcipher"]
 tls = ["prompt-hub/tls", "dep:tokio-rustls"]

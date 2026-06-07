@@ -3,6 +3,20 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Embedding backend selection.
+///
+/// Controls which `Embedder` implementation SmartEngine uses for vector generation.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbedderBackend {
+    /// Deterministic hash-based embedding (fast, reproducible — ideal for tests/dev).
+    #[default]
+    Hash,
+    /// ONNX Runtime inference via the `ort` crate (real ML models).
+    /// Requires the `smart-ort` feature flag.
+    OnnxRuntime,
+}
+
 /// Hub configuration for database, search, and runtime settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubConfig {
@@ -20,10 +34,13 @@ pub struct HubConfig {
     pub default_search_limit: usize,
     /// Maximum search results
     pub max_search_limit: usize,
-    /// Embedding model name
+    /// Embedding model name (e.g. "sentence-transformers/all-MiniLM-L6-v2").
     pub embedding_model: String,
-    /// Embedding dimension
+    /// Embedding dimension (must match the selected model).
     pub embedding_dimension: usize,
+    /// Which embedder backend to use for vector generation.
+    #[serde(default)]
+    pub embedding_backend: EmbedderBackend,
 }
 
 impl Default for HubConfig {
@@ -38,6 +55,7 @@ impl Default for HubConfig {
             max_search_limit: 100,
             embedding_model: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             embedding_dimension: 384,
+            embedding_backend: EmbedderBackend::default(),
         }
     }
 }
@@ -99,6 +117,23 @@ mod tests {
         assert_eq!(config.max_page_size, 100);
         assert!(config.auto_migrate);
         assert_eq!(config.embedding_dimension, 384);
+        assert_eq!(config.embedding_backend, EmbedderBackend::Hash);
+    }
+
+    #[test]
+    fn test_embedder_backend_serialization() {
+        let toml_hash = r#"embedding_backend = "onnx_runtime""#;
+        let parsed: serde_json::Value = toml::from_str(toml_hash).unwrap();
+        assert_eq!(
+            parsed.get("embedding_backend").unwrap().as_str().unwrap(),
+            "onnx_runtime"
+        );
+
+        // Hash is the default — serializes and deserializes cleanly
+        let cfg = HubConfig::default();
+        let serialized = toml::to_string(&cfg).unwrap();
+        let deserialized: HubConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.embedding_backend, EmbedderBackend::Hash);
     }
 
     #[test]

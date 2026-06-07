@@ -115,10 +115,11 @@ impl PromptHub {
 
         let storage = Arc::new(Storage::new(storage_config).await?);
         let fast = Arc::new(FastEngine::new(storage.clone()));
-        let smart = Arc::new(SmartEngine::new(
-            config.embedding_model,
+        let smart = Arc::new(SmartEngine::new_with_backend(
+            config.embedding_model.clone(),
             storage.clone(),
             config.embedding_dimension,
+            &config.embedding_backend,
         ));
         let hybrid = Arc::new(HybridEngine::new(fast, smart));
 
@@ -672,6 +673,7 @@ mod tests {
             max_search_limit: 100,
             embedding_model: "test-model".to_string(),
             embedding_dimension: 384,
+            embedding_backend: crate::config::EmbedderBackend::Hash,
         }
     }
 

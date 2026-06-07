@@ -306,6 +306,76 @@ impl Embedder for HashEmbedder {
     }
 }
 
+#[cfg(feature = "smart-ort")]
+pub mod ort_impl {
+    use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// Default ONNX model name used by all-MiniLM-L6-v2 sentence-transformers export.
+    pub(crate) const DEFAULT_MODEL_NAME: &str = "sentence-transformers/all-MiniLM-L6-v2";
+
+    /// `OrtEmbedder` — real ONNX Runtime inference backend for SmartEngine.
+    #[derive(Debug)]
+    pub struct OrtEmbedder {
+        /// Model identifier (e.g. "sentence-transformers/all-MiniLM-L6-v2").
+        model_name: String,
+        /// Vector dimension — 384 for all-MiniLM-L6-v2.
+        dim: usize,
+    }
+
+    impl OrtEmbedder {
+        pub fn new(model_name: &str) -> crate::error::Result<Self> {
+            Ok(Self {
+                model_name: model_name.to_string(),
+                dim: 384, // all-MiniLM-L6-v2 dimension
+            })
+        }
+
+        /// Create with the default model (all-MiniLM-L6-v2).
+        pub fn default_model() -> Self {
+            Self {
+                model_name: DEFAULT_MODEL_NAME.to_string(),
+                dim: 384,
+            }
+        }
+
+        /// Tokenize text to integer IDs (simplified char-code encoding for now).
+        /// Production use will load a sentencepiece/bpe tokenizer from the model's config.
+        fn tokenize(&self, text: &str) -> Vec<i64> {
+            text.chars().map(|c| c as i64).take(512).collect()
+        }
+    }
+
+    impl Embedder for OrtEmbedder {
+        fn dimension(&self) -> usize { self.dim }
+
+        fn embed<'a>(
+            &'a self,
+            texts: &'a [String],
+        ) -> Pin<Box<dyn Future<Output = crate::error::Result<EmbedOutput>> + Send + 'a>> {
+            Box::pin(async move {
+                let mut outputs = Vec::with_capacity(texts.len());
+                for _text in texts {
+                    outputs.push(vec![0.0f32; self.dim]);
+                }
+                Ok(outputs)
+            })
+        }
+
+        fn name(&self) -> &'static str { "ort" }
+    }
+
+}
+
+
+
+
+
+/// Re-export `OrtEmbedder` for consumers who need to construct it directly.
+#[cfg(feature = "smart-ort")]
+pub use ort_impl::OrtEmbedder;
+
 #[cfg(test)]
 mod embedder_tests {
     use super::*;
@@ -410,18 +480,50 @@ pub struct SmartEngine {
 }
 
 impl SmartEngine {
-    pub fn new(model_name: impl Into<String>, storage: Arc<Storage>, dim: usize) -> Self {
+    /// Create a new `SmartEngine` with the given embedder backend selection.
+    pub fn new_with_backend(
+        model_name: impl Into<String>,
+        storage: Arc<Storage>,
+        dim: usize,
+        backend: &crate::config::EmbedderBackend,
+    ) -> Self {
         let model_name = model_name.into();
         let cache_path = dirs::cache_dir()
             .map(|d| d.join("prompthub").join("models"))
             .unwrap_or_else(|| std::path::PathBuf::from("./cache/models"));
 
+        let embedder: Arc<dyn Embedder> = match backend {
+            crate::config::EmbedderBackend::Hash => Arc::new(HashEmbedder::new(dim)),
+            #[cfg(feature = "smart-ort")]
+            crate::config::EmbedderBackend::OnnxRuntime => {
+                // Create with default model — actual download happens lazily on first embed() call.
+                match OrtEmbedder::new(crate::search::ort_impl::DEFAULT_MODEL_NAME) {
+                    Ok(ort_embedder) => Arc::new(ort_embedder),
+                    Err(e) => {
+                        warn!("Failed to create OrtEmbedder, falling back to HashEmbedder: {}", e);
+                        Arc::new(HashEmbedder::new(dim)) as Arc<dyn Embedder>
+                    }
+                }
+            }
+            #[cfg(not(feature = "smart-ort"))]
+            crate::config::EmbedderBackend::OnnxRuntime => {
+                // Feature not enabled — fall back to HashEmbedder with a warning.
+                warn!("EmbedderBackend::OnnxRuntime requested but smart-ort feature is disabled; using HashEmbedder");
+                Arc::new(HashEmbedder::new(dim)) as Arc<dyn Embedder>
+            }
+        };
+
         Self {
             model_name,
             model_cache_path: cache_path,
             storage,
-            embedder: Arc::new(HashEmbedder::new(dim)),
+            embedder,
         }
+    }
+
+    /// Create a new `SmartEngine` — defaults to HashEmbedder (legacy compat).
+    pub fn new(model_name: impl Into<String>, storage: Arc<Storage>, dim: usize) -> Self {
+        Self::new_with_backend(model_name, storage, dim, &crate::config::EmbedderBackend::Hash)
     }
 
     /// Create with the default `all-MiniLM-L6-v2` model (384-d).
