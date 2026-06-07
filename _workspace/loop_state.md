@@ -1,44 +1,37 @@
 # Loop state — prompt-loop
-session_started: 2026-06-07T18:45:00Z   # DISCOVER cycle
+session_started: 2026-06-07T19:50:00Z   # s11 resume
 loop: prompt-loop
 branch: main (primary checkout)
 worktree: none (merged to origin/main)
 cycle_budget: 3            # completed cycles per session before handoff (override via PROMPT_BUDGET)
-cycles_this_session: 0     # RESUME — counter reset for new session
-cycles_total: 26           # sessions 1-9 + this s10 resume session
+cycles_this_session: 0     # DISCOVER — counter reset for fresh session
+cycles_total: 28           # sessions 1-9 + s10 (3) + s11 DISCOVER (1)
 apply_mode: APPLY          # push -> PR -> squash merge on green DONE-gates
-last_item: P3 API docs for all Hub methods (next unblocked item)
-status: RESUME — verify baseline green. Continuing at P3 API docs task.
-last_update: 2026-06-07T18:45:00Z
+last_item: WIRE budget module into PromptHub facade (next item — TOP P1 priority)
+status: DISCOVER COMPLETE — 11 P1 items remain (6 feature-gated + 5 un-gated). Not terminal DONE.
+last_update: 2026-06-07T20:15:00Z
 
-## Gates at DISCOVER completion:
-#   check: GREEN ✅ | clippy (--all-targets -D warnings): clean ✅ | fmt: not checked (lint covers it)
-#   tests: 707 passed, 1 ignored | docs: 0 warnings | CI: all green
+## Gates at resume:
+#   check: GREEN ✅ | clippy (--all-targets -D warnings): clean ✅ | fmt: clean ✅
+#   tests: 710 passed, 2 ignored | CI: all green | doc: 0 warnings
 
-## All wired features on main (PR #44-#54)
-### SMART_EMBEDDING EPIC
-- Embedder trait + HashEmbedder backend (+7 tests) (#44)
-- Prompt embeddings on index via Embedder (#45)
-- Select embedder backend from HubConfig (#46)
-- Wire ort-based OrtEmbedder behind smart-ort feature (#47)
-- Real ONNX inference: lazy model download, tokenizers, ort::Session (#48)
+## Pending backlog items (from s11 DISCOVER — reconciled)
+### P1a-f: Feature-gated modules awaiting hub.rs wiring (highest priority)
+1. budget (7.5K lines, 11 tests, 12 pub fn) — feature="budget"
+2. circuit_breaker (7.9K lines, 9 tests, 6 pub fn) — feature="circuit-breaker"
+3. moderation (9.2K lines, 10 tests, 9 pub fn) — feature="moderation"
+4. quota (8.6K lines, 10 tests, 10 pub fn) — feature="quota"
+5. preview (15.9K lines, 7 tests, 4 pub fn) — feature="preview"
+6. canary (3.0K lines, 6 tests, 4 pub fn) — feature="canary"
 
-### Feature wiring (PRs #50-#54) — ALL MERGED
-- QualityGate + run_quality_gate() (#50)
-- LineageTracker + 7 delegation methods (#51)
-- SwarmRoleRegistry + manage_swarm() + validation/bundle (#52)
-- CrossAgentPollination + extract_pollination_patterns() + mutex access (#53)
-- SatisfactionTracker + CSAT/NPS recording + metrics (#54)
+### P1g-k: Un-gated but unwired modules (need design decision on gating first)
+7. analytics (352L, 11 tests, 15 pub fn)
+8. audit (406L, 14 tests, 7 pub fn)
+9. diff (338L, 11 tests, 9 pub fn)
+10. garbage_collector (283L, 11 tests, 13 pub fn)
+11. retention (290L, 11 tests, 15 pub fn)
 
-### Initial setup cycles (PRs #27-#49)
-- sha2 0.11 build fix, Qodana triage, Prometheus exposition, metrics CLI
-- CLI tracing logs → stderr, RUSTDOCFLAGS=-D warnings, Docker/Dockerfile
-- CLI local operator identity (RBAC), bench compile fix
-
-## Pending backlog items (from DISCOVER)
-1. P2: Feature flag hygiene — audit 49 flags (~32 dead, ~9 stub→need gating, ~8 wired via cfg)
-2. P3: Regenerate qodana SARIF (blocked on Docker/QODANA_TOKEN)
-3. P3: Complete API docs for all Hub methods
-4. P3: Document feature flags table in README.md
-5. P3: Add crate-level docs in lib.rs (quickstart example)
-6. P4: Default identity lacks Write for direct PromptHub::new() callers
+## What was wired between s10 and s11 DISCOVER
+- PR #58: ProviderHealthMonitor → PromptHub facade ✅
+- PR #59: LoadBalancer → PromptHub facade ✅
+- 8c743b5: Fix CLI build break (vibe/rollback/cost/learn → default features)

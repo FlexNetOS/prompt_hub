@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 use crate::auth::{Action, RbacAuthManager};
+#[cfg(feature = "budget")]
+use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
 use crate::config::HubConfig;
 use crate::error::{HubError, Result};
 use crate::hooks::{HookRegistry, JunieHook};
@@ -22,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 /// Lock manager for prompt editing coordination
@@ -132,6 +134,8 @@ pub struct PromptHub {
     satisfaction_tracker: Arc<SatisfactionTracker>,
     health_monitor: Arc<std::sync::Mutex<ProviderHealthMonitor>>,
     load_balancer: Arc<std::sync::Mutex<LoadBalancer>>,
+    #[cfg(feature = "budget")]
+    budget_tracker: Arc<BudgetTracker>,
 }
 
 impl PromptHub {
@@ -191,10 +195,15 @@ impl PromptHub {
             load_balancer: Arc::new(std::sync::Mutex::new(LoadBalancer::new(
                 RoutingStrategy::Weighted,
             ))),
+            #[cfg(feature = "budget")]
+            budget_tracker: Arc::new(BudgetTracker::default()),
         };
 
         // Register default hooks
         hub.hooks.register(Box::new(JunieHook));
+
+        #[cfg(feature = "budget")]
+        info!("Budget tracker initialized with default monthly budget");
 
         Ok(hub)
     }
@@ -1369,6 +1378,85 @@ impl PromptHub {
         let lb = self.load_balancer();
         lb.lock().unwrap().stats()
     }
+
+    // ── Budget tracking ────────────────────────────────────────────────
+
+    /// Record a spend amount against the monthly budget.
+    ///
+    /// Increments the current spend counter and fires an alert if any
+    /// configured threshold is crossed for the first time (50%, 80%, 100%).
+    /// Requires the `budget` feature flag.
+    ///
+    /// # Arguments
+    /// * `amount_usd` — Spend amount in US dollars to record.
+    ///
+    /// # Returns
+    /// A [`BudgetAlert`] indicating if a threshold was crossed, or `None`.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn record_spend(&self, amount_usd: f64) -> BudgetAlert {
+        let alert = self.budget_tracker.record_spend(amount_usd);
+        if let BudgetAlert::None = alert {
+            debug!("Recorded ${:.4} spend", amount_usd);
+        }
+        alert
+    }
+
+    /// Get the current monthly budget utilization as a percentage.
+    ///
+    /// Returns 0.0 if no budget is configured or if spend has not been reset
+    /// for the billing period.
+    /// Requires the `budget` feature flag.
+    ///
+    /// # Returns
+    /// A float in the range [0.0, 100.0+] where >100.0 means over budget.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn budget_utilization(&self) -> f64 {
+        self.budget_tracker.utilization_percent()
+    }
+
+    /// Get the current month's spend in USD.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn current_spend_usd(&self) -> f64 {
+        self.budget_tracker.current_spend_usd()
+    }
+
+    /// Check whether the monthly budget has been exceeded.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn is_budget_exceeded(&self) -> bool {
+        self.budget_tracker.is_exceeded()
+    }
+
+    /// Update the configured monthly budget amount.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn set_monthly_budget(&self, monthly_budget_usd: f64) {
+        self.budget_tracker.set_budget(monthly_budget_usd);
+    }
+
+    /// Load a persisted [`BudgetConfig`] into the tracker.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn load_budget_config(&self, config: &BudgetConfig) -> Result<()> {
+        self.budget_tracker.load_config(config)
+    }
+
+    /// Save the current budget state as a [`BudgetConfig`] for the given org.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn save_budget_config(&self, org_id: &str) -> Result<BudgetConfig> {
+        self.budget_tracker.save_config(org_id)
+    }
+
+    /// Reset spend counters for a new billing period.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn reset_budget_period(&self) {
+        self.budget_tracker.reset_period();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2067,5 +2155,37 @@ mod tests {
             let sel = selection.unwrap();
             assert!(sel.provider_name == "gpt-4o" || sel.provider_name == "claude");
         }
+    }
+
+    #[cfg(feature = "budget")]
+    #[tokio::test]
+    async fn test_budget_delegation() {
+        use crate::budget::BudgetAlert;
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Default budget is $1000
+        assert!(!hub.is_budget_exceeded());
+        assert_eq!(hub.current_spend_usd(), 0.0);
+
+        // Record spend and check utilization
+        let alert = hub.record_spend(500.0);
+        assert_eq!(alert, BudgetAlert::FiftyPercent);
+        assert!((hub.budget_utilization() - 50.0).abs() < 0.01);
+
+        // Exceed budget
+        let alert = hub.record_spend(600.0);
+        assert_eq!(alert, BudgetAlert::HundredPercent);
+        assert!(hub.is_budget_exceeded());
+        assert!((hub.budget_utilization() - 110.0).abs() < 0.01);
+
+        // Save / load config round-trip
+        let _config = hub.save_budget_config("test-org").unwrap();
+
+        hub.reset_budget_period();
+        assert_eq!(hub.current_spend_usd(), 0.0);
+        assert!(!hub.is_budget_exceeded());
     }
 }
