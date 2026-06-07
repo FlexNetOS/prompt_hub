@@ -15,6 +15,8 @@ use crate::models::*;
 #[cfg(feature = "moderation")]
 use crate::moderation::ModerationEngine;
 use crate::pollination::{CrossAgentPollination, Pattern};
+#[cfg(feature = "preview")]
+use crate::preview::PreviewEngine;
 use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
 use crate::quality_gate::{QualityGate, QualityResult};
 #[cfg(feature = "quota")]
@@ -148,6 +150,8 @@ pub struct PromptHub {
     moderation: Arc<ModerationEngine>,
     #[cfg(feature = "quota")]
     quota_enforcer: Arc<QuotaEnforcer>,
+    #[cfg(feature = "preview")]
+    preview_engine: Arc<PreviewEngine>,
 }
 
 impl PromptHub {
@@ -215,6 +219,8 @@ impl PromptHub {
             moderation: Arc::new(ModerationEngine::new()),
             #[cfg(feature = "quota")]
             quota_enforcer: Arc::new(QuotaEnforcer::default()),
+            #[cfg(feature = "preview")]
+            preview_engine: Arc::new(PreviewEngine),
         };
 
         // Register default hooks
@@ -231,6 +237,9 @@ impl PromptHub {
 
         #[cfg(feature = "quota")]
         info!("Quota enforcer initialized with defaults (daily=1M, hourly=100K, burst=10K)");
+
+        #[cfg(feature = "preview")]
+        info!("Preview engine ready for pre-execution rendering");
 
         Ok(hub)
     }
@@ -1559,6 +1568,34 @@ impl PromptHub {
     pub fn quota_enforcer_handle(&self) -> Arc<QuotaEnforcer> {
         Arc::clone(&self.quota_enforcer)
     }
+
+    // ── Preview engine ------------------------------------------------------
+
+    /// Generate a pre-execution preview for the given plan.
+    #[cfg(feature = "preview")]
+    #[instrument(skip(self, plan))]
+    pub async fn preview_generate(
+        &self,
+        plan: &crate::models::ExecutionPlan,
+    ) -> Result<crate::preview::PreviewType> {
+        self.preview_engine.generate(plan).await
+    }
+
+    /// Preview the artifacts that would be generated.
+    #[cfg(feature = "preview")]
+    #[instrument(skip(self, artifacts))]
+    pub async fn preview_artifacts(
+        &self,
+        artifacts: &[crate::models::Artifact],
+    ) -> Result<crate::preview::PreviewType> {
+        self.preview_engine.preview_artifacts(artifacts).await
+    }
+
+    /// Return a cloneable `Arc` handle to the preview engine.
+    #[cfg(feature = "preview")]
+    pub fn preview_engine_handle(&self) -> Arc<PreviewEngine> {
+        Arc::clone(&self.preview_engine)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2386,6 +2423,22 @@ mod tests {
 
         let h1 = hub.quota_enforcer_handle();
         let h2 = hub.quota_enforcer_handle();
+        assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
+    }
+
+    // ── Preview integration tests ──────────────────────────────────────
+
+    #[cfg(feature = "preview")]
+    #[tokio::test]
+    async fn test_preview_engine_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Handle works and returns same Arc
+        let h1 = hub.preview_engine_handle();
+        let h2 = hub.preview_engine_handle();
         assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
     }
 }
