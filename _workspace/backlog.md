@@ -68,20 +68,19 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 | **4+5** | s5 | c1 | #47 | `fb410c1` | feat(search): wire ort-based OrtEmbedder behind smart-ort feature + HubConfig selection |
 
 ### Epic results
-- **Default config path works end-to-end:** PromptHub::new → register → SmartEngine.index → HashEmbedder embeds → upsert_embedding → search finds prompt by cosine ✅
+- **Default config path works end-to-end:** PromptHub::new → register → SmartEngine.index → OrtEmbedder embeds via real ONNX inference → persists in embeddings table → search finds prompt by cosine ✅
 - **Otel + smart-ort features gate correctly:** all-features build 685 tests, default features 681 tests
-- **SmartEngine::new_with_backend()** supports `Hash` (default) and `OnnxRuntime` (smart-ort feature flag)
+- **SmartEngine::new_with_backend()** supports `Hash` (default) and `OnnxRuntime` (smart-ort feature flag → real ort::Session inference)
 - **EmbedderBackend enum** in HubConfig allows runtime selection without feature flags
+- **Slice 5 deep (PR #48):** OrtEmbedder stub replaced with actual model download, tokenization, ort::Session inference, L2-normalized [CLS] embeddings
 
-### Gates at epic completion
+### Gates at epic completion (all slices)
 | Mode | check | clippy (--all-targets -D warnings) | fmt | tests |
 |------|-------|-----------------------------------|-----|-------|
 | default features | 3c ✅ | clean ✅ | clean ✅ | 681 ✅ |
 | all features | 3c ✅ | clean ✅ | clean ✅ | 685 ✅ |
 
 ### Remaining work (unblocked, not in current backlog)
-- **Slice 5 deep implementation:** Real ONNX model download + tokenizer loading. The scaffolding is complete — OrtEmbedder struct exists with Embedder trait impl; next cycle replaces the zero-filled stub with real `ort::Session` inference.
-- **Model download strategy:** HTTP-based via huggingface.co resolve URLs (bypasses hf-hub builder lifetime issues). Uses reqwest (already a workspace dep). Cache in ~/.cache/prompthub/models/.
 - **qodana SARIF regen:** Still needs QODANA_TOKEN + Docker. Not a human wall — single blocked item; loop proceeds without it.
 
 ### Design decisions recorded

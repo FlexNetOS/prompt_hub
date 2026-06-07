@@ -19,12 +19,9 @@
 - **Tooling notes:** `just` NOT installed — raw `cargo`. `git-cliff 2.13.1` in `~/.cargo/bin`. **Docker daemon NOT usable**. No `QODANA_TOKEN`. `gh` auth = `drdave-flexnetos`.
 
 ## 2. Backlog status (`_workspace/backlog.md` on `main`)
-- **SMART_EMBEDDING EPIC SLICES 1-5: COMPLETE** — all 8 slices merged to origin/main (PRs #44/#45/#46/#47)
+- **SMART_EMBEDDING EPIC SLICES 1-5 + Slice 5 deep: COMPLETE** — all slices merged to origin/main (PRs #44/#45/#46/#47/#48)
 - **Open todos:** none in backlog (all items resolved or blocked on external tooling)
-- **Next recommended work: Slice 5 deep implementation** — real ONNX model download + tokenizer loading. The structural scaffolding is complete (OrtEmbedder struct + Embedder trait impl exists with a zero-filled stub); next cycle replaces the stub with `ort::Session` inference.
-  - Model download via HTTP resolve URLs (huggingface.co) using reqwest (already a workspace dep)
-  - Cache in ~/.cache/prompthub/models/ with SHA-256 pinning
-  - Model: all-MiniLM-L6-v2 default, bge-m3 opt-in
+- **No recommended work remaining** — epic is fully implemented. OrtEmbedder stub replaced with real ONNX inference (PR #48, d01b5c9). Next cycle requires fresh DISCOVER for new epics.
 - **Blocked (not human walls):**
   - qodana SARIF regen: needs `QODANA_TOKEN` + Docker. CI skips without token; single item, loop proceeds.
 
@@ -39,8 +36,9 @@
 | 2 | s4-c2 | `d7f609f` | #45 | feat(search): write prompt embeddings on index via Embedder |
 | 3 | s4-c3 | `46b630b` | #46 | feat(config,hub): select embedder backend from HubConfig (e2e verified) |
 | **4+5** | s5-c1 | `fb410c1` | #47 | feat(search): wire ort-based OrtEmbedder behind smart-ort + HubConfig selection |
+| **deep** | s6-c1 | `d01b5c9` | #48 | feat(search): wire real ONNX inference in OrtEmbedder (Slice 5 deep) |
 
-Total cycles: 13 across sessions 1-5. All direct squash-merge path verified (9/9 clean).
+Total cycles: 14 across sessions 1-6. All direct squash-merge path verified (10/10 clean).
 
 ## 5. Verify-on-resume baseline (run FIRST; do not build on a red tree)
 ```bash
