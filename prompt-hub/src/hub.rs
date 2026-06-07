@@ -7,6 +7,7 @@ use crate::hooks::{HookRegistry, JunieHook};
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::metrics::MetricsCollector;
 use crate::models::*;
+use crate::pollination::{CrossAgentPollination, Pattern};
 use crate::quality_gate::{QualityGate, QualityResult};
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
@@ -105,6 +106,7 @@ pub struct PromptHub {
     quality_gate: Arc<QualityGate>,
     lineage: LineageTracker,
     swarm_registry: Arc<SwarmRoleRegistry>,
+    pollination: Arc<std::sync::Mutex<CrossAgentPollination>>,
 }
 
 impl PromptHub {
@@ -144,6 +146,7 @@ impl PromptHub {
             quality_gate: Arc::new(QualityGate::new()),
             lineage: LineageTracker::new(),
             swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
+            pollination: Arc::new(std::sync::Mutex::new(CrossAgentPollination::new())),
         };
 
         // Register default hooks
@@ -747,6 +750,45 @@ impl PromptHub {
     ) -> Result<SwarmBundle> {
         swarm::generate_swarm_bundle(roles, domain, workflow_id).await
     }
+
+    // - Cross-agent pollination ---------------------------------------------------
+
+    /// Return a cloneable handle to the cross-agent pollination engine.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers. Mutable
+    /// operations (e.g., sharing patterns) use `Arc::get_mut()` on the original.
+    pub fn pollination(&self) -> Arc<std::sync::Mutex<CrossAgentPollination>> {
+        Arc::clone(&self.pollination)
+    }
+
+    /// Extract reusable prompt patterns from a prompt.
+    #[instrument(skip(self, prompt))]
+    pub fn extract_pollination_patterns(&self, prompt: &Prompt) -> Result<Vec<Pattern>> {
+        Ok(CrossAgentPollination::extract_patterns(prompt))
+    }
+
+    /// Rank all patterns in the pool by composite score.
+    #[instrument(skip(self))]
+    pub fn rank_pollination_patterns(&self, num_domains: usize) -> Result<Vec<(String, f64)>> {
+        let engine = self
+            .pollination
+            .lock()
+            .map_err(|e| HubError::Internal(format!("pollination mutex poisoned: {e}")))?;
+        Ok(engine
+            .rank_patterns(num_domains)
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v))
+            .collect())
+    }
+
+    /// Mutable access to the pollination engine (caller owns mutation).
+    ///
+    /// Prefer using this over cloning the Arc + holding a separate guard -- it
+    /// avoids double-allocation and keeps the engine inline with PromptHub.
+    pub fn pollination_mut(&mut self) -> &mut CrossAgentPollination {
+        let mutex = Arc::get_mut(&mut self.pollination).expect("pollination mutex poisoned");
+        mutex.get_mut().expect("pollination lock poisoned")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -771,6 +813,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pollination;
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -1122,6 +1165,91 @@ mod tests {
             hub.lineage_mut()
                 .register_version("v2", "prompt-a", Some("nonexistent"), "bob");
         assert!(result.is_err());
+    }
+
+    // - Pollination tests --------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_extract_pollination_patterns_step_by_step() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let prompt = Prompt {
+            id: Uuid::new_v4(),
+            name: "test".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            status: Status::Active,
+            system_prompt: "Follow these steps: 1. Plan 2. Execute".to_string(),
+            user_template: "Help me.".to_string(),
+            required_vars: vec![],
+            domain: Domain::Coding,
+            tags: vec![],
+            target_roles: vec![],
+            metadata: Default::default(),
+            metrics: PromptMetrics {
+                usage_count: 50,
+                success_rate: 0.9,
+                avg_tokens: 300,
+                avg_latency_ms: 100,
+                last_used: Some(chrono::Utc::now()),
+                cost_estimate_usd: 0.0,
+            },
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            author: AgentIdentity {
+                id: Uuid::new_v4(),
+                name: "test".to_string(),
+                capabilities: Default::default(),
+                token_hash: "".to_string(),
+                specialization_score: 0.5,
+            },
+            deleted_at: None,
+            generation_params: None,
+            locale: None,
+            multimodal: None,
+        };
+
+        let patterns = hub.extract_pollination_patterns(&prompt).unwrap();
+        assert!(
+            patterns.iter().any(|p| p.structure == "step-by-step"),
+            "Should detect step-by-step pattern"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pollination_handle_returns_arc() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let handle1 = hub.pollination();
+        let handle2 = hub.pollination();
+        assert_eq!(handle1.lock().unwrap().pool_size(), 0);
+        assert_eq!(Arc::strong_count(&handle1), Arc::strong_count(&handle2));
+    }
+
+    #[tokio::test]
+    async fn test_pollination_mut_share_pattern() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let pattern = pollination::Pattern {
+            id: Uuid::new_v4(),
+            structure: "few-shot".to_string(),
+            domains: vec![Domain::Writing],
+            score: 0.8,
+            usage_count: 10,
+            agent_id: Uuid::new_v4(),
+            example_snippet: "Here is an example...".to_string(),
+        };
+
+        hub.pollination_mut().share_pattern(pattern).unwrap();
+        assert_eq!(hub.pollination().lock().unwrap().pool_size(), 1);
     }
 
     // - Swarm role registry tests ------------------------------------------
