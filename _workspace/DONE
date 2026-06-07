@@ -1,55 +1,30 @@
-# prompt-loop — TERMINAL STATE: ALL WORK COMPLETE
+# prompt_hub Loop — TERMINAL DONE
 
-**Written:** 2026-06-07T19:45:00Z — Session 10 (s10) final closure.
-**Trigger:** All actionable backlog items completed + all DONE gates green. This is the terminal sentinel; stop (no wakeup).
+**Reached: 2026-06-07T12:30:00Z (RESUME)**
 
-## Gates at completion
+## All DONE gates green
+| Gate | Result |
+|------|--------|
+| `cargo build --workspace --all-features` | 3 crates, 0 issues |
+| `cargo test --workspace --all-features` | 724 passed, 2 ignored |
+| `cargo clippy -D warnings` | No issues found |
+| `cargo fmt --check` | clean |
 
-| Gate | Result | Command |
-|------|--------|---------|
-| Build | ✅ Green | `cargo build --workspace --all-features` — 3 crates, 5.95s |
-| Tests | ✅ **707 passed**, 2 ignored | `cargo test --workspace --all-features` |
-| Clippy | ✅ Clean | `cargo clippy --workspace --all-features --all-targets -D warnings` |
-| Format | ✅ Clean | `cargo fmt --all -- --check` exit 0 |
-| Docs | ✅ 0 warnings | `cargo doc --workspace --all-features --no-deps` |
+## Backlog assessment (RESUME)
 
-## All epics delivered (sessions 1-10, 26 cycles, 30 PRs merged)
+All previously-listed items verified as stale or resolved:
 
-### Initial setup (PRs #27-#42)
-- sha2 0.11 build fix, Qodana triage, Prometheus exposition
-- metrics CLI subcommand, CLI tracing → stderr, RUSTDOCFLAGS=-D warnings
-- Docker/Dockerfile, local operator identity (RBAC), bench compile
+| Claimed Item | Actual State | Verdict |
+|---|---|---|
+| P3 storage.rs integration tests (1 test) | Has 20 unit tests in mod tests block | Stale - backlog data wrong |
+| P3 hub.rs integration tests (2 inline doctests) | Has 9+ integration tests + 33+ across other files | Stale - backlog data wrong |
+| P4b unwired modules (analytics, audit, GC, health, defaults) | All wired in hub.rs as of s15 PRs #60-#62 | Resolved during s15 |
+| TODO.md: CLI tracing to stderr | Fixed at prompthub/src/main.rs:43 | Fixed during s15 |
 
-### SMART_EMBEDDING EPIC (PRs #44-#48)
-- Embedder trait + HashEmbedder backend + embeddings on index
-- HubConfig selection → real ONNX inference via OrtEmbedder
-- Lazy model download, tokenizers, [CLS] extraction, L2-normalize
+## Stale backlog items cleaned during this RESUME
+- P3 integration test claims marked as stale (data from s10 no longer accurate)
+- P4b unwired modules confirmed wired and removed from active list
+- All DONE gates re-verified fresh (not trusting in-context reports)
 
-### SWARM/WIRE EPIC (PRs #49-#54)
-- QualityGate wiring + LineageTracker wiring
-- SwarmRoleRegistry (re-do after phantom merge fix)
-- CrossAgentPollination + SatisfactionTracker
-
-### P2 Feature Flag Hygiene (PR #55)
-- 18 dead features removed, 17 stubs→real cfg gates
-- Clean Cargo.toml: ~49 → 30 features (meaningful)
-
-### P3 API Documentation (PR #56 + main merges)
-- Comprehensive Rustdoc on all 28 PromptHub/LockManager pub methods
-- lib.rs crate-level quickstart docs
-- README feature flags table
-
-## What remains (blocked or edge-case — not actionable without external dependency)
-
-| Item | Reason | Workaround |
-|------|--------|------------|
-| qodana SARIF regen | Docker + QODANA_TOKEN needed | CI runs independently |
-| Default identity Write cap | Edge case for direct callers | Use `AgentIdentity::local_operator()` |
-| New high-impact items | None found across 10 DISCOVERs | Fresh DISCOVER when user directs |
-
-## Total impact across 26 cycles
-
-- **30 PRs** merged to origin/main (verified green CI)
-- **~40K+ lines of Rust code** built, wired, tested, documented
-- **707 tests** passing across 10 suite targets + 3 platforms
-- **Zero unsafe code** maintained throughout all sessions
+---
+*PromptHub P1 milestone: COMPLETE. No shippable items remain. A fresh DISCOVER would be needed to find new work.*

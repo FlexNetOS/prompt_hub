@@ -1427,7 +1427,9 @@ impl PromptHub {
         artifact: &crate::models::Artifact,
         rollback_enabled: bool,
     ) -> Result<crate::rollback::DeployResult> {
-        self.safe_deployer.deploy_with_rollback(artifact, rollback_enabled).await
+        self.safe_deployer
+            .deploy_with_rollback(artifact, rollback_enabled)
+            .await
     }
 
     /// Restore a prompt to a previously saved snapshot by ID.
@@ -1439,7 +1441,6 @@ impl PromptHub {
     pub fn is_rollback_available(&self, snapshot_id: &str) -> bool {
         self.safe_deployer.is_rollback_available(snapshot_id)
     }
-
 
     /// Return a cloneable handle to the load balancer.
     pub fn load_balancer(&self) -> Arc<std::sync::Mutex<LoadBalancer>> {

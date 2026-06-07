@@ -98,12 +98,32 @@ Also corrected: i18n was confirmed wired with real usage at hub.rs:1739 (`fallba
 
 ---
 
-## 7. Recommendation for Next Session
+---
 
-**The P1 milestone is complete.** If continuing work on prompt_hub:
-1. **Run new DISCOVER** — backlog was last refreshed at s12; fresh state needed
-2. **P3 integration tests** — highest remaining ROI (3905 LOC with only 3 total tests)
-3. **New feature discovery** — TODO.md, docs/audits, issues may have new items
+## 7. RESUME (2026-06-07): Backlog TERMINAL ✅
+
+A RESUME was executed to verify the backlog state:
+
+| Claimed Item | Actual State | Verdict |
+|---|---|---|
+| P3 storage.rs integration tests (1 test) | Has **20 unit tests** in `mod tests` block | Stale data from s10 |
+| P3 hub.rs integration tests (2 inline doctests) | Has **9+ integration + 33+ across other test files** | Stale data from s10 |
+| P4b unwired modules (analytics, audit, GC, health, defaults) | All wired in hub.rs as of s15 PRs #60-#62 | Resolved during s15 |
+
+All DONE gates re-verified fresh: build ✅ test(724) ✅ clippy ✅ fmt ✅.
+`_workspace/DONE` written with full evidence.
+
+**No shippable items remain.** A fresh DISCOVER would be needed to find new work.
+
+---
+
+## 8. Recommendation for Next Session
+
+**Do NOT continue the loop without a fresh DISCOVER.** The P1 milestone is complete, backlog items are stale, and there are no genuine feature development tasks remaining.
+
+If continuing prompt_hub work:
+1. **Run new DISCOVER** — scan TODO.md, docs/audits, issues for genuinely new items
+2. Or consider this project loop **COMPLETE** (54 cycles, 62 PRs merged, P1 milestone achieved)
 
 ---
 
