@@ -62,22 +62,20 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
 > is empty in production — only tests populate it). Build slices 1→3 in order; 4→5 are blocked on an
 > inference-runtime decision. Each slice must be an independently-green, mergeable PR.
 
-- [ ] **Slice 1 — `refactor(search): extract pluggable Embedder trait + HashEmbedder backend`.**
-      Add an object-safe `Embedder` trait (boxed-future, `Result<_, HubError>`) + `HashEmbedder`
-      (port `mock_embed`, parameterized by `dim`). `SmartEngine` holds `embedder: Arc<dyn Embedder>`;
-      keep `SmartEngine::new(model_name, storage)` constructing a `HashEmbedder` so `hub.rs:118` and
-      both benches keep compiling; keep `mock_embed`/`cosine_similarity` public (bench dep).
-      Acceptance: unit tests (determinism, dimension, range, cosine-self≈1.0, `Arc<dyn Embedder>`
-      object-safety); existing `test_smart_search_*` unchanged. Gates: build + test (default &
-      `--all-features`) + `clippy --workspace --all-features -- -D warnings`. Deps: none. Risk: Low
-      (no migration; `SmartEngine::new` signature blast radius — verify hub.rs + benches).
+- [x] **Slice 1 — `refactor(search): extract pluggable Embedder trait + HashEmbedder backend`.**
+      _Cycle 10 (2026-06-07). Extracted object-safe `Embedder` trait (boxed-future, `Result<_, HubError>`)
+      + `HashEmbedder` backend. `SmartEngine` holds `embedder: Arc<dyn Embedder>`; keeps
+      `SmartEngine::new(model_name, storage, dim)` for back-compat. 7 new unit tests (determinism,
+      dimension, range, cosine-self≈1.0, object-safety, embedder accessor, mock_embed compat, default_model).
+      Gates green: check/clippy(-D warnings)/fmt/682 tests. Landed via PR #44._
 
-- [ ] **Slice 2 — `feat(search): write prompt embeddings on index via Embedder`** (deps: Slice 1).
-      Wire `SmartEngine::index`/`remove` to embed + persist; add `Storage::upsert_embedding(prompt_id,
-      &[f32])` + delete helper (f32→LE bytes mirroring `bytes_to_f32_vec`). Acceptance: insert a
-      prompt via `SmartEngine::index` (no manual SQL) → `search` finds it by cosine; `remove` clears
-      the row; blob round-trips. Same 4 gates. Risk: Medium — first real producer of `embeddings`;
-      assert dim==384 (cosine silently returns 0.0 on mismatch). No new migration.
+- [x] **Slice 2 — `feat(search): write prompt embeddings on index via Embedder`** (deps: Slice 1).
+      _Cycle 10 (2026-06-07). Added `Storage::upsert_embedding(prompt_id, &bytes)` + `delete_embedding()`.
+      Replaced SmartEngine `index` stub: extracts name+system_prompt+user_template → embeds via
+      `Embedder` → persists as LE f32 blob with ON CONFLICT upsert. `remove` deletes embedding row.
+      Fixed FK failures in existing tests (prompt must exist before embedding). Added e2e integration
+      test (embed→search finds it→remove clears it). Gates green: check/clippy(-D warnings)/fmt/683 tests.
+      Landed via PR #45._
 
 - [ ] **Slice 3 — `feat(config,hub): select embedder backend from HubConfig`** (deps: Slices 1-2).
       Build `Arc<dyn Embedder>` from config in `hub.rs:108-119` (default `HashEmbedder` with
