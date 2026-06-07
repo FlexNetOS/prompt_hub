@@ -92,3 +92,31 @@ is now clean (s3-c2 fixed benches). fmt clean. `cargo doc --all-features` warnin
 
 ## 7. Anomalies
 - None. `loop_state.md` (cycles_total=9) matches the nine merged cycle commits across sessions 1-3.
+
+## 8. Session 5 (2026-06-07) — Inference-runtime research + deep-research reconciliation
+
+### Research done
+- **Peer analysis**: Compared ort vs candle vs fastembed-rs vs remote API on safety, deps, model coverage, perf, offline, CI, maintenance risk.
+- **Deep research swarm (102 agents, ~4.7M tokens)**: Confirmed fastembed-rs rejection (bundles ort+candle+image+moe = ~150 deps). Also produced a conflicting recommendation preferring candle — but this conflated dependency-level `unsafe` with crate-level `forbid(unsafe_code)`. The forbid attribute on *our* crate controls only our code, not dependencies. Both ort and candle use unsafe internally; only our crate's forbid matters.
+- **Reconciliation**: Model coverage is the deciding factor. ort runs any ONNX-exported sentence-transformer (bge-m3 with 31M+ downloads, all-MiniLM, etc.). Candle has ~4 native examples and needs manual impl for most models. **Verdict: ort behind `smart-ort` feature flag remains correct.**
+
+### Slices 4-5 now unblocked
+Slices 4+5 are combined into one cycle because the inference decision is resolved:
+
+1. Add `smart-ort` feature flag to both Cargo.toml files (workspace-level deps + prompt-hub deps)
+2. Create OrtEmbedder in search.rs (feature-gated with `#[cfg(feature = "smart-ort")]`)
+3. Implement real ONNX inference via `ort` crate — Session builder for CPU, model loading
+4. Real model download + SHA-256 verification using `hf-hub` crate
+5. Wire SmartEngine backend selection from HubConfig.embedding_backend enum
+6. Update hub.rs construction to pass config.embedding_backend to SmartEngine
+7. Tests: default path still uses HashEmbedder (zero change), smart-ort path uses OrtEmbedder
+
+### Critical constraints for next session
+- **Do NOT introduce `unsafe` into our crate** — ort's safe public API is sufficient for downstream forbid
+- **Run gates in BOTH modes**: `cargo check --workspace --all-features` + default features
+- **Feature-gate everything ort-related** behind `smart-ort` feature, off by default
+- **Model: all-MiniLM-L6-v2 as default**, bge-small-en-v1.5 or bge-m3 as opt-in upgrade paths
+- **Model cache: ~/.cache/promthonub/models/ with SHA-256 pinning per MODEL_LOCK file**
+
+### Items that remain blocked (unchanged)
+- qodana SARIF regen: still needs QODANA_TOKEN + Docker. Not a human wall — single item, loop proceeds.

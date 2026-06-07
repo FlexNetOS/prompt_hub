@@ -84,21 +84,31 @@ Each item = one cohesive, shippable unit sized to one cycle. Every item cites it
       (search module is already pub). Added e2e integration test verifying the full flow. Gates green:
       check/clippy(-D warnings)/fmt/684 tests. Landed via PR #46._
 
-- [!] **blocked: Slice 4 — `feat(search): gate real-model embedder backend behind `smart` (scaffold)`.**
-      Needs the inference-runtime decision (see plan "Open decisions"). Make `smart` meaningful: a
-      `#[cfg(feature="smart")]` trait-conformant scaffold returning `HubError` "not configured" (no
-      model load yet), so `--features smart` compiles + the contract is tested. Do NOT add a heavy/
-      native/download dep in the loop without sign-off. Deps: Slices 1-3.
+- [x] **unblocked: Slices 4+5 — `feat(search,smart): wire ort-based OrtEmbedder behind smart-ort feature + HubConfig selection`**
 
-- [!] **blocked: Slice 5 — `feat(smart): real ONNX/model loading + download + checksum`.**
-      Implement `load_model`/`download_model`/`verify_checksum` (`search.rs:271-309`) against the
-      chosen runtime; real `Embedder::embed`. Cannot be a pure-CI-green slice (network/model) — ships
-      with a network-skipping `#[ignore]` test. Blocked on Open decisions; needs human approval.
+      _Research done 2026-06-07 (session 5): Inference-runtime decision resolved after peer analysis
+      and 102-agent deep-research swarm. Both rejected fastembed-rs (bundles ort+candle+image+moe
+      = ~150 deps). Confirmed ort is correct: any ONNX-exported sentence-transformer works out of
+      box (bge-m3 31M+ downloads, all-MiniLM, etc.). Candle was proposed by deep-research swarm
+      but conflated dependency-level unsafe with crate-level forbid — both use unsafe internally;
+      our forbid only controls our code. **Decision: ort behind `smart-ort` feature flag, off
+      by default.**_
 
-> **Open decisions blocking slices 4-5** (from the plan): inference runtime (ort/candle/fastembed/
-> remote API — dep weight + `unsafe` FFI vs `#![forbid(unsafe_code)]`); tokenizer source; model
-> acquisition + CI network policy; dimension authority (384 fixed vs configurable → migration);
-> future `smart`-feature semantics (+ whether `ndarray` stays). Surface to the user, don't guess.
+      _Combined into one cycle (slices 4+5):_
+      1. Add `smart-ort` feature to both Cargo.toml files + `ort` + `hf-hub` workspace deps
+      2. Create OrtEmbedder in search.rs (`#[cfg(feature = "smart-ort")]`) with real ONNX inference
+         via `ort::Session` (CPU, no GPU)
+      3. Model download + SHA-256 verification using `hf-hub` crate
+      4. Wire SmartEngine backend from HubConfig.embedding_backend enum (Hash = default, OnnxRuntime = smart-ort)
+      5. Update hub.rs to pass config.backend to SmartEngine::new()
+      6. Tests: default build = HashEmbedder (zero change), smart-ort build = OrtEmbedder (#[ignore] test for model download)
+
+      _Constraints: NO unsafe in our crate — ort's safe public API is sufficient. Run gates in both
+      default and --all-features modes. Model cache at ~/.cache/prompthub/models/ with SHA-256 pinning._
+      Deps: Slices 1-3.
+
+### Remaining open items (not blocking the loop)
+> **qodana SARIF regen:** needs QODANA_TOKEN + Docker (CI skips without token). Not a human wall — single blocked item; loop proceeds.
 
 ## CLI / server (prompthub, prompthub-server)
 
