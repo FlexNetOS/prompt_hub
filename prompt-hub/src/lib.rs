@@ -28,6 +28,8 @@ pub mod beta_program;
 pub mod budget;
 #[cfg(feature = "chaos")]
 pub mod chaos;
+#[cfg(feature = "chaos-automation")]
+pub mod chaos_auto;
 #[cfg(feature = "circuit-breaker")]
 pub mod circuit_breaker;
 #[cfg(feature = "confidence")]

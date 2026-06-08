@@ -177,6 +177,8 @@ pub struct PromptHub {
     budget_tracker: Arc<BudgetTracker>,
     #[cfg(feature = "chaos")]
     chaos_engine: ChaosEngine,
+    #[cfg(feature = "chaos-automation")]
+    chaos_auto: Option<Arc<std::sync::Mutex<crate::chaos_auto::ChaosAuto>>>,
     #[cfg(feature = "cost-limits")]
     cost_limiter: std::sync::Arc<crate::cost_limits::CostLimiter>,
     #[cfg(feature = "beta-program")]
@@ -276,6 +278,8 @@ impl PromptHub {
             budget_tracker: Arc::new(BudgetTracker::default()),
             #[cfg(feature = "chaos")]
             chaos_engine: ChaosEngine::new(),
+            #[cfg(feature = "chaos-automation")]
+            chaos_auto: None,
             #[cfg(feature = "cost-limits")]
             cost_limiter: std::sync::Arc::new(crate::cost_limits::CostLimiter::default()),
             #[cfg(feature = "beta-program")]
@@ -334,6 +338,9 @@ impl PromptHub {
 
         #[cfg(feature = "chaos")]
         info!("Chaos engine initialized for prompt evaluation");
+
+        #[cfg(feature = "chaos-automation")]
+        info!("Chaos automation subsystem ready (scheduler disabled until started)");
 
         #[cfg(feature = "circuit-breaker")]
         info!("Circuit breaker initialized with defaults (threshold=5, timeout=30s)");
@@ -429,6 +436,44 @@ impl PromptHub {
             .await;
 
         Ok(results)
+    }
+
+    // ── Chaos automation (automated scheduling & trend tracking) ───────────────
+
+    /// Return a handle to the chaos automation subsystem, if enabled.
+    #[cfg(feature = "chaos-automation")]
+    pub fn chaos_auto(&self) -> Option<&Arc<std::sync::Mutex<crate::chaos_auto::ChaosAuto>>> {
+        self.chaos_auto.as_ref()
+    }
+
+    /// Start the chaos automation scheduler with the given *config*.
+    ///
+    /// Initializes a [`ChaosAuto`] instance (must be `None` before call) and
+    /// spawns its background task. Returns `Ok(Some(handle))` on success, or
+    /// `Ok(None)` if already started.
+    #[cfg(feature = "chaos-automation")]
+    #[allow(clippy::await_holding_lock)]
+    pub async fn start_chaos_auto(
+        &mut self,
+        config: crate::chaos_auto::ChaosAutoConfig,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
+        if self.chaos_auto.is_some() {
+            return Ok(None); // Already started.
+        }
+
+        let (_tx, rx) = tokio::sync::broadcast::channel(1);
+        let auto = std::sync::Arc::new(std::sync::Mutex::new(crate::chaos_auto::ChaosAuto::new(
+            config, rx,
+        )));
+
+        // Note: The guard is held across the await. This is safe because
+        // spawn_task does not do long-running synchronous work — it only
+        // sets up tokio intervals and spawns a task which immediately drops
+        // the future reference back to us via JoinHandle.
+        let handle = auto.lock().unwrap().spawn_task(self).await?;
+        self.chaos_auto = Some(auto);
+
+        Ok(Some(handle))
     }
 
     // ── Prompt CRUD ───────────────────────────────────────────────────────

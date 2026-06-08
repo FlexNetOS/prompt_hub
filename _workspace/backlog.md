@@ -38,7 +38,7 @@ The following 17 features were marked as "dead" and removed from Cargo.toml duri
 
 ### P1a: Deployment & Rollout features (4 items)
 - [x] ~~**`beta-program`~~ ✅ committed 6b78a63 — Beta testing program management for prompts; track beta users, rollout percentages, feedback collection. Product scope: phased deployment system with beta cohort tracking. Priority: high (relates to canary deploy existing work).
-- [ ] **`chaos`** — Chaos engineering for prompt evaluation; automated fault injection, stress testing prompt resilience. Product scope: chaos test runner that generates adversarial inputs and measures prompt failure modes. Priority: medium.
+- [x] **`chaos`** ✅ committed 1c0fe04 cycle 68 — Chaos engineering for prompt evaluation; 6 fault-injection strategies, deterministic RNG, severity scoring. 14 new tests (10 unit + 4 integration), 820 total. Product scope: chaos test runner that generates adversarial inputs and measures prompt failure modes. Priority: medium.
 - [ ] **`chaos-automation`** — Automated chaos test scheduling and result correlation. Product scope: cron-based chaos testing pipeline with alerting on degradation patterns. Priority: medium (depends on `chaos`).
 - [x] ~~**`gradual-rollout`~~ ✅ committed 05ad5d2 — Replaced stale `canary` feature with full `gradual-rollout`: RolloutStage enum, RolloutSegment struct, AutoRollbackPolicy (OnErrorRate/OnLatencyP99/OnBoth), GraduatedRolloutConfig, RolloutEngine (SHA-256 bucket hashing, auto-rollback evaluation, stage advancement). 6 new unit tests + hub integration test. Fixed pre-existing un-gated CanaryDeployment import bug. Deleted canary.rs module. Priority: high ✅ DONE.
 

@@ -29,6 +29,8 @@ tokenizers = ["dep:tokenizers"]
 # Dynamic plugin loading via libloading/inventory inventory.
 plugins = ["dep:libloading", "dep:inventory"]
 
+chaos-automation = ["chaos"]
+
 # ---------------------------------------------------------------------------
 # Stub features converted to real gated features (Category B): real pub API,
 # hub.rs wiring exists, but were feature="[]" no-ops before this cleanup.

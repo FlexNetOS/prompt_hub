@@ -41,6 +41,7 @@ quota = ["prompt-hub/quota"]
 circuit-breaker = ["prompt-hub/circuit-breaker"]
 moderation = ["prompt-hub/moderation"]
 chaos = ["prompt-hub/chaos"]
+chaos-automation = ["prompt-hub/chaos-automation"]
 retention = ["prompt-hub/retention"]
 
 
