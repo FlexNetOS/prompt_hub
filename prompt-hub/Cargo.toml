@@ -54,6 +54,7 @@ satisfaction = []
 # deps required — these are pure Rust with existing std/deps already present.
 # ---------------------------------------------------------------------------
 chaos = []
+gather = []
 quota = []
 retention = []
 offline = []

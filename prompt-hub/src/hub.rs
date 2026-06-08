@@ -7,6 +7,8 @@ use crate::auth::{Action, RbacAuthManager};
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
 #[cfg(feature = "chaos")]
 use crate::chaos::{ChaosConfig, ChaosEngine, ChaosResult};
+#[cfg(feature = "gather")]
+use crate::gather::SmartContextGatherer;
 // CanaryDeployment lives in models.rs for backward compat.
 #[cfg(feature = "circuit-breaker")]
 use crate::circuit_breaker::CircuitBreaker;
@@ -297,6 +299,8 @@ pub struct PromptHub {
     >,
     #[cfg(feature = "mobile")]
     mobile_engine: std::sync::Arc<std::sync::RwLock<Option<Arc<std::sync::Mutex<MobileEngine>>>>>,
+    #[cfg(feature = "gather")]
+    smart_gatherer: SmartContextGatherer,
 }
 
 impl PromptHub {
@@ -418,6 +422,8 @@ impl PromptHub {
             auto_purge_engine: Arc::new(std::sync::Mutex::new(None)),
             #[cfg(feature = "mobile")]
             mobile_engine: Arc::new(std::sync::RwLock::new(None)),
+            #[cfg(feature = "gather")]
+            smart_gatherer: SmartContextGatherer,
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
@@ -1213,6 +1219,44 @@ impl PromptHub {
         let ctx = ContextGatherer::gather(project_path).await?;
         info!("Gathered context for {}", ctx.project_path);
         Ok(ctx)
+    }
+
+    // ── Smart context gathering ───────────────────────────────────────────
+
+    /// Gather enhanced project context with relevance-ranked files and extracted code patterns.
+    ///
+    /// Requires the `gather` feature flag. Returns a [`SmartContext`] wrapping the base
+    /// [`ProjectContext`] with file relevance rankings and extracted structural patterns
+    /// (imports, function signatures, struct/trait definitions) suitable for prompt
+    /// engineering workflows.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn gather_context_smart(
+        &self,
+        project_path: &Path,
+    ) -> Result<crate::gather::SmartContext> {
+        let smart = self.smart_gatherer.gather_smart(project_path).await?;
+        info!("Smart gather complete for {}", smart.project_path);
+        Ok(smart)
+    }
+
+    /// Collect only the relevance-ranked file list.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn collect_relevant_files(
+        &self,
+        project_path: &Path,
+    ) -> Vec<crate::gather::RelevanceEntry> {
+        self.smart_gatherer
+            .collect_relevant_files(project_path)
+            .await
+    }
+
+    /// Extract structural code patterns from key source files in a project.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn extract_patterns(&self, project_path: &Path) -> Vec<crate::gather::CodePattern> {
+        self.smart_gatherer.extract_patterns(project_path).await
     }
 
     // ── Cost estimation ───────────────────────────────────────────────────

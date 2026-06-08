@@ -52,6 +52,8 @@ pub mod evolution;
 pub mod fallback;
 #[cfg(feature = "retention")]
 pub mod garbage_collector;
+#[cfg(feature = "gather")]
+pub mod gather;
 #[cfg(feature = "gradual-rollout")]
 pub mod gradual_rollout;
 pub mod health;
@@ -126,6 +128,11 @@ pub use error::{HubError, Result};
 pub use hub::PromptHub;
 pub use models::UserProfile;
 pub use models::*;
+
+#[cfg(feature = "gather")]
+pub use gather::{
+    CodePattern, FileCategory, PathPattern, PatternType, RelevanceEntry, SmartContext,
+};
 
 #[cfg(feature = "offline")]
 pub use offline::{ConflictEntry, OfflineConfig, OfflineStore, SyncStatus};

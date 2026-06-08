@@ -1,14 +1,14 @@
 # Loop state — prompt-loop
 
-session_started: 2026-06-07T14:30:00Z   # P1 recovery rebuild
+session_started: 2026-06-08T00:00:00Z   # P1 recovery + gather
 loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 1
-cycles_total: 76
+cycles_this_session: 0
+cycles_total: 77
 apply_mode: APPLY (default for /prompt-loop)
-status: Cycle 76 mobile DONE. Continuing to gather.
+status: Cycle 77 gather — building
 
 ## P1 Recovery Status — 10 of 10 features built! ✅
 | Feature | Cycle | Tests | Commit |
@@ -24,10 +24,9 @@ status: Cycle 76 mobile DONE. Continuing to gather.
 | qdrant | 75 | 21 | c7ce588 |
 | mobile | 76 | 10 | b8ec6c5 |
 
-**P1 Recovery: 10 of 10 COMPLETE ✅.** All gates green across all cycles.
-New tests this cycle: **10 unit**. Cumulative P1 test count: ~230+.
+**P1 Recovery: 10 of 10 COMPLETE ✅.** All gates green.
 
-## Gates at last commit
+## Gates at last commit (ca9ac4d)
 | Gate | Result |
 |------|--------|
 | `cargo check --workspace --all-features` | GREEN ✅ |
@@ -38,9 +37,9 @@ New tests this cycle: **10 unit**. Cumulative P1 test count: ~230+.
 ## Remaining work
 | Item | Priority | Scope |
 |------|----------|-------|
-| **gather** | MEDIUM | Project-aware context extraction; auto-collects relevant files/docs/code context. Product scope: replaces/extends `context_gatherer`. |
+| **gather** | MEDIUM | Project-aware context extraction; replaces/extends `context_gatherer`. P1 last item. |
 
-Note: P1 recovery complete. Remaining `- [ ]` items in backlog are P2 structural gaps (defaults.rs, shutdown.rs, templates.rs, tokens.rs, plugins.rs, junie, server routes, CLI commands, migration 0008) — separate from P1 recovery.
+Note: P1 recovery complete. Remaining `- [ ]` items in backlog are P2 structural gaps — separate from P1.
 
 ---
-*Last update: 2026-06-08T00:30:00Z | Cycle 76 mobile DONE. Continuing to gather.*
+*Last update: 2026-06-08T00:30:00Z | Cycle 76 mobile DONE. Starting cycle 77 gather.*
