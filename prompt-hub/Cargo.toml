@@ -72,12 +72,13 @@ accessibility = []
 auto-purge = []
 malware-scan = []
 voice-anonymize = []
+touch = []
 
 # ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,
 # no hub.rs wiring, and zero meaningful source references:
 #   multi-provider, offline, qdrant,
-#   mobile, touch, gather
+#   mobile, gather
 # ---------------------------------------------------------------------------
 
 [dependencies]

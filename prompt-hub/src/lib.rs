@@ -107,6 +107,8 @@ pub mod swarm;
 pub mod sync;
 pub mod templates;
 pub mod tokens;
+#[cfg(feature = "touch")]
+pub mod touch;
 #[cfg(feature = "vibe")]
 pub mod vibe;
 #[cfg(feature = "voice")]

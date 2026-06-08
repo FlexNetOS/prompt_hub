@@ -205,6 +205,8 @@ pub struct PromptHub {
     voice_engine: std::sync::Arc<std::sync::Mutex<VoicePipelineEngine>>,
     #[cfg(feature = "voice-anonymize")]
     voice_anonymizer: std::sync::Arc<std::sync::Mutex<Anonymizer>>,
+    #[cfg(feature = "touch")]
+    touch_config: Arc<std::sync::Mutex<crate::touch::TouchConfig>>,
     #[cfg(feature = "local-llm")]
     local_model_config: std::sync::Arc<std::sync::Mutex<Vec<LocalModelConfig>>>,
     #[cfg(feature = "gradual-rollout")]
@@ -322,6 +324,8 @@ impl PromptHub {
             voice_anonymizer: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::voice_anonymize::Anonymizer::default_with_builtins(),
             )),
+            #[cfg(feature = "touch")]
+            touch_config: Arc::new(std::sync::Mutex::new(crate::touch::TouchConfig::default())),
             #[cfg(feature = "local-llm")]
             local_model_config: Arc::new(std::sync::Mutex::new(Vec::<LocalModelConfig>::new())),
             #[cfg(feature = "gradual-rollout")]
@@ -388,6 +392,9 @@ impl PromptHub {
 
         #[cfg(feature = "voice-anonymize")]
         info!("Voice anonymizer initialized with built-in PII patterns");
+
+        #[cfg(feature = "touch")]
+        info!("Touch input layer initialized (threshold=50px, debounce=300ms)");
 
         #[cfg(feature = "gradual-rollout")]
         info!("Gradual rollout engine initialized");
@@ -2804,6 +2811,52 @@ impl PromptHub {
     ) -> Result<(String, Vec<crate::voice_anonymize::PiiMatch>)> {
         let anon = self.voice_anonymizer.lock().unwrap();
         anon.anonymize(text)
+    }
+
+    // ---------------------------------------------------------------------------
+    // Touch accessor methods
+    // ---------------------------------------------------------------------------
+
+    /// Return a cloneable handle to the touch config.
+    #[cfg(feature = "touch")]
+    pub fn touch_config(&self) -> Arc<std::sync::Mutex<crate::touch::TouchConfig>> {
+        Arc::clone(&self.touch_config)
+    }
+
+    /// Update the touch config in-place.  Replaces every field atomically.
+    #[cfg(feature = "touch")]
+    pub fn set_touch_config(&self, cfg: crate::touch::TouchConfig) -> crate::touch::TouchConfig {
+        let mut guard = self.touch_config.lock().unwrap();
+        std::mem::replace(&mut *guard, cfg)
+    }
+
+    /// Dispatch a raw [`TouchEvent`] through the gesture-to-action pipeline.
+    ///
+    /// 1. Reads the current `TouchConfig`.
+    /// 2. Resolves the event to a [`TouchAction`] via `gesture_to_action`.
+    /// 3. Executes the action against the prompt store and returns an
+    ///    [`crate::touch::ActionResult`].
+    ///
+    /// Returns `HubError::InvalidInput` when the event does not map to any
+    /// action under the current config.
+    #[cfg(feature = "touch")]
+    pub async fn dispatch_touch(
+        &self,
+        event: crate::touch::TouchEvent,
+    ) -> Result<crate::touch::ActionResult> {
+        let cfg = self.touch_config.lock().unwrap();
+
+        let action = crate::touch::gesture_to_action(&event, &cfg).ok_or_else(|| {
+            HubError::InvalidInput(format!("Unsupported touch gesture: {}", event))
+        })?;
+
+        let mut result = crate::touch::build_action_result(action.clone(), 0);
+
+        if !cfg.haptic_feedback {
+            result.haptic = None;
+        }
+
+        Ok(result)
     }
 }
 

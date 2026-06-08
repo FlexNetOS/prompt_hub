@@ -53,6 +53,7 @@ accessibility = ["prompt-hub/accessibility"]
 malware-scan = ["prompt-hub/malware-scan"]
 auto-purge = ["prompt-hub/auto-purge"]
 voice-anonymize = ["prompt-hub/voice-anonymize"]
+touch = ["prompt-hub/touch"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }
