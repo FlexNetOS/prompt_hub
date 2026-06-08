@@ -51,6 +51,7 @@ gradual-rollout = ["prompt-hub/gradual-rollout"]
 i18n = ["prompt-hub/i18n"]
 accessibility = ["prompt-hub/accessibility"]
 malware-scan = ["prompt-hub/malware-scan"]
+auto-purge = ["prompt-hub/auto-purge"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }

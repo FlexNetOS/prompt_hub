@@ -223,6 +223,10 @@ pub struct PromptHub {
     malware_scan_config: Arc<std::sync::Mutex<MalwareScanConfig>>,
     #[cfg(feature = "offline")]
     offlined: std::sync::Arc<std::sync::RwLock<Option<OfflineState>>>,
+    #[cfg(feature = "auto-purge")]
+    auto_purge_engine: std::sync::Arc<
+        std::sync::Mutex<Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>>>,
+    >,
 }
 
 impl PromptHub {
@@ -331,6 +335,8 @@ impl PromptHub {
             malware_scan_config: Arc::new(std::sync::Mutex::new(MalwareScanConfig::default())),
             #[cfg(feature = "offline")]
             offlined: Arc::new(std::sync::RwLock::new(None)),
+            #[cfg(feature = "auto-purge")]
+            auto_purge_engine: Arc::new(std::sync::Mutex::new(None)),
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
@@ -489,6 +495,94 @@ impl PromptHub {
         self.chaos_auto = Some(auto);
 
         Ok(Some(handle))
+    }
+
+    // ── Auto-purge (periodic prompt cleanup) ──────────────────────────────
+
+    /// Return a handle to the auto-purge engine, if enabled.
+    #[cfg(feature = "auto-purge")]
+    pub fn auto_purge_engine(
+        &self,
+    ) -> Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        outer.clone()
+    }
+
+    /// Run a single purge cycle synchronously (blocking on storage).
+    #[cfg(feature = "auto-purge")]
+    #[allow(clippy::await_holding_lock)]
+    pub async fn purge_now(&self) -> Result<crate::auto_purge::PurgeStats> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let guard = engine.lock().unwrap();
+        guard.run_purge(self).await
+    }
+
+    /// Get a snapshot of current purge statistics.
+    #[cfg(feature = "auto-purge")]
+    pub fn get_purge_stats(&self) -> Result<crate::auto_purge::PurgeStats> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let guard = engine.lock().unwrap();
+        Ok(guard.stats())
+    }
+
+    /// Update the auto-purge configuration.
+    #[cfg(feature = "auto-purge")]
+    pub fn update_purge_config(
+        &self,
+        updater: impl FnOnce(&mut crate::auto_purge::AutoPurgeConfig),
+    ) -> Result<()> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let guard = engine.lock().unwrap();
+        guard.update_config(updater);
+        Ok(())
+    }
+
+    /// Start the auto-purge daemon with the given *config*.
+    #[cfg(feature = "auto-purge")]
+    #[allow(clippy::await_holding_lock)]
+    pub async fn start_purge_daemon(
+        &self,
+        config: crate::auto_purge::AutoPurgeConfig,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
+        let mut outer = self.auto_purge_engine.lock().unwrap();
+        if outer.is_none() {
+            *outer = Some(Arc::new(std::sync::Mutex::new(
+                crate::auto_purge::AutoPurgeEngine::new(config),
+            )));
+        }
+
+        let engine = outer.clone().unwrap();
+        let handle = {
+            let inner_guard = engine.lock().unwrap();
+            inner_guard.update_config(|c| {
+                c.enabled = true;
+            });
+            inner_guard.spawn_daemon_task().await?
+        };
+
+        Ok(Some(handle))
+    }
+
+    /// Stop the auto-purge daemon (sends shutdown signal to the loop).
+    #[cfg(feature = "auto-purge")]
+    pub fn stop_purge_daemon(&self) -> Result<()> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+
+        let guard = engine.lock().unwrap();
+        guard.shutdown();
+        Ok(())
     }
 
     // ── Prompt CRUD ───────────────────────────────────────────────────────

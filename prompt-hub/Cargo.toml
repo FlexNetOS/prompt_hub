@@ -69,13 +69,14 @@ sandbox = []
 voice = []
 local-llm = ["dep:reqwest"]
 accessibility = []
+auto-purge = []
 malware-scan = []
 
 # ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,
 # no hub.rs wiring, and zero meaningful source references:
 #   multi-provider, offline, qdrant, voice-anonymize,
-#   mobile, touch, gather, auto-purge
+#   mobile, touch, gather
 # ---------------------------------------------------------------------------
 
 [dependencies]

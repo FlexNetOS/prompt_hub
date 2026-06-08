@@ -24,6 +24,8 @@ pub mod accessibility;
 pub mod analytics;
 pub mod audit;
 pub mod auth;
+#[cfg(feature = "auto-purge")]
+pub mod auto_purge;
 #[cfg(feature = "beta-program")]
 pub mod beta_program;
 #[cfg(feature = "budget")]
