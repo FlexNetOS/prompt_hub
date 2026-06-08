@@ -95,6 +95,8 @@ pub mod templates;
 pub mod tokens;
 #[cfg(feature = "vibe")]
 pub mod vibe;
+#[cfg(feature = "voice")]
+pub mod voice;
 
 // Re-export commonly used types
 pub use config::HubConfig;

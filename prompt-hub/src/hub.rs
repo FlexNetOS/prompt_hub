@@ -27,6 +27,8 @@ use crate::models::CanaryDeployment;
 use crate::models::*;
 #[cfg(feature = "sandbox")]
 use crate::models::{Sandbox, SandboxConfig, SandboxMode};
+#[cfg(feature = "voice")]
+use crate::models::{VoiceInteraction, VoiceOutputFormat, VoicePipelineConfig, VoicePipelineState};
 #[cfg(feature = "moderation")]
 use crate::moderation::ModerationEngine;
 #[cfg(feature = "multimodal")]
@@ -48,6 +50,8 @@ use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
+#[cfg(feature = "voice")]
+use crate::voice::VoicePipelineEngine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
@@ -183,6 +187,8 @@ pub struct PromptHub {
     preview_engine: Arc<PreviewEngine>,
     #[cfg(feature = "sandbox")]
     sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
+    #[cfg(feature = "voice")]
+    voice_engine: std::sync::Arc<std::sync::Mutex<VoicePipelineEngine>>,
     #[cfg(feature = "gradual-rollout")]
     active_rollouts: std::sync::Mutex<Vec<GraduatedRolloutConfig>>,
     #[cfg(feature = "multimodal")]
@@ -278,6 +284,10 @@ impl PromptHub {
             preview_engine: Arc::new(PreviewEngine),
             #[cfg(feature = "sandbox")]
             sandbox_engine: std::sync::Arc::new(crate::sandbox::SandboxEngine::default()),
+            #[cfg(feature = "voice")]
+            voice_engine: std::sync::Arc::new(
+                std::sync::Mutex::new(VoicePipelineEngine::default()),
+            ),
             #[cfg(feature = "gradual-rollout")]
             active_rollouts: std::sync::Mutex::new(Vec::new()),
             #[cfg(feature = "multimodal")]
@@ -2066,6 +2076,78 @@ impl PromptHub {
         future: impl std::future::Future<Output = T> + Send + 'static,
     ) -> Result<T> {
         self.sandbox_engine.apply_timeout(sandbox_id, future).await
+    }
+
+    // ── Voice ──────────────────────────────────────────────────────────────
+
+    /// Configure the voice pipeline with a new [`VoicePipelineConfig`].
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self), fields(config = ?config))]
+    pub fn configure_voice(&self, config: VoicePipelineConfig) -> Result<()> {
+        let mut engine = self
+            .voice_engine
+            .lock()
+            .map_err(|e| HubError::Internal(format!("voice engine lock poisoned: {}", e)))?;
+        engine.configure(config);
+        Ok(())
+    }
+
+    /// Get the current voice pipeline FSM state.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub fn get_voice_state(&self) -> Option<VoicePipelineState> {
+        let engine = self.voice_engine.lock().ok()?;
+        Some(engine.get_state().clone())
+    }
+
+    /// Get the current voice output format.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub fn get_voice_output_format(&self) -> Option<VoiceOutputFormat> {
+        let engine = self.voice_engine.lock().ok()?;
+        Some(engine.get_output_format().clone())
+    }
+
+    /// Execute a complete voice turn through the pipeline.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub async fn execute_voice_turn(&self, prompt_text: &str) -> Result<VoiceInteraction> {
+        let prompt_text = prompt_text.to_string();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        // Clone Arc-wrapped engine for the spawn.
+        let engine_arc = self.voice_engine.clone();
+        std::thread::spawn(move || {
+            let mut engine = engine_arc.lock().expect("voice engine lock poisoned");
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("tokio runtime for voice turn");
+            let result = rt.block_on(engine.execute_turn(&prompt_text));
+            let _ = tx.send(result);
+        });
+        rx.await
+            .map_err(|e| HubError::Internal(format!("voice turn panicked: {}", e)))?
+    }
+
+    /// Reset the voice pipeline back to Idle.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub fn reset_voice_pipeline(&self) {
+        let mut engine = self
+            .voice_engine
+            .lock()
+            .expect("voice engine lock poisoned");
+        engine.reset();
+    }
+
+    /// Get the current voice pipeline interaction history.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub fn get_voice_history(&self) -> Vec<VoiceInteraction> {
+        let engine = self
+            .voice_engine
+            .lock()
+            .expect("voice engine lock poisoned");
+        engine.get_history().to_vec()
     }
 
     // ── Analytics ──────────────────────────────────────────────────────

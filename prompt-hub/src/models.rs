@@ -1061,6 +1061,83 @@ pub enum SandboxCheckResult {
     NetworkDenied,
 }
 
+// ── Voice types ────────────────────────────────────────────────────────────────
+
+/// Voice output format for TTS playback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VoiceOutputFormat {
+    #[default]
+    Wav,
+    Mp3,
+    Ogg,
+    Raw,
+}
+
+/// Voice pipeline configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VoicePipelineConfig {
+    /// Maximum recording duration before auto-stop.
+    pub max_duration_secs: u64,
+    /// Audio sample rate in Hz (8000, 16000, 24000, 44100, 48000).
+    pub sample_rate: u32,
+    /// BCP-47 language tag for STT.
+    pub language: String,
+    /// Enable text-to-speech output.
+    pub tts_enabled: bool,
+    /// Enable speech-to-text input.
+    pub stt_enabled: bool,
+    /// Output audio format.
+    pub output_format: VoiceOutputFormat,
+}
+
+impl Default for VoicePipelineConfig {
+    fn default() -> Self {
+        Self {
+            max_duration_secs: 60,
+            sample_rate: 16000,
+            language: "en".to_string(),
+            tts_enabled: true,
+            stt_enabled: true,
+            output_format: VoiceOutputFormat::Wav,
+        }
+    }
+}
+
+/// Playback state for a voice interaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VoicePlaybackStatus {
+    Idle,
+    Recording,
+    Processing,
+    Playing,
+    #[default]
+    Complete,
+}
+
+/// A single turn in a voice conversation (one input → one output).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceInteraction {
+    pub id: Uuid,
+    /// STT-transcribed text that initiated this turn.
+    pub stt_input: Option<String>,
+    /// TTS-delivered response text.
+    pub tts_output: Option<String>,
+    /// Whether TTS is currently playing (applied after receiving the response).
+    pub playback_status: VoicePlaybackStatus,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// State of the voice pipeline FSM.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum VoicePipelineState {
+    #[default]
+    Idle,
+    Recording,
+    SttComplete,
+    Processing,
+    TtsComplete,
+}
+
 #[cfg(test)]
 mod model_tests {
     use super::*;

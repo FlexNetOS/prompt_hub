@@ -62,6 +62,7 @@ analytics = []
 preview = []
 i18n = []
 sandbox = []
+voice = []
 
 # ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,

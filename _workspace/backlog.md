@@ -58,7 +58,7 @@ The following 17 features were marked as "dead" and removed from Cargo.toml duri
 ### P1d: Accessibility & UX features (4 items)
 - [ ] **`accessibility`** — WCAG-compliant prompt output generation; screen reader accessibility, dyslexia-friendly formatting, multi-sensory output alternatives. Product scope: accessibility audit + auto-formatting pass on all prompt outputs. Priority: medium.
 - [ ] **`touch`** — Touch-optimized UI components for interactive prompt management; gesture-based navigation, haptic feedback integration, mobile-first control surface. Product scope: touch interaction layer for TUI/server console mode. Priority: low-medium.
-- [ ] **`voice`** — Voice input/output pipeline; real-time speech-to-text prompting, TTS response delivery, voice command syntax for CLI operations. Product scope: full voice interface extending existing multimodal work (PR #53). Priority: high (product-facing feature).
+- [x] ~~**`voice`~~ ✅ committed <cycle_66_commit> — Voice pipeline orchestration (STT→text prompt→TTS response): VoicePipelineConfig, VoiceOutputFormat enum, VoiceInteraction transcript type, VoicePipelineState FSM (Idle→Recording→SttComplete→Processing→TtsComplete), VoicePipelineEngine with state machine transitions. Hub integration test for full flow. 18 new unit tests + 1 hub integration test. Priority: HIGH ✅ DONE.
 - [ ] **`gather`** — Context gathering and synthesis engine; automatically collects relevant files, docs, code context for prompt engineering workflows. Product scope: project-aware context extractor that replaces/extends `context_gatherer`. Priority: medium (relates to existing gather_context hub method).
 
 ### P1e: Maintenance & Operations feature
