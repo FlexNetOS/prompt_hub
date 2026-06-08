@@ -10,12 +10,24 @@ fn test_anonymizer_detects_common_pii() {
     let (anonymized, matches) = anonymizer.anonymize(transcript).unwrap();
 
     // Should have detected at least email + phone + SSN = 3 PII instances.
-    assert!(matches.len() >= 3, "Expected ≥3 PII matches, got {}", matches.len());
+    assert!(
+        matches.len() >= 3,
+        "Expected ≥3 PII matches, got {}",
+        matches.len()
+    );
 
     // Verify each original PII is replaced with a placeholder in anonymized text.
     for m in &matches {
-        assert!(!anonymized.contains(&m.original), "PII '{}' should be replaced", m.original);
-        assert!(anonymized.contains(&m.placeholder), "Placeholder '{}' not found in output", m.placeholder);
+        assert!(
+            !anonymized.contains(&m.original),
+            "PII '{}' should be replaced",
+            m.original
+        );
+        assert!(
+            anonymized.contains(&m.placeholder),
+            "Placeholder '{}' not found in output",
+            m.placeholder
+        );
     }
 
     // Verify non-PII text is preserved.
@@ -56,7 +68,8 @@ fn test_anonymizer_custom_pattern() {
         prompt_hub::voice_anonymize::PiiType::Custom("SECRET_CODE".into()),
         r"\bSECRET-[A-Z0-9]{4}\b",
         "[SECRET_CODE]",
-    ).expect("valid pattern");
+    )
+    .expect("valid pattern");
 
     let builder = AnonymizerBuilder::new();
     let builder = builder.add_pattern(pattern).expect("valid pattern");
