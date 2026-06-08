@@ -25,6 +25,8 @@ use crate::metrics::MetricsCollector;
 #[cfg(feature = "gradual-rollout")]
 use crate::models::CanaryDeployment;
 use crate::models::*;
+#[cfg(feature = "sandbox")]
+use crate::models::{Sandbox, SandboxConfig, SandboxMode};
 #[cfg(feature = "moderation")]
 use crate::moderation::ModerationEngine;
 #[cfg(feature = "multimodal")]
@@ -179,6 +181,8 @@ pub struct PromptHub {
     quota_enforcer: Arc<QuotaEnforcer>,
     #[cfg(feature = "preview")]
     preview_engine: Arc<PreviewEngine>,
+    #[cfg(feature = "sandbox")]
+    sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
     #[cfg(feature = "gradual-rollout")]
     active_rollouts: std::sync::Mutex<Vec<GraduatedRolloutConfig>>,
     #[cfg(feature = "multimodal")]
@@ -272,6 +276,8 @@ impl PromptHub {
             quota_enforcer: Arc::new(QuotaEnforcer::default()),
             #[cfg(feature = "preview")]
             preview_engine: Arc::new(PreviewEngine),
+            #[cfg(feature = "sandbox")]
+            sandbox_engine: std::sync::Arc::new(crate::sandbox::SandboxEngine::default()),
             #[cfg(feature = "gradual-rollout")]
             active_rollouts: std::sync::Mutex::new(Vec::new()),
             #[cfg(feature = "multimodal")]
@@ -315,6 +321,9 @@ impl PromptHub {
 
         #[cfg(feature = "preview")]
         info!("Preview engine ready for pre-execution rendering");
+
+        #[cfg(feature = "sandbox")]
+        info!("Sandbox engine initialized in permissive mode");
 
         #[cfg(feature = "gradual-rollout")]
         info!("Gradual rollout engine initialized");
@@ -1998,6 +2007,65 @@ impl PromptHub {
     #[cfg(feature = "i18n")]
     pub fn translation_fallback_chain(&self, locale: &str) -> Vec<String> {
         crate::i18n::I18nEngine::fallback_chain(locale)
+    }
+
+    // ── Execution sandbox ──────────────────────────────────────────────
+
+    /// Create a new sandbox with the given name and configuration.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self, config), fields(name = %name))]
+    pub fn create_sandbox(
+        &self,
+        name: String,
+        mode: SandboxMode,
+        config: SandboxConfig,
+    ) -> Result<Sandbox> {
+        self.sandbox_engine.create_sandbox(name, mode, config)
+    }
+
+    /// Retrieve a sandbox by id.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %id))]
+    pub fn get_sandbox(&self, id: Uuid) -> Result<Sandbox> {
+        self.sandbox_engine.get_sandbox(id)
+    }
+
+    /// Update a sandbox's configuration by id.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %id))]
+    pub fn update_sandbox(&self, id: Uuid, config: SandboxConfig) -> Result<Sandbox> {
+        self.sandbox_engine.update_sandbox(id, config)
+    }
+
+    /// Delete a sandbox by id. Returns `HubError::NotFound` if absent.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %id))]
+    pub fn delete_sandbox(&self, id: Uuid) -> Result<()> {
+        self.sandbox_engine.delete_sandbox(id)
+    }
+
+    /// Enforce sandbox limits for a prompt execution. Returns `SandboxCheckResult`.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %sandbox_id))]
+    pub fn check_sandbox(
+        &self,
+        sandbox_id: Uuid,
+        prompt_tokens: u32,
+        cost_usd: f64,
+        network_call: bool,
+    ) -> crate::models::SandboxCheckResult {
+        self.sandbox_engine
+            .check(sandbox_id, prompt_tokens, cost_usd, network_call)
+    }
+
+    /// Wrap a future with the sandbox's configured timeout.
+    #[cfg(feature = "sandbox")]
+    pub async fn apply_timeout<T: Send + 'static>(
+        &self,
+        sandbox_id: Uuid,
+        future: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> Result<T> {
+        self.sandbox_engine.apply_timeout(sandbox_id, future).await
     }
 
     // ── Analytics ──────────────────────────────────────────────────────

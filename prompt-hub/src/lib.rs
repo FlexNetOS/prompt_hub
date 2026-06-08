@@ -80,6 +80,8 @@ pub mod quota;
 pub mod retention;
 #[cfg(feature = "rollback")]
 pub mod rollback;
+#[cfg(feature = "sandbox")]
+pub mod sandbox;
 pub mod sanitize;
 // satisfaction is deeply wired into PromptHub struct — kept always-in for now.
 pub mod satisfaction;

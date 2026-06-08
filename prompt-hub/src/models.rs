@@ -984,6 +984,83 @@ pub struct PromptPatch {
     pub locale: Option<String>,
 }
 
+/// Sandbox mode: what level of restriction applies to this prompt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SandboxMode {
+    /// No sandboxing — full access.
+    Unrestricted,
+    /// Resource-bounded execution with configurable limits.
+    Bounded(SandboxConfig),
+    /// Full isolation: deny all network, strict token/cost caps.
+    Isolated(SandboxConfig),
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for SandboxMode {
+    fn default() -> Self {
+        Self::Unrestricted
+    }
+}
+
+/// Resource limits enforced by the sandbox engine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SandboxConfig {
+    pub max_tokens: u32,
+    pub max_cost_usd: f64,
+    pub timeout_secs: u64,
+    pub max_memory_bytes: u64,
+    pub rate_limit_per_min: u32,
+    pub deny_network: bool,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            max_tokens: 8192,
+            max_cost_usd: 10.0,
+            timeout_secs: 60,
+            max_memory_bytes: 268_435_456, // 256 MB
+            rate_limit_per_min: 60,
+            deny_network: true,
+        }
+    }
+}
+
+/// A named sandbox instance bound to a prompt or user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sandbox {
+    pub id: Uuid,
+    pub name: String,
+    pub mode: SandboxMode,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Default for Sandbox {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: "default".to_string(),
+            mode: SandboxMode::default(),
+            enabled: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+}
+
+/// Result of a sandbox enforcement check.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SandboxCheckResult {
+    Allowed,
+    RateLimited { retry_after_secs: u64 },
+    BudgetExceeded { spent_usd: f64, limit_usd: f64 },
+    TokenLimitExceeded { used: u32, max: u32 },
+    Timeout { elapsed_secs: u64 },
+    NetworkDenied,
+}
+
 #[cfg(test)]
 mod model_tests {
     use super::*;
@@ -1153,5 +1230,59 @@ mod model_tests {
             active: true,
         };
         assert!(cfg.active);
+    }
+
+    // ── Sandbox model tests (cycle-65) ───────────────────────────────
+
+    #[test]
+    fn test_sandbox_mode_default() {
+        let mode = SandboxMode::default();
+        assert!(matches!(mode, SandboxMode::Unrestricted));
+    }
+
+    #[test]
+    fn test_sandbox_config_default() {
+        let cfg = SandboxConfig::default();
+        assert_eq!(cfg.max_tokens, 8192);
+        assert!((cfg.max_cost_usd - 10.0).abs() < f64::EPSILON);
+        assert_eq!(cfg.timeout_secs, 60);
+        assert_eq!(cfg.max_memory_bytes, 268_435_456);
+        assert_eq!(cfg.rate_limit_per_min, 60);
+        assert!(cfg.deny_network);
+    }
+
+    #[test]
+    fn test_sandbox_check_result_variants() {
+        let allowed = SandboxCheckResult::Allowed;
+        assert!(matches!(allowed, SandboxCheckResult::Allowed));
+
+        let rate_limited = SandboxCheckResult::RateLimited {
+            retry_after_secs: 30,
+        };
+        assert!(matches!(
+            rate_limited,
+            SandboxCheckResult::RateLimited { .. }
+        ));
+
+        let budget = SandboxCheckResult::BudgetExceeded {
+            spent_usd: 12.5,
+            limit_usd: 10.0,
+        };
+        assert!(matches!(budget, SandboxCheckResult::BudgetExceeded { .. }));
+
+        let token = SandboxCheckResult::TokenLimitExceeded {
+            used: 9000,
+            max: 8192,
+        };
+        assert!(matches!(
+            token,
+            SandboxCheckResult::TokenLimitExceeded { .. }
+        ));
+
+        let timeout = SandboxCheckResult::Timeout { elapsed_secs: 61 };
+        assert!(matches!(timeout, SandboxCheckResult::Timeout { .. }));
+
+        let network = SandboxCheckResult::NetworkDenied;
+        assert!(matches!(network, SandboxCheckResult::NetworkDenied));
     }
 }

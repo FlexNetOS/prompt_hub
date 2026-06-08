@@ -61,12 +61,13 @@ budget = []
 analytics = []
 preview = []
 i18n = []
+sandbox = []
 
 # ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,
 # no hub.rs wiring, and zero meaningful source references:
 #   beta-program, chaos, chaos-automation, cost-limits,
-#   malware-scan, multi-provider, offline, qdrant, sandbox, voice-anonymize,
+#   malware-scan, multi-provider, offline, qdrant, voice-anonymize,
 #   local-llm, mobile, accessibility, touch, voice, gather, auto-purge
 # ---------------------------------------------------------------------------
 

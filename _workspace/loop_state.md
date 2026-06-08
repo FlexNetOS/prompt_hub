@@ -5,10 +5,10 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 1
+cycles_this_session: 2
 cycles_total: 63
 apply_mode: APPLY (default for /prompt-loop)
-status: RESUME cycle 64 gradual-rollout COMPLETE (759 tests, clippy clean). Next: sandbox or chaos
+status: CYCLE 65 sandbox — in progress
 
 ## This session's purpose
 
