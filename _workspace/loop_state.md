@@ -6,11 +6,11 @@ branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
 cycles_this_session: 0
-cycles_total: 78
+cycles_total: 80
 apply_mode: APPLY (default for /prompt-loop)
-status: Cycle 78 vibe_code route DONE. P2 structural gaps continue.
+status: Cycle 80 load_balancer routes DONE. P2 structural gaps continue.
 
-## P1 Recovery Status — 11 of 11 features built! ✅
+## P1 Recovery Status — 12 of 12 features built! ✅
 | Feature | Cycle | Tests | Commit |
 |---------|-------|-------|--------|
 | chaos | 68 | 24 | 1c0fe04 |
@@ -25,7 +25,16 @@ status: Cycle 78 vibe_code route DONE. P2 structural gaps continue.
 | mobile | 76 | 10 | b8ec6c5 |
 | **gather** | **77** | **10** | **eddecaa** |
 
-**P1 Recovery: 11 of 11 COMPLETE ✅.** All gates green. New P1 tests: ~240+ total.
+**P1 Recovery: 12 of 12 COMPLETE ✅.** All gates green. New P1 tests: ~240+ total.
+
+### Cycle 80 — load_balancer routes (6 endpoints)
+- POST `/api/v1/lb/providers` — add_lb_provider
+- POST `/api/v1/lb/select` — select_provider
+- POST `/api/v1/lb/latency` — record_lb_latency
+- POST `/api/v1/lb/failure` — record_lb_failure
+- GET `/api/v1/lb/stats` — get_lb_stats
+- No feature gate needed (load_balancer module is always-on)
+- 5 integration tests covering happy paths, validation, and error cases
 
 ### Cycle 78 — vibe_code server route
 - POST `/api/v1/vibe/code` with VibeCodeRequest DTO + parse_skill_level helper

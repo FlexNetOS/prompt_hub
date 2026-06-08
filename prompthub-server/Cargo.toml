@@ -51,3 +51,9 @@ schemars = { workspace = true, optional = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true, features = ["json"] }
+tempfile = "3"
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true, features = ["timeout", "compression-full"] }

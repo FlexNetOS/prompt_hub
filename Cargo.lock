@@ -2934,6 +2934,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-rustls",
  "tower",
