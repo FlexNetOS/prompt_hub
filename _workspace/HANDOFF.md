@@ -15,7 +15,7 @@ Rebuild backlog with all features that were prematurely removed during s11-s15 w
 | Rollback methods lacking cfg gates | 7aa2c4e | Added `#[cfg(feature = "rollback")]` to deploy_with_rollback/restore_snapshot/is_rollback_available (prevent cfg mismatch at hub.rs:186 vs :1425-1442) |
 | Server routes.rs:215 bypassing hub.get() RBAC | 2feb13f | Added `hub.get_by_id()` method + wired into prompthub-server/src/routes.rs (all CRUD routes now use hub methods consistently) |
 
-### P1 Recovery Features (5 items)
+### P1 Recovery Features (6 items)
 | Feature | Commit | Description | Tests |
 |---------|--------|-------------|-------|
 | cost-limits | 1b05e3d | Multi-dimensional cost enforcement — Resource enum, OveragePolicy (Alert/Block/Fail), LimitEntry with record/is_exceeded/utilization_percent(), CostLimiter with check_and_record + set_limit + reset_all | 11 unit tests |
@@ -23,20 +23,20 @@ Rebuild backlog with all features that were prematurely removed during s11-s15 w
 | multi-provider | 6b78a63 | Vendor routing with health tracking — ProviderConfig + HealthStatus (Healthy/Degraded/Unhealthy), MultiProviderRouter with select(vendor_filter) + pool_stats + available_providers | 10 unit tests |
 | gradual-rollout | 05ad5d2 | Replaced stale canary feature — RolloutStage, RolloutSegment, AutoRollbackPolicy, GraduatedRolloutConfig, RolloutEngine (SHA-256 hashing, auto-rollback evaluation). Fixed un-gated CanaryDeployment import bug | 7 unit + hub test |
 | sandbox | 4c01df7 | Per-prompt execution sandbox (config + enforcement layer within #![forbid(unsafe_code)]): SandboxMode enum, SandboxConfig resource bounds, Sandbox CRUD engine with rate limiting + token/cost/network checks. HubError::SecurityViolation variant. Rust-correct: removed Eq on f64-containing types → PartialEq only | 15 unit tests |
+| voice | 47f7bb7 | Voice pipeline orchestration (STT→text prompt→TTS response): VoicePipelineConfig, VoiceOutputFormat enum, VoiceInteraction transcript type, VoicePipelineState FSM (Idle→Recording→SttComplete→Processing→TtsComplete), VoicePipelineEngine with state machine transitions. Hub integration test. Rust-correct: Arc<Mutex<>> wrapping to avoid await_holding_lock lint | 18 unit + hub test |
 
 ## Gates at Session Close
 | Gate | Result |
 |------|--------|
 | `cargo check --workspace --all-features` | GREEN ✅ |
-| `cargo test --workspace --all-features` | 774 passed, 2 ignored |
+| `cargo test --workspace --all-features` | 793 passed, 2 ignored |
 | `cargo clippy -D warnings` | clean ✅ |
 | `cargo fmt --check` | clean ✅ |
 
-## Remaining P1 Recovery Items (12 of 17)
+## Remaining P1 Recovery Items (11 of 17)
 Priority order from gap analysis:
 
-1. **voice** — Voice input/output pipeline extending PR #53 multimodal work. Priority: HIGH
-2. **local-llm** — Ollama/Llama.cpp integration for on-device inference. Priority: MED-HIGH
+1. **local-llm** — Ollama/Llama.cpp integration for on-device inference. Priority: MED-HIGH
 3. **chaos** — Adversarial prompt testing framework. Priority: MEDIUM
 4. **chaos-automation** — Cron-based chaos test scheduling (depends on `chaos`). Priority: MEDIUM
 5. **accessibility** — WCAG-compliant output formatting. Priority: MEDIUM
@@ -55,4 +55,4 @@ Priority order from gap analysis:
 3. Consider P4 edge cases after all P1 items are built
 
 ---
-*Handoff written: 2026-06-07T15:45:00Z | P1 Recovery: 5 of 17 features built (cycles 6-7 + 64-65)*
+*Handoff written: 2026-06-07T15:50:00Z | P1 Recovery: 6 of 17 features built (cycles 6-7 + 64-66)*
