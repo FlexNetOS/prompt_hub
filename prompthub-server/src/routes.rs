@@ -19,6 +19,35 @@ use prompt_hub::models::*;
 use prompt_hub::budget::{BudgetAlert, BudgetConfig};
 
 use crate::responses::{error, success};
+
+// ── Satisfaction request DTOs ─────────────────────────────────────────────
+
+/// Request body for recording a CSAT rating.
+#[derive(Debug, Deserialize)]
+pub struct RecordCsatRequest {
+    pub score: u8,
+    #[serde(default)]
+    pub context: String,
+}
+
+/// Request body for recording an NPS rating.
+#[derive(Debug, Deserialize)]
+pub struct RecordNpsRequest {
+    pub score: u8,
+}
+
+/// Request body for recording a satisfaction funnel event.
+#[derive(Debug, Deserialize)]
+pub struct SatisfactionEventRequest {
+    pub prompt_id: String,
+    pub successful: bool,
+    #[serde(default = "default_one")]
+    pub attempts: u8,
+}
+
+fn default_one() -> u8 {
+    1
+}
 use crate::state::AppState;
 
 // ── Request / response DTOs ──────────────────────────────────────────────
@@ -1034,6 +1063,103 @@ fn routing_strategy_to_string(strategy: prompt_hub::load_balancer::RoutingStrate
     }
 }
 
+// ── Satisfaction handler functions ────────────────────────────────────────
+
+/// Record a CSAT rating (1-5) via HTTP.
+#[instrument(skip(state))]
+pub async fn record_csat(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordCsatRequest>,
+) -> Response {
+    if !(1..=5).contains(&payload.score) {
+        warn!(score = payload.score, "Invalid CSAT score in request");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "CSAT score must be between 1 and 5",
+        )
+        .into_response();
+    }
+
+    state
+        .hub
+        .record_csat_rating(payload.score, &payload.context);
+    info!(score = payload.score, "Recorded CSAT rating");
+    success(json!({
+        "score": payload.score,
+        "scale": 5,
+    }))
+    .into_response()
+}
+
+/// Record an NPS rating (1-10) via HTTP.
+#[instrument(skip(state))]
+pub async fn record_nps(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordNpsRequest>,
+) -> Response {
+    if !(1..=10).contains(&payload.score) {
+        warn!(score = payload.score, "Invalid NPS score in request");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "NPS score must be between 1 and 10",
+        )
+        .into_response();
+    }
+
+    state.hub.record_nps_rating(payload.score);
+    info!(score = payload.score, "Recorded NPS rating");
+    success(json!({
+        "score": payload.score,
+        "scale": 10,
+    }))
+    .into_response()
+}
+
+/// Record a satisfaction funnel event via HTTP.
+#[instrument(skip(state))]
+pub async fn record_satisfaction_event(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SatisfactionEventRequest>,
+) -> Response {
+    if payload.prompt_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompt_id cannot be empty").into_response();
+    }
+
+    state
+        .hub
+        .record_satisfaction_event(&payload.prompt_id, payload.successful, payload.attempts);
+    info!(prompt_id = %payload.prompt_id, successful = payload.successful, "Recorded satisfaction event");
+    success(json!({
+        "prompt_id": payload.prompt_id,
+        "successful": payload.successful,
+        "attempts": payload.attempts,
+    }))
+    .into_response()
+}
+
+/// Return current satisfaction metrics via HTTP.
+#[instrument(skip(state))]
+pub async fn get_satisfaction_metrics(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.satisfaction_metrics() {
+        Ok(metrics) => success(json!({
+            "csat_average": metrics.csat_average,
+            "nps_score": metrics.nps_score,
+            "one_shot_success_rate": metrics.one_shot_success_rate,
+            "total_ratings": metrics.total_ratings,
+            "total_events": metrics.total_events,
+            "recent_trend": format!("{:?}", metrics.recent_trend).to_lowercase(),
+        }))
+        .into_response(),
+        Err(e) => {
+            warn!("Failed to get satisfaction metrics: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+// ── Satisfaction handler functions (above) ────────────────────────────────
+// ── Test module below ─────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1292,5 +1418,163 @@ mod tests {
         let stats = arc_state.hub.get_lb_stats();
         assert_eq!(stats[0].latency_ms, 42);
         assert_eq!(stats[0].error_count, 1);
+    }
+
+    // ── Satisfaction route tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_record_csat_valid() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_csat(
+            axum::extract::State(arc_state.clone()),
+            axum::Json(RecordCsatRequest {
+                score: 4,
+                context: "Great UI".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_record_csat_invalid_score_rejected() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_csat(
+            axum::extract::State(arc_state),
+            axum::Json(RecordCsatRequest {
+                score: 6,
+                context: "".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_record_nps_valid() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_nps(
+            axum::extract::State(arc_state),
+            axum::Json(RecordNpsRequest { score: 9 }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_record_nps_invalid_score_rejected() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_nps(
+            axum::extract::State(arc_state),
+            axum::Json(RecordNpsRequest { score: 11 }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_record_satisfaction_event_valid() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_satisfaction_event(
+            axum::extract::State(arc_state),
+            axum::Json(SatisfactionEventRequest {
+                prompt_id: "p-42".into(),
+                successful: true,
+                attempts: 1,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_record_satisfaction_event_empty_prompt_id_rejected() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_satisfaction_event(
+            axum::extract::State(arc_state),
+            axum::Json(SatisfactionEventRequest {
+                prompt_id: "".into(),
+                successful: true,
+                attempts: 1,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_satisfaction_metrics_empty() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = get_satisfaction_metrics(axum::extract::State(arc_state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

@@ -6,9 +6,9 @@ branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
 cycles_this_session: 0
-cycles_total: 80
+cycles_total: 82
 apply_mode: APPLY (default for /prompt-loop)
-status: Cycle 80 load_balancer routes DONE. P2 structural gaps continue.
+status: Cycle 81 satisfaction DONE
 
 ## P1 Recovery Status — 13 of 13 features built! ✅
 | Feature | Cycle | Tests | Commit |
@@ -82,11 +82,18 @@ status: Cycle 80 load_balancer routes DONE. P2 structural gaps continue.
 ## Remaining work
 P1 recovery complete. Remaining `- [ ]` items in backlog are P2 structural gaps:
 - defaults.rs, shutdown.rs, multimodal_input.rs, plugins.rs, templates.rs, tokens.rs, junie
-- Server route coverage gap (~60 hub methods) — budget (6) + vibe_code done = 54 remaining
-  - load_balancer routes (6 endpoints): add_provider, select_provider, record_latency/failure, get_stats
-  - satisfaction routes (4 endpoints): record_csat, record_nps, events, metrics
-- CLI command fragmentation
-- Migration 0008 DDL
+- Server route coverage gap (~50 hub methods) — budget (6) + vibe_code + satisfaction done = 50 remaining
+  - CLI command fragmentation
+  - Migration 0008 DDL
+
+### Cycle 81 — satisfaction routes (4 endpoints)
+- POST `/api/v1/satisfaction/csat` — record_csat_rating (validates 1-5)
+- POST `/api/v1/satisfaction/nps` — record_nps_rating (validates 1-10)
+- POST `/api/v1/satisfaction/events` — record_satisfaction_event
+- GET `/api/v1/satisfaction/metrics` — satisfaction_metrics (JSON response)
+- **7 DTOs/fields:** RecordCsatRequest, RecordNpsRequest, SatisfactionEventRequest, default_one(), SatisfactionMetrics+Serialize, TrendDirection+Serialize
+- 7 integration tests using direct handler call pattern (same as cycle 80 lesson)
+- **Test note:** `cargo test` hangs on this machine — pre-existing issue confirmed on HEAD without any of my changes. All build/clippy/fmt gates green.
 
 ---
 *Last update: 2026-06-08T01:45:00Z | Cycle 79 budget routes DONE. Budget server coverage gap closed.*

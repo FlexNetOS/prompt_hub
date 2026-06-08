@@ -84,6 +84,19 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/lb/failure", post(routes::record_lb_failure))
         .route("/api/v1/lb/stats", get(routes::get_lb_stats));
 
+    // Satisfaction routes (always-on)
+    let router = router
+        .route("/api/v1/satisfaction/csat", post(routes::record_csat))
+        .route("/api/v1/satisfaction/nps", post(routes::record_nps))
+        .route(
+            "/api/v1/satisfaction/events",
+            post(routes::record_satisfaction_event),
+        )
+        .route(
+            "/api/v1/satisfaction/metrics",
+            get(routes::get_satisfaction_metrics),
+        );
+
     // Apply State BEFORE middleware — required for handlers using `State<T>` extractors.
     router
         .with_state(state_arc)

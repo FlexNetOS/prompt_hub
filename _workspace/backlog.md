@@ -107,7 +107,7 @@ The following 17 features were marked as "dead" and removed from Cargo.toml duri
 - [x] ~~**Add `vibe_code` route**~~ ✅ committed 3f6411a cycle 78 — POST /api/v1/vibe/code with VibeCodeRequest DTO, parse_skill_level helper, full JSON response (artifacts/summary/confidence/suggestions). Added 'vibe' feature pass-through in server Cargo.toml. Priority: high ✅ DONE.
 - [x] **Add budget routes** — record_spend, budget_utilization, current_spend_usd, is_budget_exceeded, set_monthly_budget, load/save config, reset period. 6 endpoints + 3 DTOs. Priority: high ✅ DONE (cycle 79, ae0bc1a → ecd5e07).
 - [x] **Add load_balancer routes** — add_provider, select_provider, record_latency/failure, get_stats. 6 endpoints. Priority: medium ✅ DONE (cycle 80, 39ed393). See lessons learned in HANDOFF.md.
-- [ ] **Add satisfaction routes** — record_csat, record_nps, event recording, metrics endpoint. 4 endpoints. Priority: medium.
+- [x] **Add satisfaction routes** ✅ DONE (cycle 81): POST `/api/v1/satisfaction/csat`, `POST /nps`, `POST /events`; GET `/metrics` — 4 DTOs, 7 tests. Note: `cargo test` hangs on this machine (pre-existing). Build/clippy/fmt all green.
 
 ### P2c: CLI command fragmentation
 - [ ] **Move inline CLI commands to dedicated files** — rollback, evolve, vibe, gather, preview, cost, deploy, feedback are all dispatched in main.rs without dedicated command files. Creates test/maintenance gap. Priority: medium (improves code organization).
