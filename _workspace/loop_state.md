@@ -8,9 +8,9 @@ cycle_budget: 5
 cycles_this_session: 0
 cycles_total: 77
 apply_mode: APPLY (default for /prompt-loop)
-status: Cycle 77 gather — building
+status: Cycle 77 gather DONE. P1 recovery complete.
 
-## P1 Recovery Status — 10 of 10 features built! ✅
+## P1 Recovery Status — 11 of 11 features built! ✅
 | Feature | Cycle | Tests | Commit |
 |---------|-------|-------|--------|
 | chaos | 68 | 24 | 1c0fe04 |
@@ -23,10 +23,11 @@ status: Cycle 77 gather — building
 | touch | 74 | 41 | 5ac83a5 |
 | qdrant | 75 | 21 | c7ce588 |
 | mobile | 76 | 10 | b8ec6c5 |
+| **gather** | **77** | **10** | **eddecaa** |
 
-**P1 Recovery: 10 of 10 COMPLETE ✅.** All gates green.
+**P1 Recovery: 11 of 11 COMPLETE ✅.** All gates green. New P1 tests: ~240+ total.
 
-## Gates at last commit (ca9ac4d)
+## Gates at last commit (eddecaa)
 | Gate | Result |
 |------|--------|
 | `cargo check --workspace --all-features` | GREEN ✅ |
@@ -35,11 +36,11 @@ status: Cycle 77 gather — building
 | Working tree | Clean ✅ |
 
 ## Remaining work
-| Item | Priority | Scope |
-|------|----------|-------|
-| **gather** | MEDIUM | Project-aware context extraction; replaces/extends `context_gatherer`. P1 last item. |
-
-Note: P1 recovery complete. Remaining `- [ ]` items in backlog are P2 structural gaps — separate from P1.
+P1 recovery complete. Remaining `- [ ]` items in backlog are P2 structural gaps:
+- defaults.rs, shutdown.rs, multimodal_input.rs, plugins.rs, templates.rs, tokens.rs, junie
+- Server route coverage gap (~60 hub methods)
+- CLI command fragmentation
+- Migration 0008 DDL
 
 ---
-*Last update: 2026-06-08T00:30:00Z | Cycle 76 mobile DONE. Starting cycle 77 gather.*
+*Last update: 2026-06-08T01:30:00Z | Cycle 77 gather DONE. P1 recovery complete (11/11).*
