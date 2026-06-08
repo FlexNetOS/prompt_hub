@@ -3,7 +3,7 @@
 use axum::{
     Router,
     middleware::from_fn,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +30,7 @@ pub fn create_router(state: AppState) -> Router {
 
     let state_arc = Arc::new(state);
 
-    Router::new()
+    let router = Router::new()
         // Prompt CRUD
         .route("/api/v1/prompts", post(routes::register_prompt))
         .route("/api/v1/prompts", get(routes::list_prompts))
@@ -43,8 +43,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/prompts/{id}/audit", get(routes::audit_trail))
         // Swarm
         .route("/api/v1/swarm/bundle", get(routes::generate_bundle))
-        // Vibe coding — natural language → deliverable (feature: vibe)
-        .route("/api/v1/vibe/code", post(routes::vibe_code))
         // Health (Kubernetes probes)
         .route("/health", get(routes::health_check))
         .route("/ready", get(routes::ready_check))
@@ -53,8 +51,29 @@ pub fn create_router(state: AppState) -> Router {
         .route("/metrics", get(routes::prometheus_metrics))
         // OpenAPI docs
         .route("/openapi.json", get(routes::openapi_json))
-        .route("/docs", get(routes::swagger_ui))
-        // State
+        .route("/docs", get(routes::swagger_ui));
+
+    // Vibe coding — natural language → deliverable (feature: vibe)
+    #[cfg(feature = "vibe")]
+    let router = router.route("/api/v1/vibe/code", post(routes::vibe_code));
+
+    // Budget tracking (feature: budget)
+    #[cfg(feature = "budget")]
+    let router = router
+        .route("/api/v1/budget/spend", post(routes::budget_record_spend))
+        .route("/api/v1/budget/status", get(routes::budget_status))
+        .route("/api/v1/budget/budget", put(routes::set_monthly_budget))
+        .route(
+            "/api/v1/budget/config/load",
+            post(routes::load_budget_config),
+        )
+        .route(
+            "/api/v1/budget/config/save/{org_id}",
+            get(routes::save_budget_config),
+        )
+        .route("/api/v1/budget/reset", post(routes::reset_budget_period));
+
+    router
         .with_state(state_arc)
         // Middleware — applied directly on the Router (not bundled in a
         // ServiceBuilder) so the `from_fn` layers satisfy axum's Service bounds.

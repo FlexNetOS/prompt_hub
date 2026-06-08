@@ -15,6 +15,9 @@ use uuid::Uuid;
 
 use prompt_hub::models::*;
 
+#[cfg(feature = "budget")]
+use prompt_hub::budget::{BudgetAlert, BudgetConfig};
+
 use crate::responses::{error, success};
 use crate::state::AppState;
 
@@ -649,6 +652,33 @@ fn parse_skill_level(s: &str) -> SkillLevel {
     }
 }
 
+// ── Budget request DTOs ──────────────────────────────────────────────────
+
+/// Record spend request body.
+#[cfg(feature = "budget")]
+#[derive(Debug, Deserialize)]
+pub struct RecordSpendRequest {
+    /// Amount in USD to record.
+    pub amount_usd: f64,
+}
+
+/// Set monthly budget request body.
+#[cfg(feature = "budget")]
+#[derive(Debug, Deserialize)]
+pub struct SetMonthlyBudgetRequest {
+    /// New monthly budget in USD.
+    pub monthly_budget_usd: f64,
+}
+
+/// Load budget config request body.
+#[cfg(feature = "budget")]
+#[derive(Debug, Deserialize)]
+pub struct LoadConfigRequest {
+    /// Budget configuration to load.
+    #[serde(rename = "config")]
+    pub config: BudgetConfig,
+}
+
 // ── Vibe coding handler ──────────────────────────────────────────────────────
 
 /// Execute vibe coding — generate a deliverable from natural language.
@@ -696,6 +726,127 @@ pub async fn vibe_code(
             error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
+}
+
+// ── Budget tracking routes ─────────────────────────────────────────────────
+
+/// Record a spend amount against the monthly budget.
+#[cfg(feature = "budget")]
+#[instrument(skip(state))]
+pub async fn budget_record_spend(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordSpendRequest>,
+) -> Response {
+    let alert = state.hub.record_spend(payload.amount_usd);
+    let alert_str = match alert {
+        BudgetAlert::None => "none".to_string(),
+        BudgetAlert::FiftyPercent => "fifty_percent".to_string(),
+        BudgetAlert::EightyPercent => "eighty_percent".to_string(),
+        BudgetAlert::HundredPercent => "hundred_percent".to_string(),
+        BudgetAlert::OverBudget => "over_budget".to_string(),
+    };
+    info!(alert = %alert_str, "Budget spend recorded");
+    success(json!({
+        "alert": alert_str,
+        "current_spend_usd": state.hub.current_spend_usd(),
+        "utilization_percent": state.hub.budget_utilization(),
+    }))
+    .into_response()
+}
+
+/// Get current budget status (spend, utilization, exceeded flag).
+#[cfg(feature = "budget")]
+#[instrument(skip(state))]
+pub async fn budget_status(State(state): State<Arc<AppState>>) -> Response {
+    let spend = state.hub.current_spend_usd();
+    let utilization = state.hub.budget_utilization();
+    let exceeded = state.hub.is_budget_exceeded();
+
+    success(json!({
+        "current_spend_usd": spend,
+        "utilization_percent": utilization,
+        "is_exceeded": exceeded,
+    }))
+    .into_response()
+}
+
+/// Set the monthly budget amount.
+#[cfg(feature = "budget")]
+#[instrument(skip(state))]
+pub async fn set_monthly_budget(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SetMonthlyBudgetRequest>,
+) -> Response {
+    state.hub.set_monthly_budget(payload.monthly_budget_usd);
+    info!(
+        monthly_budget = payload.monthly_budget_usd,
+        "Monthly budget updated"
+    );
+    success(json!({
+        "monthly_budget_usd": payload.monthly_budget_usd,
+        "current_spend_usd": state.hub.current_spend_usd(),
+        "utilization_percent": state.hub.budget_utilization(),
+    }))
+    .into_response()
+}
+
+/// Load a persisted BudgetConfig into the tracker.
+#[cfg(feature = "budget")]
+#[instrument(skip(state))]
+pub async fn load_budget_config(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LoadConfigRequest>,
+) -> Response {
+    match state.hub.load_budget_config(&payload.config) {
+        Ok(()) => {
+            info!("Budget config loaded");
+            success(json!({
+                "status": "loaded",
+                "config": payload.config,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            warn!("Failed to load budget config: {}", e);
+            error(StatusCode::BAD_REQUEST, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Save the current budget state as a BudgetConfig for an org.
+#[cfg(feature = "budget")]
+#[instrument(skip(state))]
+pub async fn save_budget_config(
+    State(state): State<Arc<AppState>>,
+    Path(org_id): Path<String>,
+) -> Response {
+    match state.hub.save_budget_config(&org_id) {
+        Ok(config) => {
+            info!(org_id = %org_id, "Budget config saved");
+            success(json!({
+                "config": config,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            warn!("Failed to save budget config: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Reset spend counters for a new billing period.
+#[cfg(feature = "budget")]
+#[instrument(skip(state))]
+pub async fn reset_budget_period(State(state): State<Arc<AppState>>) -> Response {
+    state.hub.reset_budget_period();
+    info!("Budget period reset");
+    success(json!({
+        "status": "reset",
+        "current_spend_usd": 0.0,
+        "utilization_percent": 0.0,
+    }))
+    .into_response()
 }
 
 #[cfg(test)]
