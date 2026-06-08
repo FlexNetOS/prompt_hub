@@ -15,7 +15,7 @@ Rebuild backlog with all features that were prematurely removed during s11-s15 w
 | Rollback methods lacking cfg gates | 7aa2c4e | Added `#[cfg(feature = "rollback")]` to deploy_with_rollback/restore_snapshot/is_rollback_available (prevent cfg mismatch at hub.rs:186 vs :1425-1442) |
 | Server routes.rs:215 bypassing hub.get() RBAC | 2feb13f | Added `hub.get_by_id()` method + wired into prompthub-server/src/routes.rs (all CRUD routes now use hub methods consistently) |
 
-### P1 Recovery Features (6 items)
+### P1 Recovery Features (7 items)
 | Feature | Commit | Description | Tests |
 |---------|--------|-------------|-------|
 | cost-limits | 1b05e3d | Multi-dimensional cost enforcement — Resource enum, OveragePolicy (Alert/Block/Fail), LimitEntry with record/is_exceeded/utilization_percent(), CostLimiter with check_and_record + set_limit + reset_all | 11 unit tests |
@@ -24,35 +24,35 @@ Rebuild backlog with all features that were prematurely removed during s11-s15 w
 | gradual-rollout | 05ad5d2 | Replaced stale canary feature — RolloutStage, RolloutSegment, AutoRollbackPolicy, GraduatedRolloutConfig, RolloutEngine (SHA-256 hashing, auto-rollback evaluation). Fixed un-gated CanaryDeployment import bug | 7 unit + hub test |
 | sandbox | 4c01df7 | Per-prompt execution sandbox (config + enforcement layer within #![forbid(unsafe_code)]): SandboxMode enum, SandboxConfig resource bounds, Sandbox CRUD engine with rate limiting + token/cost/network checks. HubError::SecurityViolation variant. Rust-correct: removed Eq on f64-containing types → PartialEq only | 15 unit tests |
 | voice | 47f7bb7 | Voice pipeline orchestration (STT→text prompt→TTS response): VoicePipelineConfig, VoiceOutputFormat enum, VoiceInteraction transcript type, VoicePipelineState FSM (Idle→Recording→SttComplete→Processing→TtsComplete), VoicePipelineEngine with state machine transitions. Hub integration test. Rust-correct: Arc<Mutex<>> wrapping to avoid await_holding_lock lint | 18 unit + hub test |
+| local-llm | ff05895 | Local model inference config + health-check + HTTP client (Ollama/llamafile protocol mapping): LocalModelConfig with builder, LocalModelHealth enum, ModelInfo, LocalInferenceClient, LocalModelEngine. No new deps. 13 new tests | 13 unit tests |
 
 ## Gates at Session Close
 | Gate | Result |
 |------|--------|
 | `cargo check --workspace --all-features` | GREEN ✅ |
-| `cargo test --workspace --all-features` | 793 passed, 2 ignored |
+| `cargo test --workspace --all-features` | 806 passed, 2 ignored |
 | `cargo clippy -D warnings` | clean ✅ |
 | `cargo fmt --check` | clean ✅ |
 
-## Remaining P1 Recovery Items (11 of 17)
+## Remaining P1 Recovery Items (10 of 17)
 Priority order from gap analysis:
 
-1. **local-llm** — Ollama/Llama.cpp integration for on-device inference. Priority: MED-HIGH
-3. **chaos** — Adversarial prompt testing framework. Priority: MEDIUM
-4. **chaos-automation** — Cron-based chaos test scheduling (depends on `chaos`). Priority: MEDIUM
-5. **accessibility** — WCAG-compliant output formatting. Priority: MEDIUM
-6. **gather** — Project-aware context extraction extending `context_gatherer`. Priority: MEDIUM
-7. **malware-scan** — Artifact upload malware detection via antivirus engine. Priority: MEDIUM
-8. **offline** — Local-first mode with eventual consistency sync. Priority: MEDIUM
-9. **auto-purge** — TTL-based auto-deletion/archiving extending retention/GC. Priority: MEDIUM
-10. **voice-anonymize** — PII scrubbing for voice transcripts. Priority: MED-LOW
-11. **touch** — Touch interaction layer for TUI/server console mode. Priority: MED-LOW
-12. **qdrant** — External vector search backend alternative to libsql FTS5. Priority: MED-LOW
-13. **mobile** — Mobile SDK with sync optimization (platform-specific). Priority: LOW
+2. **chaos** — Adversarial prompt testing framework. Priority: MEDIUM
+3. **chaos-automation** — Cron-based chaos test scheduling (depends on `chaos`). Priority: MEDIUM
+4. **accessibility** — WCAG-compliant output formatting. Priority: MEDIUM
+5. **gather** — Project-aware context extraction extending `context_gatherer`. Priority: MEDIUM
+6. **malware-scan** — Artifact upload malware detection via antivirus engine. Priority: MEDIUM
+7. **offline** — Local-first mode with eventual consistency sync. Priority: MEDIUM
+8. **auto-purge** — TTL-based auto-deletion/archiving extending retention/GC. Priority: MEDIUM
+9. **voice-anonymize** — PII scrubbing for voice transcripts. Priority: MED-LOW
+10. **touch** — Touch interaction layer for TUI/server console mode. Priority: MED-LOW
+11. **qdrant** — External vector search backend alternative to libsql FTS5. Priority: MED-LOW
+12. **mobile** — Mobile SDK with sync optimization (platform-specific). Priority: LOW
 
 ## Next Session Recommendations
 1. Verify-on-resume baseline: `cargo check --workspace`; `just test`; `just lint`
-2. Pick up `voice` — highest remaining P1 priority after sandbox
+2. Pick up `chaos` — highest remaining P1 priority after local-llm
 3. Consider P4 edge cases after all P1 items are built
 
 ---
-*Handoff written: 2026-06-07T15:50:00Z | P1 Recovery: 6 of 17 features built (cycles 6-7 + 64-66)*
+*Handoff written: 2026-06-07T15:55:00Z | P1 Recovery: 7 of 17 features built (cycles 6-7 + 64-67)*
