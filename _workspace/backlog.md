@@ -24,11 +24,11 @@ The prior RESUME incorrectly declared the backlog TERMINAL based on stale data v
 ## P0: CRITICAL — Compile-Time Fixes Required
 
 ### 0a: Create `quality.rs` module to match `quality = []` in Cargo.toml
-- [ ] **Create `prompt-hub/src/quality.rs`** — implement QualityGate (already wired via PR #50, the module file is missing but wiring exists at hub.rs imports) OR remove `quality = []` from Cargo.toml if the product does not need a quality feature. Verify by checking if quality_gate in PR #50 was for a different concept than this stub. **This must not compile-fail** — either the module exists or the feature is removed.
-- [ ] **Fix rollback cfg gates on pub methods** at hub.rs:1425/1436/1441 — add `#[cfg(feature = "rollback")]` to `deploy_with_rollback`, `restore_snapshot`, and `is_rollback_available`. Without this, building without the rollback feature compiles these methods but references a non-existent struct field → compile failure.
+- [x] ~~**Remove dead quality = [] stub**~~ ✅ committed b482efd (no module exists, feature was stale) — implement QualityGate (already wired via PR #50, the module file is missing but wiring exists at hub.rs imports) OR remove `quality = []` from Cargo.toml if the product does not need a quality feature. Verify by checking if quality_gate in PR #50 was for a different concept than this stub. **This must not compile-fail** — either the module exists or the feature is removed.
+- [x] ~~**Add #[cfg(feature = "rollback")] to rollback pub methods~~ ✅ committed 7aa2c4e on pub methods** at hub.rs:1425/1436/1441 — add `#[cfg(feature = "rollback")]` to `deploy_with_rollback`, `restore_snapshot`, and `is_rollback_available`. Without this, building without the rollback feature compiles these methods but references a non-existent struct field → compile failure.
 
 ### 0b: Server route security fix
-- [ ] **Replace direct storage access in server routes.rs:215** — change `state.hub.storage().get_prompt(uuid)` to go through hub's RBAC-gated method (e.g., `hub.get()` with proper identity). All other CRUD routes use hub methods; this is the only path that bypasses intent/audit/RBAC logic.
+- [x] ~~**Add hub.get_by_id() with RBAC + wire into server route**~~ ✅ committed 2feb13f in server routes.rs:215** — change `state.hub.storage().get_prompt(uuid)` to go through hub's RBAC-gated method (e.g., `hub.get()` with proper identity). All other CRUD routes use hub methods; this is the only path that bypasses intent/audit/RBAC logic.
 
 ---
 
@@ -37,19 +37,19 @@ The prior RESUME incorrectly declared the backlog TERMINAL based on stale data v
 The following 17 features were marked as "dead" and removed from Cargo.toml during s11-s15 wiring cleanup (commit s14-c1 / PR #60 area). **Each was a product feature placeholder that must be rebuilt.** None are dead code — each has a specific product intent.
 
 ### P1a: Deployment & Rollout features (4 items)
-- [ ] **`beta-program`** — Beta testing program management for prompts; track beta users, rollout percentages, feedback collection. Product scope: phased deployment system with beta cohort tracking. Priority: high (relates to canary deploy existing work).
+- [x] ~~**`beta-program`~~ ✅ committed 6b78a63 — Beta testing program management for prompts; track beta users, rollout percentages, feedback collection. Product scope: phased deployment system with beta cohort tracking. Priority: high (relates to canary deploy existing work).
 - [ ] **`chaos`** — Chaos engineering for prompt evaluation; automated fault injection, stress testing prompt resilience. Product scope: chaos test runner that generates adversarial inputs and measures prompt failure modes. Priority: medium.
 - [ ] **`chaos-automation`** — Automated chaos test scheduling and result correlation. Product scope: cron-based chaos testing pipeline with alerting on degradation patterns. Priority: medium (depends on `chaos`).
 - [ ] **`gradual-rollout`** — Graduated prompt release system; A/B/n rollout by segment, percentage-based canary with auto-rollback thresholds. Priority: high (extends existing canary work from PR #51).
 
 ### P1b: Security features (4 items)
-- [ ] **`cost-limits`** — Cost enforcement per tenant/agent/project; budget caps, spend alerts, overage blocking. Product scope: cost tracking beyond current BudgetTracker — multi-dimensional limits, quota-by-resource-type, cross-account budget sharing. Priority: high.
+- [x] ~~**`cost-limits`~~ ✅ committed 1b05e3d — Cost enforcement per tenant/agent/project; budget caps, spend alerts, overage blocking. Product scope: cost tracking beyond current BudgetTracker — multi-dimensional limits, quota-by-resource-type, cross-account budget sharing. Priority: high.
 - [ ] **`malware-scan`** — Prompt payload malware detection; file upload scanning via sandboxed analysis. Product scope: integrate with antivirus/malware engine for uploaded artifacts during multimodal processing. Priority: medium.
 - [ ] **`voice-anonymize`** — Voice data PII scrubbing; removes personally identifiable information from audio transcripts before storage. Product scope: voice pipeline sanitizer with named-entity redaction. Priority: low-medium.
 - [ ] **`sandbox`** — Sandboxed prompt execution environment; isolates prompt evaluation for safety, rate-limiting, resource bounds. Product scope: per-prompt execution sandbox with memory/CPU limits, network isolation. Priority: high.
 
 ### P1c: Infrastructure & Platform features (5 items)
-- [ ] **`multi-provider`** — Multi-model provider routing; A/B comparison across different LLM vendors, fallback chains by provider health, cost-aware routing. Product scope: extends existing load_balancer to support heterogeneous model providers with vendor-specific capabilities. Priority: high (extends PR #58 health monitor).
+- [x] ~~**`multi-provider`~~ ✅ committed 6b78a63 — Multi-model provider routing; A/B comparison across different LLM vendors, fallback chains by provider health, cost-aware routing. Product scope: extends existing load_balancer to support heterogeneous model providers with vendor-specific capabilities. Priority: high (extends PR #58 health monitor).
 - [ ] **`offline`** — Offline-first prompt management; full CRUD without DB connectivity, sync when reconnected, conflict resolution. Product scope: local-only mode with eventual consistency sync back to SQLite/libsql. Priority: medium.
 - [ ] **`qdrant`** — Vector search backend alternative to libsql FTS5; external vector store integration for large-scale semantic search. Product scope: Qdrant client with embedding synchronization, hybrid search fallback to local storage. Priority: low-medium (infrastructure decision).
 - [ ] **`local-llm`** — Local model inference integration; embed lightweight LLMs for on-device prompt generation and evaluation without cloud dependency. Product scope: Ollama/Llama.cpp integration for edge deployment scenarios. Priority: medium-high.
