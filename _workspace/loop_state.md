@@ -5,10 +5,10 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 4
-cycles_total: 60
+cycles_this_session: 7
+cycles_total: 62
 apply_mode: APPLY (default for /prompt-loop)
-status: P1 Recovery cycle 5 — cost-limits shipped. Next: beta-program feature
+status: P1 Recovery cycles 6-7 done (beta-program + multi-provider). Next: gradual-rollout
 
 ## This session's purpose
 
