@@ -70,6 +70,8 @@ pub mod lock;
 #[cfg(feature = "malware-scan")]
 pub mod malware_scan;
 pub mod metrics;
+#[cfg(feature = "mobile")]
+pub mod mobile;
 pub mod models;
 #[cfg(feature = "moderation")]
 pub mod moderation;

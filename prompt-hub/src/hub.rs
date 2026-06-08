@@ -28,6 +28,8 @@ use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, Routi
 #[cfg(feature = "malware-scan")]
 use crate::malware_scan::{MalwareScanConfig, ScanResult};
 use crate::metrics::MetricsCollector;
+#[cfg(feature = "mobile")]
+use crate::mobile::MobileEngine;
 #[cfg(feature = "gradual-rollout")]
 use crate::models::CanaryDeployment;
 #[cfg(feature = "local-llm")]
@@ -293,6 +295,8 @@ pub struct PromptHub {
     auto_purge_engine: std::sync::Arc<
         std::sync::Mutex<Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>>>,
     >,
+    #[cfg(feature = "mobile")]
+    mobile_engine: std::sync::Arc<std::sync::RwLock<Option<Arc<std::sync::Mutex<MobileEngine>>>>>,
 }
 
 impl PromptHub {
@@ -412,6 +416,8 @@ impl PromptHub {
             offlined: Arc::new(std::sync::RwLock::new(None)),
             #[cfg(feature = "auto-purge")]
             auto_purge_engine: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(feature = "mobile")]
+            mobile_engine: Arc::new(std::sync::RwLock::new(None)),
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
@@ -725,6 +731,76 @@ impl PromptHub {
         let guard = engine.lock().unwrap();
         guard.shutdown();
         Ok(())
+    }
+
+    // ── Mobile / Offline-First ─────────────────────────────────────────────
+
+    /// Enable mobile (offline-first) mode with the given *config*.
+    ///
+    /// Creates an [`MobileEngine`](crate::mobile::MobileEngine) wrapping a fresh
+    /// on-device store. CRUD operations proceed locally when offline; changes are
+    /// queued for push sync when connectivity returns.
+    #[cfg(feature = "mobile")]
+    pub fn enable_mobile_mode(&self, config: crate::mobile::MobileConfig) -> Result<()> {
+        let mut guard = self.mobile_engine.write().unwrap();
+        if guard.is_some() {
+            return Err(HubError::InvalidInput(
+                "mobile mode is already enabled".to_string(),
+            ));
+        }
+        *guard = Some(Arc::new(std::sync::Mutex::new(
+            crate::mobile::MobileEngine::new(config),
+        )));
+        Ok(())
+    }
+
+    /// Enqueue a pending push operation from mobile mode.
+    ///
+    /// Returns the assigned sequence number for this push, or an error if
+    /// mobile mode is not enabled.
+    #[cfg(feature = "mobile")]
+    pub fn enqueue_mobile_push(
+        &self,
+        op_type: crate::mobile::PushOpType,
+        payload_size_bytes: usize,
+    ) -> Result<u64> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let mut inner = engine.lock().unwrap();
+        Ok(inner.enqueue_push(op_type, payload_size_bytes))
+    }
+
+    /// Check whether device sync should be suppressed based on current network condition.
+    #[cfg(feature = "mobile")]
+    pub fn should_suppress_sync(&self) -> Result<bool> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let inner = engine.lock().unwrap();
+        Ok(inner.should_suppress_sync())
+    }
+
+    /// Build a bandwidth-aware sync plan for pending mobile changes.
+    #[cfg(feature = "mobile")]
+    pub fn build_mobile_sync_plan(
+        &self,
+        available_bytes: usize,
+    ) -> Result<crate::mobile::SyncPlan> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let inner = engine.lock().unwrap();
+        Ok(inner.build_sync_plan(available_bytes))
     }
 
     // ── Prompt CRUD ───────────────────────────────────────────────────────

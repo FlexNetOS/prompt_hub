@@ -76,10 +76,15 @@ touch = []
 qdrant = ["dep:reqwest"]
 
 # ---------------------------------------------------------------------------
+# Stub features awaiting real implementation (Category D).
+# Each gate is feature="[]" today; will be wired when code lands.
+# ---------------------------------------------------------------------------
+mobile = []
+
+# ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,
 # no hub.rs wiring, and zero meaningful source references:
-#   multi-provider, offline, qdrant,
-#   mobile, gather
+#   multi-provider
 # ---------------------------------------------------------------------------
 
 [dependencies]
