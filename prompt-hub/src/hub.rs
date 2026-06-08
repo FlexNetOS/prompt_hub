@@ -163,6 +163,10 @@ pub struct PromptHub {
     budget_tracker: Arc<BudgetTracker>,
     #[cfg(feature = "cost-limits")]
     cost_limiter: std::sync::Arc<crate::cost_limits::CostLimiter>,
+    #[cfg(feature = "beta-program")]
+    beta_program: Arc<crate::beta_program::BetaProgram>,
+    #[cfg(feature = "multi-provider")]
+    multi_provider_router: std::sync::Mutex<crate::multi_provider::MultiProviderRouter>,
     #[cfg(feature = "circuit-breaker")]
     circuit_breaker: Arc<CircuitBreaker>,
     #[cfg(feature = "moderation")]
@@ -250,6 +254,12 @@ impl PromptHub {
             budget_tracker: Arc::new(BudgetTracker::default()),
             #[cfg(feature = "cost-limits")]
             cost_limiter: std::sync::Arc::new(crate::cost_limits::CostLimiter::default()),
+            #[cfg(feature = "beta-program")]
+            beta_program: Arc::new(crate::beta_program::BetaProgram::default()),
+            #[cfg(feature = "multi-provider")]
+            multi_provider_router: std::sync::Mutex::new(
+                crate::multi_provider::MultiProviderRouter::default(),
+            ),
             #[cfg(feature = "circuit-breaker")]
             circuit_breaker: Arc::new(CircuitBreaker::default()),
             #[cfg(feature = "moderation")]
@@ -1673,6 +1683,86 @@ impl PromptHub {
                     .map(move |(_res, util, pol)| (id.clone(), util, pol))
             })
             .collect()
+    }
+
+    // ── Beta program (phased deployment) -------------------------------------------
+
+    /// Create a new beta cohort for testing.
+    #[cfg(feature = "beta-program")]
+    pub fn create_beta_cohort(&self, id: &str, name: &str) -> crate::beta_program::BetaCohort {
+        self.beta_program.create_cohort(id, name)
+    }
+
+    /// Enroll a participant in a beta cohort.
+    #[cfg(feature = "beta-program")]
+    pub fn enroll_beta(&self, cohort_id: &str, participant_id: &str) -> bool {
+        self.beta_program.enroll(cohort_id, participant_id)
+    }
+
+    /// Record feedback from a beta participant.
+    #[cfg(feature = "beta-program")]
+    pub fn record_feedback(
+        &self,
+        cohort_id: &str,
+        participant_id: &str,
+        score: u8,
+        comment: String,
+    ) -> bool {
+        self.beta_program
+            .record_feedback(cohort_id, participant_id, score, comment)
+    }
+
+    /// Get overall beta program statistics.
+    #[cfg(feature = "beta-program")]
+    pub fn beta_stats(&self) -> crate::beta_program::ProgramStats {
+        self.beta_program.stats()
+    }
+
+    // ── Multi-provider routing ---------------------------------------------------
+
+    /// Add a new provider to the multi-provider routing pool.
+    #[cfg(feature = "multi-provider")]
+    pub fn add_provider(&self, config: crate::multi_provider::ProviderConfig) {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .add_provider(config);
+    }
+
+    /// Select the best provider for routing, optionally filtering by vendor.
+    #[cfg(feature = "multi-provider")]
+    pub fn route_to_vendor(
+        &self,
+        vendor_filter: Option<crate::multi_provider::Vendor>,
+    ) -> Option<crate::multi_provider::RoutingDecision> {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .select(vendor_filter)
+    }
+
+    /// Record a successful request for a multi-provider routing entry.
+    #[cfg(feature = "multi-provider")]
+    pub fn record_provider_success(&self, provider_name: &str) {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .record_success(provider_name);
+    }
+
+    /// Record a failed request for a multi-provider routing entry.
+    #[cfg(feature = "multi-provider")]
+    pub fn record_provider_failure(&self, provider_name: &str) {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .record_failure(provider_name);
+    }
+
+    /// Get the health statistics for all providers in the pool.
+    #[cfg(feature = "multi-provider")]
+    pub fn provider_pool_stats(&self) -> crate::multi_provider::PoolStats {
+        self.multi_provider_router.lock().unwrap().pool_stats()
     }
 
     // ── Circuit breaker ----------------------------------------------------------

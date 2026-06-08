@@ -22,6 +22,8 @@
 pub mod analytics;
 pub mod audit;
 pub mod auth;
+#[cfg(feature = "beta-program")]
+pub mod beta_program;
 #[cfg(feature = "budget")]
 pub mod budget;
 #[cfg(feature = "canary")]
@@ -59,6 +61,8 @@ pub mod metrics;
 pub mod models;
 #[cfg(feature = "moderation")]
 pub mod moderation;
+#[cfg(feature = "multi-provider")]
+pub mod multi_provider;
 #[cfg(feature = "multimodal")]
 pub mod multimodal;
 pub mod multimodal_input;

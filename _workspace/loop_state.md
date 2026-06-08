@@ -5,10 +5,10 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 3
-cycles_total: 59
+cycles_this_session: 4
+cycles_total: 60
 apply_mode: APPLY (default for /prompt-loop)
-status: Building P1 recovery — CRIT-1/2/3 fixed, next: cost-limits feature
+status: P1 Recovery cycle 5 — cost-limits shipped. Next: beta-program feature
 
 ## This session's purpose
 
