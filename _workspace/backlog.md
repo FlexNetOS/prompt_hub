@@ -102,11 +102,11 @@ The following 17 features were marked as "dead" and removed from Cargo.toml duri
 - [ ] **`tokens.rs` (253 lines)** — TokenCounter with tiktoken fallback exists but zero callers in hub.rs. Decision: wire into cost estimation path or add explicit feature gate. Priority: high.
 - [ ] **`junie`** — JunieHook only accessible via hooks module; no direct hub field, no dedicated CLI wiring beyond `prompthub src/commands/junie.rs`. Decision: add Junie as first-class PromptHub field with dedicated accessors. Priority: low-medium.
 
-### P2b: Server route coverage gap (~60 hub methods uncovered)
-- [ ] **Wire top-priority hub methods to server routes** — vibe_code, evolve_prompt, budget (8 methods), load_balancer (6), satisfaction (5). These have full implementations in prompt-hub but NO HTTP surface. Priority: high (product-facing features).
+### P2b: Server route coverage gap (~48 hub methods uncovered)
+- [ ] **Wire top-priority hub methods to server routes** — evolve_prompt, satisfaction (5), remaining stubs. These have full implementations in prompt-hub but NO HTTP surface. Priority: high (product-facing features).
 - [x] ~~**Add `vibe_code` route**~~ ✅ committed 3f6411a cycle 78 — POST /api/v1/vibe/code with VibeCodeRequest DTO, parse_skill_level helper, full JSON response (artifacts/summary/confidence/suggestions). Added 'vibe' feature pass-through in server Cargo.toml. Priority: high ✅ DONE.
 - [x] **Add budget routes** — record_spend, budget_utilization, current_spend_usd, is_budget_exceeded, set_monthly_budget, load/save config, reset period. 6 endpoints + 3 DTOs. Priority: high ✅ DONE (cycle 79, ae0bc1a → ecd5e07).
-- [ ] **Add load_balancer routes** — add_provider, select_provider, record_latency/failure, get_stats. 6 endpoints. Priority: medium.
+- [x] **Add load_balancer routes** — add_provider, select_provider, record_latency/failure, get_stats. 6 endpoints. Priority: medium ✅ DONE (cycle 80, 39ed393). See lessons learned in HANDOFF.md.
 - [ ] **Add satisfaction routes** — record_csat, record_nps, event recording, metrics endpoint. 4 endpoints. Priority: medium.
 
 ### P2c: CLI command fragmentation
