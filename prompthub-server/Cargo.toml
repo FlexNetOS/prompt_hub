@@ -16,8 +16,9 @@ name = "prompthub-server"
 path = "src/main.rs"
 
 [features]
-default = ["prompt-hub/handlebars"]
+default = ["prompt-hub/handlebars", "prompt-hub/vibe"]
 smart = ["prompt-hub/smart"]
+vibe = ["prompt-hub/vibe"]
 smart-ort = ["prompt-hub/smart-ort"]
 otel = ["prompt-hub/otel"]
 tls = ["prompt-hub/tls", "dep:tokio-rustls"]

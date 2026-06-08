@@ -43,6 +43,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/prompts/{id}/audit", get(routes::audit_trail))
         // Swarm
         .route("/api/v1/swarm/bundle", get(routes::generate_bundle))
+        // Vibe coding — natural language → deliverable (feature: vibe)
+        .route("/api/v1/vibe/code", post(routes::vibe_code))
         // Health (Kubernetes probes)
         .route("/health", get(routes::health_check))
         .route("/ready", get(routes::ready_check))

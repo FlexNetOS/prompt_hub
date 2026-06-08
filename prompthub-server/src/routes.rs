@@ -630,6 +630,74 @@ pub async fn swagger_ui() -> axum::response::Html<String> {
     crate::openapi::swagger_ui().await
 }
 
+/// Request body for vibe coding — natural language description → generated deliverable.
+#[derive(Debug, Deserialize)]
+pub struct VibeCodeRequest {
+    /// Natural-language description of the desired output (e.g. "Create a React login form").
+    pub request: String,
+    /// Optional required skill level (Beginner | Intermediate | Expert). Defaults to Intermediate.
+    pub skill_level: Option<String>,
+}
+
+/// Map a human-readable skill level string to [`SkillLevel`].
+fn parse_skill_level(s: &str) -> SkillLevel {
+    match s {
+        "Beginner" | "beginner" => SkillLevel::Beginner,
+        "Intermediate" | "intermediate" => SkillLevel::Intermediate,
+        "Expert" | "expert" => SkillLevel::Expert,
+        _ => SkillLevel::Intermediate, // default
+    }
+}
+
+// ── Vibe coding handler ──────────────────────────────────────────────────────
+
+/// Execute vibe coding — generate a deliverable from natural language.
+///
+/// Parses the request, constructs appropriate [`UserInput`] and default
+/// [`SkillLevel`], calls `hub.vibe_code()` and returns the generated artifact
+/// along with confidence score and next suggestions.
+#[cfg(feature = "vibe")]
+#[instrument(skip(state))]
+pub async fn vibe_code(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<VibeCodeRequest>,
+) -> Response {
+    if payload.request.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "request cannot be empty").into_response();
+    }
+
+    let skill_level = parse_skill_level(payload.skill_level.as_deref().unwrap_or("Intermediate"));
+
+    let user_input = UserInput {
+        input_type: InputType::Text,
+        raw_data: Vec::new(),
+        extracted_text: payload.request.clone(),
+    };
+
+    match state
+        .hub
+        .vibe_code(&payload.request, user_input, skill_level)
+        .await
+    {
+        Ok(result) => {
+            info!(confidence = result.confidence, "Vibe coding completed");
+            success(json!({
+                "artifacts": result.artifacts,
+                "summary": result.summary,
+                "next_suggestions": result.next_suggestions,
+                "cost_estimate": result.cost_estimate,
+                "confidence": result.confidence,
+                "execution_time_ms": result.execution_time_ms,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            warn!("Vibe coding failed: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::render_metrics;
