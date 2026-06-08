@@ -65,6 +65,8 @@ pub mod load_balancer;
 #[cfg(feature = "local-llm")]
 pub mod local_llm;
 pub mod lock;
+#[cfg(feature = "malware-scan")]
+pub mod malware_scan;
 pub mod metrics;
 pub mod models;
 #[cfg(feature = "moderation")]

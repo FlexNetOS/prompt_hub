@@ -54,6 +54,8 @@ use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
+#[cfg(feature = "malware-scan")]
+use crate::malware_scan::{MalwareScanConfig, ScanResult};
 #[cfg(feature = "voice")]
 use crate::voice::VoicePipelineEngine;
 use chrono::{DateTime, Utc};
@@ -215,6 +217,8 @@ pub struct PromptHub {
     garbage_collector: GarbageCollector,
     #[cfg(feature = "rollback")]
     safe_deployer: SafeDeployer,
+    #[cfg(feature = "malware-scan")]
+    malware_scan_config: Arc<std::sync::Mutex<MalwareScanConfig>>,
 }
 
 impl PromptHub {
@@ -319,6 +323,8 @@ impl PromptHub {
             #[cfg(feature = "retention")]
             garbage_collector: GarbageCollector::new(crate::retention::RetentionPolicy::default()),
             safe_deployer: SafeDeployer::new(),
+            #[cfg(feature = "malware-scan")]
+            malware_scan_config: Arc::new(std::sync::Mutex::new(MalwareScanConfig::default())),
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
@@ -378,6 +384,9 @@ impl PromptHub {
 
         #[cfg(feature = "retention")]
         info!("Retention policy and garbage collection initialized");
+
+        #[cfg(feature = "malware-scan")]
+        info!("Malware scanner initialized with default configuration");
 
         Ok(hub)
     }
@@ -2470,6 +2479,35 @@ impl PromptHub {
 
         accessibility::transform_all(content).map_err(|e| HubError::InvalidInput(e.to_string()))
     }
+
+    // ── Malware scan ────────────────────────────────────────────────
+
+    /// Return a cloneable handle to the malware scan configuration.
+    #[cfg(feature = "malware-scan")]
+    pub fn malware_scan_config(&self) -> Arc<std::sync::Mutex<MalwareScanConfig>> {
+        Arc::clone(&self.malware_scan_config)
+    }
+
+    /// Update the malware scan configuration.
+    #[cfg(feature = "malware-scan")]
+    pub fn set_malware_scan_config(&self, config: MalwareScanConfig) {
+        let mut cfg = self.malware_scan_config.lock().expect("malware-scan mutex poisoned");
+        *cfg = config;
+    }
+
+    /// Scan a blob of bytes for malware indicators.
+    #[cfg(feature = "malware-scan")]
+    pub fn scan_blob(&self, blob: &[u8]) -> Result<ScanResult> {
+        let cfg = self.malware_scan_config.lock().expect("malware-scan mutex poisoned");
+        crate::malware_scan::scan_blob(blob, &cfg)
+    }
+
+    /// Scan a file on disk for malware indicators.
+    #[cfg(feature = "malware-scan")]
+    pub fn scan_file(&self, path: impl AsRef<Path>) -> Result<ScanResult> {
+        let cfg = self.malware_scan_config.lock().expect("malware-scan mutex poisoned");
+        crate::malware_scan::scan_file(path, &cfg)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3490,5 +3528,41 @@ mod tests {
         // Fallback chain works
         let chain = hub.translation_fallback_chain("en-US");
         assert!(!chain.is_empty());
+    }
+
+    // ── Malware scan integration test ────────────────────────────────
+
+    #[cfg(feature = "malware-scan")]
+    #[tokio::test]
+    async fn test_malware_scan_hub_integration() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Config handle accessible and valid
+        let _config = hub.malware_scan_config();
+        assert_eq!(Arc::strong_count(&_config), 2); // hub holds one, we cloned
+
+        // Scan clean content
+        let result = hub.scan_blob(b"Hello, this is clean text.");
+        assert!(matches!(result, Ok(ScanResult::Clean)));
+
+        // Scan malicious ELF in .txt via file
+        let tmp = dir.path().join("fake.txt");
+        std::fs::write(&tmp, b"\x7fELF\x02\x01\x01").unwrap();
+        let result = hub.scan_file(&tmp);
+        match result {
+            Ok(ScanResult::Malicious { .. }) => {} // expected
+            other => panic!("expected Malicious, got {:?}", other),
+        }
+
+        // Config update works
+        use crate::malware_scan::MalwareScanConfig;
+        hub.set_malware_scan_config(MalwareScanConfig {
+            max_file_size_bytes: 0, // accept everything
+            inspect_content: true,
+            block_patterns: vec!["VBA".to_string()],
+        });
     }
 }
