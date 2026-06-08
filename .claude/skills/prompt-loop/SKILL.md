@@ -95,8 +95,15 @@ Run for each cycle until a stop condition:
 ### Phase 3: DONE (no `- [ ]` left)
 Run the **DONE-criteria suite** (`cargo build --workspace --all-features` · `just test` · `just lint` · `just fmt && git diff --quiet`). All green + backlog empty → write `_workspace/DONE` with the evidence (commands + results + landed commits/PRs). This is the terminal sentinel; stop (no wakeup). If any gate is red, the backlog isn't really empty — add a fix item and continue.
 
-### Phase 4: HAND OFF (budget reached)
-Invoke `session-relay` **HAND OFF**: spawn `continuity-steward` → write+commit `HANDOFF.md` → best-effort heartbeat/successor → stop. Under the external runner this is the `HANDOFF.md` sentinel (more work remains → respawn).
+### Phase 4: HAND OFF (budget reached) — Handoff Ledger V2
+Invoke `session-relay` **HAND OFF** with handoff packet compilation:
+
+1. **Emit session event.** Record `session_stopped` event via mesh heartbeat (`relay:handoff`).
+2. **Compile Handoff Packet V2** from current Git state, gate results, and backlog → per `prompt_loop/handoff/schemas/packet.schema.json`.
+3. **Spawn continuity-steward** → writes `_workspace/HANDOFF.md` containing the packet as a markdown JSON block + human-readable summary.
+4. **Commit.** `git add _workspace/HANDOFF.md _workspace/backlog.md _workspace/loop_state.md && git commit` (`chore(loop): handoff cycle N`).
+5. **Heartbeat** (best-effort mesh relay). Skip silently if unavailable.
+6. **Stop.** Under the external runner: write exactly one sentinel (`HANDOFF.md` = more work remains → respawn; `DONE` = finished; `NEEDS-HUMAN` = human wall).
 
 ## Data Flow
 ```
