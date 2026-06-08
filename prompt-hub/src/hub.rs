@@ -10,6 +10,8 @@ use crate::chaos::{ChaosConfig, ChaosEngine, ChaosResult};
 // CanaryDeployment lives in models.rs for backward compat.
 #[cfg(feature = "circuit-breaker")]
 use crate::circuit_breaker::CircuitBreaker;
+#[cfg(feature = "qdrant")]
+use crate::config::EmbedderBackend;
 use crate::config::HubConfig;
 use crate::diff::PromptDiff;
 use crate::error::{HubError, Result};
@@ -45,6 +47,8 @@ use crate::pollination::{CrossAgentPollination, Pattern};
 #[cfg(feature = "preview")]
 use crate::preview::PreviewEngine;
 use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
+#[cfg(feature = "qdrant")]
+use crate::qdrant::{QdrantClient, QdrantEngine, VectorSearchMode};
 use crate::quality_gate::{QualityGate, QualityResult};
 #[cfg(feature = "quota")]
 use crate::quota::QuotaEnforcer;
@@ -54,6 +58,8 @@ use crate::retention::{DataType, RetentionPolicy};
 use crate::rollback::SafeDeployer;
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
+#[cfg(feature = "qdrant")]
+use crate::search::Embedder;
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
@@ -141,6 +147,57 @@ pub use lock::{LockManager, LockToken};
 /// Type alias for agent identifiers.
 pub type AgentId = Uuid;
 
+/// Search engine kind — either the default HybridEngine or a Qdrant-backed engine.
+#[derive(Debug)]
+#[cfg(feature = "qdrant")]
+enum SearchEngineKind {
+    Hybrid(Arc<HybridEngine>),
+    Qdrant(Arc<QdrantEngine>),
+}
+#[cfg(feature = "qdrant")]
+impl SearchEngine for SearchEngineKind {
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a crate::SearchFilters,
+        pagination: &'a Pagination,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<crate::Paginated<crate::ScoredPrompt>>> + Send + 'a>,
+    > {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.search(query, filters, pagination),
+            SearchEngineKind::Qdrant(e) => e.search(query, filters, pagination),
+        }
+    }
+
+    fn index<'a>(
+        &'a self,
+        prompt: &'a crate::Prompt,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.index(prompt),
+            SearchEngineKind::Qdrant(e) => e.index(prompt),
+        }
+    }
+
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.remove(prompt_id),
+            SearchEngineKind::Qdrant(e) => e.remove(prompt_id),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.name(),
+            SearchEngineKind::Qdrant(e) => e.name(),
+        }
+    }
+}
+
 /// Compute a tamper-evidence hash over a before→after audit transition.
 ///
 /// Produces a stable hex digest of the concatenated before/after JSON, used to
@@ -165,7 +222,10 @@ fn diff_hash(before: Option<&str>, after: Option<&str>) -> String {
 #[derive(Debug)]
 pub struct PromptHub {
     storage: Arc<Storage>,
+    #[cfg(not(feature = "qdrant"))]
     search_engine: Arc<HybridEngine>,
+    #[cfg(feature = "qdrant")]
+    search_engine: Arc<SearchEngineKind>,
     sanitizer: PromptSanitizer,
     auth: RbacAuthManager,
     lock_manager: LockManager,
@@ -276,7 +336,10 @@ impl PromptHub {
         let metrics = Arc::new(MetricsCollector::default());
         let mut hub = Self {
             storage,
+            #[cfg(not(feature = "qdrant"))]
             search_engine: hybrid,
+            #[cfg(feature = "qdrant")]
+            search_engine: std::sync::Arc::new(SearchEngineKind::Hybrid(hybrid)),
             sanitizer: PromptSanitizer::default(),
             auth: RbacAuthManager::new(),
             lock_manager: LockManager::new(),
@@ -395,6 +458,67 @@ impl PromptHub {
 
         #[cfg(feature = "touch")]
         info!("Touch input layer initialized (threshold=50px, debounce=300ms)");
+
+        // ── Qdrant vector search engine wiring ──────────────────────────────
+        #[cfg(feature = "qdrant")]
+        if let Some(ref qconfig) = config.qdrant_config {
+            info!("Qdrant config detected — building vector search engine");
+
+            // Build embedder for the Qdrant engine.
+            let embedder: Arc<dyn Embedder> = match config.embedding_backend {
+                EmbedderBackend::Hash => {
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                }
+                #[cfg(feature = "smart-ort")]
+                EmbedderBackend::OnnxRuntime => {
+                    if let Ok(ort) =
+                        crate::search::OrtEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")
+                    {
+                        Arc::new(ort) as Arc<dyn Embedder>
+                    } else {
+                        warn!(
+                            "smart-ort feature enabled but OrtEmbedder creation failed; using HashEmbedder"
+                        );
+                        Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                            as Arc<dyn Embedder>
+                    }
+                }
+                #[cfg(not(feature = "smart-ort"))]
+                EmbedderBackend::OnnxRuntime => {
+                    warn!(
+                        "EmbedderBackend::OnnxRuntime requested but smart-ort feature is disabled; using HashEmbedder"
+                    );
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                        as Arc<dyn Embedder>
+                }
+                #[cfg(feature = "qdrant")]
+                EmbedderBackend::Qdrant => {
+                    // Qdrant is its own vector store — fall back to Hash.
+                    warn!("Qdrant backend requested at embedding level; using HashEmbedder");
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                        as Arc<dyn Embedder>
+                }
+            };
+
+            let client = QdrantClient::new(qconfig.clone());
+            if qconfig.auto_create_collection {
+                // ignore errors — the collection may not exist but that's OK;
+                // subsequent upserts will create it automatically.
+                let _ = client.ensure_collection().await;
+            }
+
+            let qengine = Arc::new(QdrantEngine::new(
+                client,
+                embedder,
+                VectorSearchMode::default(),
+            ));
+
+            // Replace the default hybrid engine with the Qdrant-backed one.
+            #[cfg(feature = "qdrant")]
+            {
+                hub.search_engine = Arc::new(SearchEngineKind::Qdrant(qengine));
+            }
+        }
 
         #[cfg(feature = "gradual-rollout")]
         info!("Gradual rollout engine initialized");
@@ -2898,6 +3022,8 @@ mod tests {
             embedding_model: "test-model".to_string(),
             embedding_dimension: 384,
             embedding_backend: crate::config::EmbedderBackend::Hash,
+            #[cfg(feature = "qdrant")]
+            qdrant_config: None,
         }
     }
 

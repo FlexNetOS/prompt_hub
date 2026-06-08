@@ -87,6 +87,8 @@ pub mod preview;
 #[cfg(feature = "privacy")]
 pub mod privacy;
 pub mod provider_health;
+#[cfg(feature = "qdrant")]
+pub mod qdrant;
 pub mod quality_gate;
 #[cfg(feature = "quota")]
 pub mod quota;

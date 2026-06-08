@@ -515,6 +515,15 @@ impl SmartEngine {
                 );
                 Arc::new(HashEmbedder::new(dim)) as Arc<dyn Embedder>
             }
+            #[cfg(feature = "qdrant")]
+            crate::config::EmbedderBackend::Qdrant => {
+                // Qdrant is its own vector store; SmartEngine shouldn't normally be asked
+                // to build an embedder for it. Fall back to Hash with a warning.
+                warn!(
+                    "EmbedderBackend::Qdrant requested in SmartEngine context; using HashEmbedder"
+                );
+                Arc::new(HashEmbedder::new(dim)) as Arc<dyn Embedder>
+            }
         };
 
         Self {

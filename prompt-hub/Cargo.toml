@@ -73,6 +73,7 @@ auto-purge = []
 malware-scan = []
 voice-anonymize = []
 touch = []
+qdrant = ["dep:reqwest"]
 
 # ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,
