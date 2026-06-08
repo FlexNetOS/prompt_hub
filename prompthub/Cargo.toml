@@ -49,6 +49,7 @@ satisfaction = ["prompt-hub/satisfaction"]
 analytics = ["prompt-hub/analytics"]
 gradual-rollout = ["prompt-hub/gradual-rollout"]
 i18n = ["prompt-hub/i18n"]
+accessibility = ["prompt-hub/accessibility"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }

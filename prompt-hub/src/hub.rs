@@ -2437,6 +2437,39 @@ impl PromptHub {
     pub fn gc_enabled(&self) -> bool {
         self.garbage_collector.is_enabled()
     }
+
+    // ── Accessibility output formatting ────────────────────────────────────────
+
+    /// Transform prompt content into an accessible format.
+    ///
+    /// This is a pure transformation with no storage or auth side effects. It
+    /// reads the raw content and produces formatted output suitable for screen
+    /// readers, dyslexia-friendly rendering, or braille display.
+    #[cfg(feature = "accessibility")]
+    pub async fn accessible_output(
+        &self,
+        content: &str,
+        config: crate::accessibility::AccessibilityConfig,
+    ) -> Result<crate::accessibility::AccessibleOutput> {
+        use crate::accessibility;
+
+        accessibility::transform(content, &config)
+            .map_err(|e| HubError::InvalidInput(e.to_string()))
+    }
+
+    /// Transform prompt content into all accessible formats simultaneously.
+    ///
+    /// Useful when the display layer needs to provide multiple accessibility
+    /// options at once (screen reader + braille display).
+    #[cfg(feature = "accessibility")]
+    pub async fn accessible_output_all(
+        &self,
+        content: &str,
+    ) -> Result<crate::accessibility::AccessibleMultiOutput> {
+        use crate::accessibility;
+
+        accessibility::transform_all(content).map_err(|e| HubError::InvalidInput(e.to_string()))
+    }
 }
 
 // ---------------------------------------------------------------------------

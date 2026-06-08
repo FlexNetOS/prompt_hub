@@ -19,6 +19,8 @@
 #![allow(dead_code, async_fn_in_trait, unused_assignments)]
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "accessibility")]
+pub mod accessibility;
 pub mod analytics;
 pub mod audit;
 pub mod auth;
