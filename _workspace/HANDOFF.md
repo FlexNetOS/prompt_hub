@@ -1,12 +1,10 @@
-# HANDOFF — PromptHub P1 Recovery (2026-06-07T15:45Z)
+# HANDOFF — PromptHub Budget-Exceeded Checkpoint (2026-06-07T15:55Z)
 
 **Worktree:** Primary checkout at `/home/drdave/Desktop/meta/prompt_hub` (on `main`)
 **Branch:** `main` (unprotected → APPLY mode: push/PR/auto-merge on green)
+**Session End Reason:** Budget exceeded (cycles_this_session 7 >= cycle_budget 5)
 
-## Session Purpose
-Rebuild backlog with all features that were prematurely removed during s11-s15 wiring cleanup. The prior TERMINAL claim was wrong — 17 product features were committed out, treated as dead code when they are product commitments.
-
-## What This Session Built (cycles 6-7 + 64-65)
+## What Was Built This Session (P1 Recovery: 7 of 17 features)
 
 ### P0 Critical Fixes (3 items)
 | Item | Commit | Fix |
@@ -29,30 +27,41 @@ Rebuild backlog with all features that were prematurely removed during s11-s15 w
 ## Gates at Session Close
 | Gate | Result |
 |------|--------|
-| `cargo check --workspace --all-features` | GREEN ✅ |
-| `cargo test --workspace --all-features` | 806 passed, 2 ignored |
+| `cargo check --workspace --all-features` | GREEN ✅ (verified before handoff) |
+| `cargo test --workspace --all-features` | **806 passed, 2 ignored** (12 suites, 1.60s) |
 | `cargo clippy -D warnings` | clean ✅ |
 | `cargo fmt --check` | clean ✅ |
 
 ## Remaining P1 Recovery Items (10 of 17)
 Priority order from gap analysis:
 
-2. **chaos** — Adversarial prompt testing framework. Priority: MEDIUM
-3. **chaos-automation** — Cron-based chaos test scheduling (depends on `chaos`). Priority: MEDIUM
-4. **accessibility** — WCAG-compliant output formatting. Priority: MEDIUM
-5. **gather** — Project-aware context extraction extending `context_gatherer`. Priority: MEDIUM
-6. **malware-scan** — Artifact upload malware detection via antivirus engine. Priority: MEDIUM
-7. **offline** — Local-first mode with eventual consistency sync. Priority: MEDIUM
-8. **auto-purge** — TTL-based auto-deletion/archiving extending retention/GC. Priority: MEDIUM
-9. **voice-anonymize** — PII scrubbing for voice transcripts. Priority: MED-LOW
-10. **touch** — Touch interaction layer for TUI/server console mode. Priority: MED-LOW
-11. **qdrant** — External vector search backend alternative to libsql FTS5. Priority: MED-LOW
-12. **mobile** — Mobile SDK with sync optimization (platform-specific). Priority: LOW
+1. **chaos** — Adversarial prompt testing framework. Priority: MEDIUM
+2. **chaos-automation** — Cron-based chaos test scheduling (depends on `chaos`). Priority: MEDIUM
+3. **accessibility** — WCAG-compliant output formatting. Priority: MEDIUM
+4. **gather** — Project-aware context extraction extending `context_gatherer`. Priority: MEDIUM
+5. **malware-scan** — Artifact upload malware detection via antivirus engine. Priority: MEDIUM
+6. **offline** — Local-first mode with eventual consistency sync. Priority: MEDIUM
+7. **auto-purge** — TTL-based auto-deletion/archiving extending retention/GC. Priority: MEDIUM
+8. **voice-anonymize** — PII scrubbing for voice transcripts. Priority: MED-LOW
+9. **touch** — Touch interaction layer for TUI/server console mode. Priority: MED-LOW
+10. **qdrant** — External vector search backend alternative to libsql FTS5. Priority: MED-LOW
+11. **mobile** — Mobile SDK with sync optimization (platform-specific). Priority: LOW
 
-## Next Session Recommendations
-1. Verify-on-resume baseline: `cargo check --workspace`; `just test`; `just lint`
-2. Pick up `chaos` — highest remaining P1 priority after local-llm
-3. Consider P4 edge cases after all P1 items are built
+## Verify-on-Resume Baseline (run these first in next session)
+1. `cargo check --workspace --all-features` → expect GREEN ✅
+2. `just test` → expect 806 passed, 2 ignored
+3. `just lint` → expect clean
+4. `git status --short` → expect nothing committed pending (state is already committed)
+
+## Anomalies
+- Handoff was previously written at cycle 65/67 time range; the previous version may be stale if cycles ran between now and this checkpoint. This version supersedes all prior HANDOFF.md contents.
+
+## Resume Instructions
+1. Read this HANDOFF.md
+2. Run verify-on-resume baseline above
+3. Reset `cycles_this_session` to 0 in `_workspace/loop_state.md`
+4. Pick up **chaos** — highest priority remaining P1 item
+5. Continue with prompt-loop harness
 
 ---
-*Handoff written: 2026-06-07T15:55:00Z | P1 Recovery: 7 of 17 features built (cycles 6-7 + 64-67)*
+*Handoff written: 2026-06-07T15:55Z | Budget-exceeded checkpoint | P1 Recovery: 7 of 17 features built (cycles 6-7 + 64-67)*
