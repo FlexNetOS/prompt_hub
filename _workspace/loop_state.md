@@ -6,9 +6,9 @@ branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
 cycles_this_session: 0
-cycles_total: 77
+cycles_total: 78
 apply_mode: APPLY (default for /prompt-loop)
-status: Cycle 77 gather DONE. P1 recovery complete.
+status: Cycle 78 vibe_code route DONE. P2 structural gaps continue.
 
 ## P1 Recovery Status — 11 of 11 features built! ✅
 | Feature | Cycle | Tests | Commit |
@@ -27,7 +27,11 @@ status: Cycle 77 gather DONE. P1 recovery complete.
 
 **P1 Recovery: 11 of 11 COMPLETE ✅.** All gates green. New P1 tests: ~240+ total.
 
-## Gates at last commit (eddecaa)
+### Cycle 78 — vibe_code server route
+- POST `/api/v1/vibe/code` with VibeCodeRequest DTO + parse_skill_level helper
+- Added `vibe` feature pass-through in server Cargo.toml
+
+**Gates at last commit (3f6411a)**
 | Gate | Result |
 |------|--------|
 | `cargo check --workspace --all-features` | GREEN ✅ |

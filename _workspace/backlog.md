@@ -104,7 +104,7 @@ The following 17 features were marked as "dead" and removed from Cargo.toml duri
 
 ### P2b: Server route coverage gap (~60 hub methods uncovered)
 - [ ] **Wire top-priority hub methods to server routes** — vibe_code, evolve_prompt, budget (8 methods), load_balancer (6), satisfaction (5). These have full implementations in prompt-hub but NO HTTP surface. Priority: high (product-facing features).
-- [ ] **Add `vibe_code` route** — NL → deliverable generation (high-value feature from default = [...]). Requires artifact endpoint, async job tracking. Priority: high.
+- [x] ~~**Add `vibe_code` route**~~ ✅ committed 3f6411a cycle 78 — POST /api/v1/vibe/code with VibeCodeRequest DTO, parse_skill_level helper, full JSON response (artifacts/summary/confidence/suggestions). Added 'vibe' feature pass-through in server Cargo.toml. Priority: high ✅ DONE.
 - [ ] **Add budget routes** — record_spend, budget_utilization, current_spend_usd, is_budget_exceeded, set_monthly_budget, load/save config, reset period. 8 endpoints. Priority: high.
 - [ ] **Add load_balancer routes** — add_provider, select_provider, record_latency/failure, get_stats. 6 endpoints. Priority: medium.
 - [ ] **Add satisfaction routes** — record_csat, record_nps, event recording, metrics endpoint. 4 endpoints. Priority: medium.
