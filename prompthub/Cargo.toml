@@ -40,6 +40,7 @@ budget = ["prompt-hub/budget"]
 quota = ["prompt-hub/quota"]
 circuit-breaker = ["prompt-hub/circuit-breaker"]
 moderation = ["prompt-hub/moderation"]
+chaos = ["prompt-hub/chaos"]
 retention = ["prompt-hub/retention"]
 
 

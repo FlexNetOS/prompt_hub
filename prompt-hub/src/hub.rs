@@ -5,6 +5,8 @@ use crate::audit::SqliteAuditLogger;
 use crate::auth::{Action, RbacAuthManager};
 #[cfg(feature = "budget")]
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
+#[cfg(feature = "chaos")]
+use crate::chaos::{ChaosConfig, ChaosEngine, ChaosResult};
 // CanaryDeployment lives in models.rs for backward compat.
 #[cfg(feature = "circuit-breaker")]
 use crate::circuit_breaker::CircuitBreaker;
@@ -173,6 +175,8 @@ pub struct PromptHub {
     load_balancer: Arc<std::sync::Mutex<LoadBalancer>>,
     #[cfg(feature = "budget")]
     budget_tracker: Arc<BudgetTracker>,
+    #[cfg(feature = "chaos")]
+    chaos_engine: ChaosEngine,
     #[cfg(feature = "cost-limits")]
     cost_limiter: std::sync::Arc<crate::cost_limits::CostLimiter>,
     #[cfg(feature = "beta-program")]
@@ -270,6 +274,8 @@ impl PromptHub {
             ))),
             #[cfg(feature = "budget")]
             budget_tracker: Arc::new(BudgetTracker::default()),
+            #[cfg(feature = "chaos")]
+            chaos_engine: ChaosEngine::new(),
             #[cfg(feature = "cost-limits")]
             cost_limiter: std::sync::Arc::new(crate::cost_limits::CostLimiter::default()),
             #[cfg(feature = "beta-program")]
@@ -325,6 +331,9 @@ impl PromptHub {
 
         #[cfg(feature = "budget")]
         info!("Budget tracker initialized with default monthly budget");
+
+        #[cfg(feature = "chaos")]
+        info!("Chaos engine initialized for prompt evaluation");
 
         #[cfg(feature = "circuit-breaker")]
         info!("Circuit breaker initialized with defaults (threshold=5, timeout=30s)");
@@ -383,6 +392,43 @@ impl PromptHub {
     /// and satisfaction signals across the lifetime of this PromptHub instance.
     pub fn metrics(&self) -> Arc<MetricsCollector> {
         Arc::clone(&self.metrics)
+    }
+
+    // ── Chaos engineering ─────────────────────────────────────────────────
+
+    /// Return a handle to the chaos evaluation engine.
+    #[cfg(feature = "chaos")]
+    pub fn chaos_engine(&self) -> &ChaosEngine {
+        &self.chaos_engine
+    }
+
+    /// Run a full chaos evaluation across all configured strategies.
+    ///
+    /// Executes each strategy's *iterations_per_strategy* mutated prompts through the
+    /// provided executor closure, assesses validity of every response, and returns one
+    /// [`ChaosResult`] per strategy with pass rate and severity classification.
+    ///
+    /// # Arguments
+    /// * `config` — Evaluation configuration (strategies, iterations, thresholds).
+    /// * `executor` — Closure accepting a prompt string and returning the output as a future.
+    #[cfg(feature = "chaos")]
+    pub async fn run_chaos(
+        &self,
+        config: ChaosConfig,
+        executor: impl FnMut(&str) -> String + Send + 'static,
+    ) -> Result<Vec<ChaosResult>> {
+        let engine = self.chaos_engine.clone();
+
+        // Wrap the synchronous executor so it matches the async trait boundary.
+        let mut exec = executor;
+        let results = engine
+            .run(config, move |prompt: &str| {
+                let output = exec(prompt);
+                async move { output }
+            })
+            .await;
+
+        Ok(results)
     }
 
     // ── Prompt CRUD ───────────────────────────────────────────────────────

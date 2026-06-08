@@ -26,6 +26,8 @@ pub mod auth;
 pub mod beta_program;
 #[cfg(feature = "budget")]
 pub mod budget;
+#[cfg(feature = "chaos")]
+pub mod chaos;
 #[cfg(feature = "circuit-breaker")]
 pub mod circuit_breaker;
 #[cfg(feature = "confidence")]
