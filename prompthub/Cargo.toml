@@ -52,6 +52,7 @@ i18n = ["prompt-hub/i18n"]
 accessibility = ["prompt-hub/accessibility"]
 malware-scan = ["prompt-hub/malware-scan"]
 auto-purge = ["prompt-hub/auto-purge"]
+voice-anonymize = ["prompt-hub/voice-anonymize"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }

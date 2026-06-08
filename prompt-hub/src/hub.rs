@@ -60,6 +60,8 @@ use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
 #[cfg(feature = "voice")]
 use crate::voice::VoicePipelineEngine;
+#[cfg(feature = "voice-anonymize")]
+use crate::voice_anonymize::Anonymizer;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
@@ -201,6 +203,8 @@ pub struct PromptHub {
     sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
     #[cfg(feature = "voice")]
     voice_engine: std::sync::Arc<std::sync::Mutex<VoicePipelineEngine>>,
+    #[cfg(feature = "voice-anonymize")]
+    voice_anonymizer: std::sync::Arc<std::sync::Mutex<Anonymizer>>,
     #[cfg(feature = "local-llm")]
     local_model_config: std::sync::Arc<std::sync::Mutex<Vec<LocalModelConfig>>>,
     #[cfg(feature = "gradual-rollout")]
@@ -314,6 +318,10 @@ impl PromptHub {
             voice_engine: std::sync::Arc::new(
                 std::sync::Mutex::new(VoicePipelineEngine::default()),
             ),
+            #[cfg(feature = "voice-anonymize")]
+            voice_anonymizer: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::voice_anonymize::Anonymizer::default_with_builtins(),
+            )),
             #[cfg(feature = "local-llm")]
             local_model_config: Arc::new(std::sync::Mutex::new(Vec::<LocalModelConfig>::new())),
             #[cfg(feature = "gradual-rollout")]
@@ -377,6 +385,9 @@ impl PromptHub {
 
         #[cfg(feature = "local-llm")]
         info!("Local LLM engine initialized (no models configured yet)");
+
+        #[cfg(feature = "voice-anonymize")]
+        info!("Voice anonymizer initialized with built-in PII patterns");
 
         #[cfg(feature = "gradual-rollout")]
         info!("Gradual rollout engine initialized");
@@ -2774,6 +2785,26 @@ impl PromptHub {
     ) -> &std::sync::Arc<std::sync::RwLock<Option<crate::offline::OfflineState>>> {
         &self.offlined
     }
+
+    // ── Voice anonymize integration ─────────────────────────────────────
+
+    /// Return a cloneable handle to the voice anonymizer.
+    #[cfg(feature = "voice-anonymize")]
+    pub fn voice_anonymizer_handle(&self) -> std::sync::Arc<std::sync::Mutex<Anonymizer>> {
+        Arc::clone(&self.voice_anonymizer)
+    }
+
+    /// Scrub PII from a transcript / text, returning `(anonymized_text, Vec<PiiMatch>)`.
+    ///
+    /// Delegates to the configured [`Anonymizer`] instance (built-in patterns only).
+    #[cfg(feature = "voice-anonymize")]
+    pub fn anonymize_transcript(
+        &self,
+        text: &str,
+    ) -> Result<(String, Vec<crate::voice_anonymize::PiiMatch>)> {
+        let anon = self.voice_anonymizer.lock().unwrap();
+        anon.anonymize(text)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3830,5 +3861,38 @@ mod tests {
             inspect_content: true,
             block_patterns: vec!["VBA".to_string()],
         });
+    }
+
+    // ── Voice-anonymize integration test ──────────────────────────────
+
+    #[cfg(feature = "voice-anonymize")]
+    #[tokio::test]
+    async fn test_voice_anonymize_hub_integration() {
+        use crate::voice_anonymize::PiiType;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Handle accessible and valid
+        let _handle = hub.voice_anonymizer_handle();
+
+        // Anonymize a transcript with PII
+        let transcript =
+            "Hello, my name is John. My email is john@example.com and my phone is 555-123-4567.";
+        let (result, found) = hub.anonymize_transcript(transcript).unwrap();
+
+        // Both Email and Phone should be found
+        assert!(result.contains("[EMAIL]"));
+        assert!(result.contains("[PHONE]"));
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("555-123-4567"));
+        assert_eq!(found.len(), 2);
+
+        // Verify match types
+        let types: Vec<_> = found.iter().map(|m| &m.pii_type).collect();
+        assert!(types.contains(&&PiiType::Email));
+        assert!(types.contains(&&PiiType::Phone));
     }
 }

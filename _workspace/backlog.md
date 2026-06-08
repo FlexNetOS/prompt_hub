@@ -66,6 +66,7 @@ The following 17 features were marked as "dead" and removed from Cargo.toml duri
 
 ### P1e: Maintenance & Operations feature
 - [ ] **`auto-purge`** — Automated prompt lifecycle management; TTL-based auto-deletion, archive-to-storage migration, retention policy enforcement across all storage backends. Product scope: cron-backed purge daemon with configurable policies per domain/tag/age. Priority: medium (extends existing retention/GC work).
+- [x] **`auto-purge`** ✅ committed 88e88a9 cycle 72 — Periodic purge daemon (tokio::time::Interval); configurable policies (DaysOld, Tags, Domain, Status) with first-match-wins; actions: Delete, Archive(path), Retain; atomic archive-then-delete per prompt; stats tracking via AtomicUsize. 14 new tests. Product scope: TTL-based auto-deletion and archiving. Priority: medium ✅ DONE.
 
 ### P1f: Summary of removed features
 | Feature | Category | Priority | Scope Summary |

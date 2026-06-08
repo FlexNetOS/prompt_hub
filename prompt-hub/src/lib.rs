@@ -111,6 +111,8 @@ pub mod tokens;
 pub mod vibe;
 #[cfg(feature = "voice")]
 pub mod voice;
+#[cfg(feature = "voice-anonymize")]
+pub mod voice_anonymize;
 
 // Re-export commonly used types
 pub use config::HubConfig;
