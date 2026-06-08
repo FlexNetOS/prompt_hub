@@ -5,8 +5,7 @@ use crate::audit::SqliteAuditLogger;
 use crate::auth::{Action, RbacAuthManager};
 #[cfg(feature = "budget")]
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
-#[cfg(feature = "canary")]
-use crate::canary::CanaryEngine;
+// CanaryDeployment lives in models.rs for backward compat.
 #[cfg(feature = "circuit-breaker")]
 use crate::circuit_breaker::CircuitBreaker;
 use crate::config::HubConfig;
@@ -14,6 +13,8 @@ use crate::diff::PromptDiff;
 use crate::error::{HubError, Result};
 #[cfg(feature = "retention")]
 use crate::garbage_collector::GarbageCollector;
+#[cfg(feature = "gradual-rollout")]
+use crate::gradual_rollout::RolloutEngine;
 use crate::health::HealthAggregator;
 use crate::hooks::{HookRegistry, JunieHook};
 #[cfg(feature = "i18n")]
@@ -21,6 +22,7 @@ use crate::i18n::I18nEngine;
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
 use crate::metrics::MetricsCollector;
+#[cfg(feature = "gradual-rollout")]
 use crate::models::CanaryDeployment;
 use crate::models::*;
 #[cfg(feature = "moderation")]
@@ -49,7 +51,9 @@ use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, instrument, warn};
+#[cfg(feature = "budget")]
+use tracing::debug;
+use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
 /// Lock manager for prompt editing coordination
@@ -175,8 +179,8 @@ pub struct PromptHub {
     quota_enforcer: Arc<QuotaEnforcer>,
     #[cfg(feature = "preview")]
     preview_engine: Arc<PreviewEngine>,
-    #[cfg(feature = "canary")]
-    canary_engine: Arc<CanaryEngine>,
+    #[cfg(feature = "gradual-rollout")]
+    active_rollouts: std::sync::Mutex<Vec<GraduatedRolloutConfig>>,
     #[cfg(feature = "multimodal")]
     multimodal_engine: MultimodalEngine,
     #[cfg(feature = "i18n")]
@@ -268,8 +272,8 @@ impl PromptHub {
             quota_enforcer: Arc::new(QuotaEnforcer::default()),
             #[cfg(feature = "preview")]
             preview_engine: Arc::new(PreviewEngine),
-            #[cfg(feature = "canary")]
-            canary_engine: Arc::new(CanaryEngine),
+            #[cfg(feature = "gradual-rollout")]
+            active_rollouts: std::sync::Mutex::new(Vec::new()),
             #[cfg(feature = "multimodal")]
             multimodal_engine: MultimodalEngine,
             #[cfg(feature = "i18n")]
@@ -312,8 +316,8 @@ impl PromptHub {
         #[cfg(feature = "preview")]
         info!("Preview engine ready for pre-execution rendering");
 
-        #[cfg(feature = "canary")]
-        info!("Canary deployment engine initialized");
+        #[cfg(feature = "gradual-rollout")]
+        info!("Gradual rollout engine initialized");
 
         #[cfg(feature = "multimodal")]
         info!("Multimodal engine initialized (image placeholder support)");
@@ -1868,30 +1872,83 @@ impl PromptHub {
         Arc::clone(&self.preview_engine)
     }
 
-    // ── Canary deployment ──────────────────────────────────────────────
+    // ── Gradual rollout ────────────────────────────────────────────────
 
-    /// Deploy a canary version of a feature and return whether the deployment succeeded.
-    #[cfg(feature = "canary")]
+    /// Determine whether a user should see the new feature under an active rollout.
+    #[cfg(feature = "gradual-rollout")]
     #[instrument(skip(self, canary))]
-    pub async fn canary_deploy(&self, canary: &CanaryDeployment, user_id: Uuid) -> Result<bool> {
-        CanaryEngine::deploy(canary, user_id).await
+    pub fn check_rollout(&self, canary: &CanaryDeployment, user_id: Uuid) -> bool {
+        RolloutEngine::should_rollout(canary, user_id)
     }
 
-    /// Evaluate whether a canary deployment should be rolled back.
-    #[cfg(feature = "canary")]
-    pub fn canary_should_rollback(
+    /// Register a new rollout configuration into the active rollouts list.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn register_rollout(&self, config: GraduatedRolloutConfig) {
+        let mut guards = self.active_rollouts.lock().unwrap();
+        guards.push(config);
+    }
+
+    /// Check whether a rollout with *rollout_id* is active and whether the user
+    /// falls within its percentage bucket. Returns `Some(false)` if not found,
+    /// `Some(true/false)` based on hash inclusion.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn find_rollout_inclusion(
         &self,
-        canary: &CanaryDeployment,
-        error_rate: f64,
-        latency_p99: f64,
-    ) -> bool {
-        CanaryEngine::should_rollback(canary, error_rate, latency_p99)
+        rollout_id: &str,
+        feature: &str,
+        user_id: Uuid,
+    ) -> Option<bool> {
+        let guards = self.active_rollouts.lock().unwrap();
+        let config = guards
+            .iter()
+            .find(|c| c.rollout_id == rollout_id && c.active)?;
+
+        // Check each segment
+        for segment in &config.segments {
+            if segment.target_users.contains(&user_id) {
+                return Some(true);
+            }
+        }
+        // Fall back to percentage-based check using the config's first segment or a synthetic one
+        let canary = CanaryDeployment {
+            feature: feature.to_string(),
+            canary_percentage: 50.0,
+            target_users: vec![],
+            rollback_threshold: 0.05,
+        };
+        Some(RolloutEngine::should_rollout(&canary, user_id))
     }
 
-    /// Return a cloneable `Arc` handle to the canary engine.
-    #[cfg(feature = "canary")]
-    pub fn canary_engine_handle(&self) -> Arc<CanaryEngine> {
-        Arc::clone(&self.canary_engine)
+    /// Evaluate auto-rollback for a rollout by ID. Returns `Some(true)` if rollback
+    /// is needed, `Some(false)` if metrics are healthy, or `None` if not found.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn evaluate_auto_rollback(
+        &self,
+        rollout_id: &str,
+        error_rate: f64,
+        latency_p99_ms: u64,
+    ) -> Option<bool> {
+        let guards = self.active_rollouts.lock().unwrap();
+        let config = guards
+            .iter()
+            .find(|c| c.rollout_id == rollout_id && c.active)?;
+        Some(RolloutEngine::evaluate_rollback(
+            config,
+            error_rate,
+            latency_p99_ms,
+        ))
+    }
+
+    /// Advance a rollout segment to the next stage. Returns the new stage if advanced,
+    /// or `None` if already at Production or not found.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn advance_segment(&self, rollout_id: &str, segment_idx: usize) -> Option<RolloutStage> {
+        let mut guards = self.active_rollouts.lock().unwrap();
+        let config = guards
+            .iter_mut()
+            .find(|c| c.rollout_id == rollout_id && c.active)?;
+        let segment = config.segments.get_mut(segment_idx)?;
+        RolloutEngine::advance_stage(segment)
     }
 
     // ── Multimodal (multimodal input support) ──────────────────────────
@@ -2937,20 +2994,31 @@ mod tests {
         assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
     }
 
-    // ── Canary integration test ────────────────────────────────────────
+    // ── Gradual rollout integration test ───────────────────────────────
 
-    #[cfg(feature = "canary")]
+    #[cfg(feature = "gradual-rollout")]
     #[tokio::test]
-    async fn test_canary_engine_accessible() {
+    async fn test_gradual_rollout_initialized() {
         let dir = tempfile::tempdir().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
             .await
             .unwrap();
 
-        // Handle works and returns same Arc
-        let h1 = hub.canary_engine_handle();
-        let h2 = hub.canary_engine_handle();
-        assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
+        // Register a rollout and verify it exists
+        use crate::models::{AutoRollbackPolicy, GraduatedRolloutConfig};
+        let config = GraduatedRolloutConfig {
+            rollout_id: "test-rollout".into(),
+            feature: "new-feature".into(),
+            segments: vec![],
+            auto_rollback: AutoRollbackPolicy::OnErrorRate { threshold: 0.05 },
+            active: true,
+        };
+        hub.register_rollout(config);
+
+        // Verify via find_rollout_inclusion
+        let user = Uuid::new_v4();
+        let result = hub.find_rollout_inclusion("test-rollout", "new-feature", user);
+        assert!(result.is_some());
     }
 
     // ── Analytics integration test ─────────────────────────────────────

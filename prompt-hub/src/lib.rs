@@ -26,8 +26,6 @@ pub mod auth;
 pub mod beta_program;
 #[cfg(feature = "budget")]
 pub mod budget;
-#[cfg(feature = "canary")]
-pub mod canary;
 #[cfg(feature = "circuit-breaker")]
 pub mod circuit_breaker;
 #[cfg(feature = "confidence")]
@@ -46,6 +44,8 @@ pub mod evolution;
 pub mod fallback;
 #[cfg(feature = "retention")]
 pub mod garbage_collector;
+#[cfg(feature = "gradual-rollout")]
+pub mod gradual_rollout;
 pub mod health;
 pub mod hooks;
 pub mod hub;

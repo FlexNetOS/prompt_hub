@@ -5,10 +5,10 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 7
-cycles_total: 62
+cycles_this_session: 0
+cycles_total: 63
 apply_mode: APPLY (default for /prompt-loop)
-status: P1 Recovery cycles 6-7 done (beta-program + multi-provider). Next: gradual-rollout
+status: RESUME — verifying-on-resume baseline green, starting cycle 64: gradual-rollout
 
 ## This session's purpose
 

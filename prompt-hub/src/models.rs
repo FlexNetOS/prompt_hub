@@ -868,6 +868,55 @@ pub struct CanaryDeployment {
     pub rollback_threshold: f64,
 }
 
+/// Staged rollout stages for gradual deployment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RolloutStage {
+    Internal,   // no external users
+    Alpha(u8),  // up to p% of total traffic
+    Beta50(u8), // up to 50% + p% variance
+    Beta90(u8), // up to 90% + p% variance
+    Production, // full production
+}
+
+/// A rollout segment (A/B/n variant) in a graduated rollout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RolloutSegment {
+    pub name: String,
+    pub percentage: u8,
+    pub target_users: Vec<Uuid>,
+    pub rollout_stage: RolloutStage,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Auto-rollback policy for canary deployments.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum AutoRollbackPolicy {
+    OnErrorRate {
+        threshold: f64,
+    },
+    OnLatencyP99 {
+        sla_ms: u64,
+    },
+    OnBoth {
+        error_rate: f64,
+        latency_p99_ms: u64,
+    },
+}
+
+/// A canary/graduated rollout configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraduatedRolloutConfig {
+    pub rollout_id: String,
+    pub feature: String,
+    pub segments: Vec<RolloutSegment>,
+    pub auto_rollback: AutoRollbackPolicy,
+    pub active: bool,
+}
+
+/// Alias for backward compat.
+#[deprecated(note = "Use GraduatedRolloutConfig; CanaryDeployment is kept for canary_deploy() API")]
+pub type CanaryConfig = GraduatedRolloutConfig;
+
 /// User profile for personalization and progressive disclosure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserProfile {
@@ -1092,5 +1141,17 @@ mod model_tests {
     fn test_prompt_patch_default() {
         let patch = PromptPatch::default();
         assert!(patch.name.is_none());
+    }
+
+    #[test]
+    fn test_graduated_rollout_config() {
+        let cfg = GraduatedRolloutConfig {
+            rollout_id: "test".into(),
+            feature: "new-search".into(),
+            segments: vec![],
+            auto_rollback: AutoRollbackPolicy::OnErrorRate { threshold: 0.05 },
+            active: true,
+        };
+        assert!(cfg.active);
     }
 }

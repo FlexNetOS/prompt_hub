@@ -45,7 +45,7 @@ retention = ["prompt-hub/retention"]
 
 satisfaction = ["prompt-hub/satisfaction"]
 analytics = ["prompt-hub/analytics"]
-canary = ["prompt-hub/canary"]
+gradual-rollout = ["prompt-hub/gradual-rollout"]
 i18n = ["prompt-hub/i18n"]
 
 [dependencies]
