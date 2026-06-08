@@ -43,7 +43,7 @@ moderation = ["prompt-hub/moderation"]
 chaos = ["prompt-hub/chaos"]
 chaos-automation = ["prompt-hub/chaos-automation"]
 retention = ["prompt-hub/retention"]
-
+offline = ["prompt-hub/offline"]
 
 satisfaction = ["prompt-hub/satisfaction"]
 analytics = ["prompt-hub/analytics"]

@@ -76,6 +76,8 @@ pub mod multi_provider;
 #[cfg(feature = "multimodal")]
 pub mod multimodal;
 pub mod multimodal_input;
+#[cfg(feature = "offline")]
+pub mod offline;
 pub mod plugins;
 pub mod pollination;
 #[cfg(feature = "preview")]
@@ -114,6 +116,9 @@ pub use error::{HubError, Result};
 pub use hub::PromptHub;
 pub use models::UserProfile;
 pub use models::*;
+
+#[cfg(feature = "offline")]
+pub use offline::{ConflictEntry, OfflineConfig, OfflineStore, SyncStatus};
 
 #[cfg(test)]
 mod lib_tests {

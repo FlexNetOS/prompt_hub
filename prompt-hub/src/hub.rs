@@ -23,6 +23,8 @@ use crate::hooks::{HookRegistry, JunieHook};
 use crate::i18n::I18nEngine;
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
+#[cfg(feature = "malware-scan")]
+use crate::malware_scan::{MalwareScanConfig, ScanResult};
 use crate::metrics::MetricsCollector;
 #[cfg(feature = "gradual-rollout")]
 use crate::models::CanaryDeployment;
@@ -37,6 +39,8 @@ use crate::models::{VoiceInteraction, VoiceOutputFormat, VoicePipelineConfig, Vo
 use crate::moderation::ModerationEngine;
 #[cfg(feature = "multimodal")]
 use crate::multimodal::MultimodalEngine;
+#[cfg(feature = "offline")]
+use crate::offline::OfflineState;
 use crate::pollination::{CrossAgentPollination, Pattern};
 #[cfg(feature = "preview")]
 use crate::preview::PreviewEngine;
@@ -54,8 +58,6 @@ use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
-#[cfg(feature = "malware-scan")]
-use crate::malware_scan::{MalwareScanConfig, ScanResult};
 #[cfg(feature = "voice")]
 use crate::voice::VoicePipelineEngine;
 use chrono::{DateTime, Utc};
@@ -219,6 +221,8 @@ pub struct PromptHub {
     safe_deployer: SafeDeployer,
     #[cfg(feature = "malware-scan")]
     malware_scan_config: Arc<std::sync::Mutex<MalwareScanConfig>>,
+    #[cfg(feature = "offline")]
+    offlined: std::sync::Arc<std::sync::RwLock<Option<OfflineState>>>,
 }
 
 impl PromptHub {
@@ -325,6 +329,8 @@ impl PromptHub {
             safe_deployer: SafeDeployer::new(),
             #[cfg(feature = "malware-scan")]
             malware_scan_config: Arc::new(std::sync::Mutex::new(MalwareScanConfig::default())),
+            #[cfg(feature = "offline")]
+            offlined: Arc::new(std::sync::RwLock::new(None)),
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
@@ -2491,22 +2497,188 @@ impl PromptHub {
     /// Update the malware scan configuration.
     #[cfg(feature = "malware-scan")]
     pub fn set_malware_scan_config(&self, config: MalwareScanConfig) {
-        let mut cfg = self.malware_scan_config.lock().expect("malware-scan mutex poisoned");
+        let mut cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
         *cfg = config;
     }
 
     /// Scan a blob of bytes for malware indicators.
     #[cfg(feature = "malware-scan")]
     pub fn scan_blob(&self, blob: &[u8]) -> Result<ScanResult> {
-        let cfg = self.malware_scan_config.lock().expect("malware-scan mutex poisoned");
+        let cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
         crate::malware_scan::scan_blob(blob, &cfg)
     }
 
     /// Scan a file on disk for malware indicators.
     #[cfg(feature = "malware-scan")]
     pub fn scan_file(&self, path: impl AsRef<Path>) -> Result<ScanResult> {
-        let cfg = self.malware_scan_config.lock().expect("malware-scan mutex poisoned");
+        let cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
         crate::malware_scan::scan_file(path, &cfg)
+    }
+
+    // ── Offline mode --------------------------------------------------------------
+
+    /// Enable offline mode with the given *config*.
+    ///
+    /// Creates an [`OfflineState`](crate::offline::OfflineState) wrapping a fresh
+    /// [`OfflineStore`](crate::offline::OfflineStore) and transitions it to
+    /// `SyncStatus::Offline`. Subsequent CRUD operations on the store are local-only
+    /// until [`sync`] is called.
+    ///
+    /// # Arguments
+    /// * `config` — [`OfflineConfig`] controlling auto-sync behaviour and conflict strategy.
+    #[cfg(feature = "offline")]
+    pub fn enable_offline_mode(&self, config: crate::offline::OfflineConfig) -> Result<()> {
+        let mut guard = self.offlined.write().unwrap();
+        if guard.is_some() {
+            return Err(HubError::InvalidInput(
+                "offline mode is already enabled".to_string(),
+            ));
+        }
+        *guard = Some(crate::offline::OfflineState::new(config));
+        Ok(())
+    }
+
+    /// Sync pending local changes to the storage layer and pull back server state.
+    ///
+    /// The sync flow:
+    /// 1. Write all [`Change::Create`]/[`Change::Update`]/[`Change::Delete`] in
+    ///    `pending_push` to the real [`Storage`] layer.
+    /// 2. Read current server state and push changes into the offline store as pull.
+    /// 3. Apply those pull changes, detecting revision conflicts.
+    /// 4. Update sync status accordingly (Online, Conflict, or Offline).
+    #[cfg(feature = "offline")]
+    pub async fn sync(&self) -> Result<crate::offline::SyncStatus> {
+        let pending_push: Vec<_>;
+
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().ok_or_else(|| {
+                HubError::InvalidInput(
+                    "offline mode is not enabled; call enable_offline_mode first".to_string(),
+                )
+            })?;
+
+            if state.status == crate::offline::SyncStatus::Syncing {
+                return Err(HubError::Conflict("sync already in progress".to_string()));
+            }
+
+            // Mark syncing.
+            state.status = crate::offline::SyncStatus::Syncing;
+
+            // Collect pending changes before dropping the guard.
+            pending_push = std::mem::take(&mut state.store.pending_push)
+                .into_iter()
+                .collect();
+        }
+
+        // Use a trusted local-operator identity for sync operations.
+        let sync_identity = AgentIdentity::local_operator("sync");
+
+        // Step 1: Push local changes to storage (outside the lock).
+        for change in pending_push {
+            match change {
+                crate::offline::Change::Create(_id, prompt) => {
+                    if self
+                        .storage()
+                        .get_prompt(prompt.id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        continue;
+                    }
+                    let _ = self.register(prompt.clone(), &sync_identity).await;
+                }
+                crate::offline::Change::Update(id, patch) => {
+                    if self
+                        .storage()
+                        .get_prompt(id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        let _ = self.storage().update_prompt(id, &patch).await;
+                    }
+                }
+                crate::offline::Change::Delete(id) => {
+                    if self
+                        .storage()
+                        .get_prompt(id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        let _ = self.storage().delete_prompt(id).await;
+                    }
+                }
+            }
+        }
+
+        // Step 2: Pull server state (fetch all prompts from storage).
+        let server_prompts = self
+            .storage()
+            .list_prompts(None, None, 0, usize::MAX)
+            .await
+            .unwrap_or_default();
+
+        // Step 3: Build pull changes and apply them.
+        let mut pull_changes = Vec::new();
+        for prompt in &server_prompts {
+            pull_changes.push(crate::offline::Change::Create(prompt.id, prompt.clone()));
+        }
+
+        // Re-acquire the guard to update the offline state.
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().unwrap();
+            state
+                .store
+                .record_pull(crate::offline::Change::Delete(Uuid::default())); // marker that pull happened
+        }
+
+        // Apply server changes, resolve conflicts, and update status (single write lock).
+        let status;
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().unwrap();
+            let conflicts = state.store.apply_server_changes(pull_changes);
+
+            let unresolved: Vec<_> = conflicts
+                .iter()
+                .filter(|c| state.store.resolve_conflict(c).is_none()) // resolve returns Some when it resolves, None when not.
+                .cloned()
+                .collect();
+
+            if unresolved.is_empty() {
+                state.status = crate::offline::SyncStatus::Online;
+            } else {
+                state.status = crate::offline::SyncStatus::Conflict(unresolved);
+            }
+            status = state.status.clone();
+        }
+
+        Ok(status)
+    }
+
+    /// Return the current sync status, or `None` if offline mode is not enabled.
+    #[cfg(feature = "offline")]
+    pub fn get_sync_status(&self) -> Option<crate::offline::SyncStatus> {
+        let guard = self.offlined.read().unwrap();
+        guard.as_ref().map(|s| s.status.clone())
+    }
+
+    /// Return a handle to the offline state, or `None` if offline mode is not enabled.
+    #[cfg(feature = "offline")]
+    pub fn offlined(
+        &self,
+    ) -> &std::sync::Arc<std::sync::RwLock<Option<crate::offline::OfflineState>>> {
+        &self.offlined
     }
 }
 

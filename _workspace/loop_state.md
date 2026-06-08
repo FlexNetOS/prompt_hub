@@ -5,10 +5,10 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 4
-cycles_total: 71
+cycles_this_session: 0
+cycles_total: 72
 apply_mode: APPLY (default for /prompt-loop)
-status: cycle 71 malware-scan COMPLETE. Next: offline or auto-purge (P1 medium priority).
+status: RESUME — verify-on-baseline, starting cycle 72 offline
 
 ## P1 Recovery Progress
 | Feature | Cycle | Status | Tests |
