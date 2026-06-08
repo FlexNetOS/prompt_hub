@@ -39,12 +39,33 @@ status: Cycle 78 vibe_code route DONE. P2 structural gaps continue.
 | `fmt --check` | Clean ✅ |
 | Working tree | Clean ✅ |
 
+### Cycle 79 — budget server routes (6 endpoints)
+- POST `/api/v1/budget/spend` — record_spend + alert mapping
+- GET `/api/v1/budget/status` — utilization_percent + is_exceeded + current_spend_usd
+- PUT `/api/v1/budget/budget` — set_monthly_budget
+- POST `/api/v1/budget/config/load` — load_budget_config
+- GET `/api/v1/budget/config/save/{org_id}` — save_budget_config
+- POST `/api/v1/budget/reset` — reset_budget_period
+- DTOs: RecordSpendRequest, SetMonthlyBudgetRequest, LoadConfigRequest
+- Server Cargo.toml: added `budget = ["prompt-hub/budget"]`, included in defaults
+- Structured router with per-feature cfg scopes (avoid chain breaks)
+
+**Gates at last commit (ae0bc1a)**
+| Gate | Result |
+|------|--------|
+| `cargo check --workspace --all-features` | GREEN ✅ |
+| `clippy -D warnings` | Clean ✅ |
+| `fmt --check` | Clean ✅ |
+| Working tree | Clean ✅ |
+
 ## Remaining work
 P1 recovery complete. Remaining `- [ ]` items in backlog are P2 structural gaps:
 - defaults.rs, shutdown.rs, multimodal_input.rs, plugins.rs, templates.rs, tokens.rs, junie
-- Server route coverage gap (~60 hub methods)
+- Server route coverage gap (~60 hub methods) — budget (6) + vibe_code done = 54 remaining
+  - load_balancer routes (6 endpoints): add_provider, select_provider, record_latency/failure, get_stats
+  - satisfaction routes (4 endpoints): record_csat, record_nps, events, metrics
 - CLI command fragmentation
 - Migration 0008 DDL
 
 ---
-*Last update: 2026-06-08T01:30:00Z | Cycle 77 gather DONE. P1 recovery complete (11/11).*
+*Last update: 2026-06-08T01:45:00Z | Cycle 79 budget routes DONE. Budget server coverage gap closed.*
