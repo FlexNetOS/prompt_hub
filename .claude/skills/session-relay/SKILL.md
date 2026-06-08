@@ -1,6 +1,6 @@
 ---
 name: session-relay
-description: "Hand off the prompt-loop to a fresh session and resume it with zero context loss. ALWAYS use at a cycle budget (HAND OFF) and when starting/continuing the loop in a new session (RESUME). Triggers: 'hand off', 'checkpoint the loop', 'resume', 'pick up the loop', 'continue in a new session', 'relay'. The committed _workspace/HANDOFF.md is the authoritative resume signal. End-of-loop handoff produces a Handoff Packet V2 per prompt_loop/handoff/schemas/packet.schema.json."
+description: "Hand off the prompt-loop to a fresh session and resume it with zero context loss. ALWAYS use at a cycle budget (HAND OFF) and when starting/continuing the loop in a new session (RESUME). Triggers: 'hand off', 'checkpoint the loop', 'resume', 'pick up the loop', 'continue in a new session', 'relay'. The committed _workspace/HANDOFF.md is the authoritative resume signal. End-of-loop handoff produces a Handoff Packet V2 per `.claude/skills/prompt-loop/handoff/schemas/packet.schema.json`."
 ---
 
 # Session Relay — Durable Handoff & Resume with Handoff Packet V2
@@ -11,7 +11,7 @@ A long session rots (context fills, quality drops) and burns tokens. The defense
 
 ## End-of-Loop Handoff Packet (HandoffLedger V2)
 
-At each cycle boundary, session-relay emits a **handoff packet** structured per `prompt_loop/handoff/schemas/packet.schema.json`. The packet is NOT the source of truth — it is a compiled projection from Git state, backlog, and gate results.
+At each cycle boundary, session-relay emits a **handoff packet** structured per `.claude/skills/prompt-loop/handoff/schemas/packet.schema.json`. The packet is NOT the source of truth — it is a compiled projection from Git state, backlog, and gate results.
 
 ### Handoff Packet structure (v2)
 

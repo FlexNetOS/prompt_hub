@@ -8,7 +8,7 @@
     "schema": { "const": "handoff.packet.v2" },
     "packet_id": { "type": "string" },
     "session_id": { "type": "string" },
-    "task_id": { "type": "string" },
+    "task_id": { "type": ["string", "null"] },
     "task_status": { "type": "string" },
     "branch": { "type": "string" },
     "worktree": { "type": "string" },

@@ -99,7 +99,7 @@ Run the **DONE-criteria suite** (`cargo build --workspace --all-features` · `ju
 Invoke `session-relay` **HAND OFF** with handoff packet compilation:
 
 1. **Emit session event.** Record `session_stopped` event via mesh heartbeat (`relay:handoff`).
-2. **Compile Handoff Packet V2** from current Git state, gate results, and backlog → per `prompt_loop/handoff/schemas/packet.schema.json`.
+2. **Compile Handoff Packet V2** from current Git state, gate results, and backlog → per `.claude/skills/prompt-loop/handoff/schemas/packet.schema.json`.
 3. **Spawn continuity-steward** → writes `_workspace/HANDOFF.md` containing the packet as a markdown JSON block + human-readable summary.
 4. **Commit.** `git add _workspace/HANDOFF.md _workspace/backlog.md _workspace/loop_state.md && git commit` (`chore(loop): handoff cycle N`).
 5. **Heartbeat** (best-effort mesh relay). Skip silently if unavailable.

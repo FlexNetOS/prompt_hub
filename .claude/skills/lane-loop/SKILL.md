@@ -1,6 +1,6 @@
 ---
 name: lane-loop
-description: "Unified harness entry point for prompt_loop dev loop + session_relay handoff. Combines autonomous feature building with durable session-to-session handoff via Handoff Packet V2. ALWAYS use as the single /lane-loop slash command — delegates to prompt-loop for building and session-relay for handoff off. Triggers: '/lane-loop', 'harness loop', 'dev loop'. Defaults to APPLY mode."
+description: "Unified harness entry point for prompt-loop dev loop + session-relay handoff. Combines autonomous feature building with durable session-to-session handoff via Handoff Packet V2. ALWAYS use as the single /lane-loop slash command — delegates to prompt-loop for building and session-relay for handoff. Triggers: '/lane-loop', 'harness loop', 'dev loop'. Defaults to APPLY mode."
 ---
 
 # Lane-Loop — Unified Harness Entry Point
@@ -58,7 +58,7 @@ git log -1 --format="%H"       # git_sha (proof of commit)
 cat _workspace/loop_state.md  # cycles_total, last_item
 ```
 
-Then produce the packet JSON per `prompt_loop/handoff/schemas/packet.schema.json` and embed it in `HANDOFF.md`.
+Then produce the packet JSON per `.claude/skills/prompt-loop/handoff/schemas/packet.schema.json` and embed it in `HANDOFF.md`.
 
 ### Session Event emission
 
@@ -70,24 +70,6 @@ notify_peer("all", "relay:handoff — cycle N completed, sentinel=HANDOFF")
 
 # Or if DONE:
 notify_peer("all", "relay:handoff — loop DONE, all gates green")
-```
-
-## Wire into Prompt-Loop (internal)
-
-The prompt-loop skill is updated to recognize `/lane-loop` as its parent harness:
-
-In `prompt-loop/SKILL.md`, the Phase 4 HAND OFF section now delegates to session-relay **with handoff packet compilation** instead of just writing a text checkpoint. The key change is at Phase 4 step 2 → step 4 below:
-
-```markdown
-### Phase 4: HAND OFF (budget reached) — UPDATED
-Invoke `session-relay` HAND OFF with the following additions:
-1. Ensure state is committed.
-2. Emit session_stopped event (handoff.session_event.v1).
-3. Compile Handoff Packet V2 from git state + gate results.
-4. Spawn continuity-steward → write HANDOFF.md containing packet as markdown block.
-5. Commit it.
-6. Heartbeat relay:handoff (best-effort).
-7. Stop.
 ```
 
 ## Policy Gates (from handoff/policies/rules.toml)
@@ -118,5 +100,5 @@ Applied at each cycle boundary:
 ---
 
 *Wired into harness via session-handoff from weave/sessions-handoff.*
-*Handoff packet schema: prompt_loop/handoff/schemas/packet.schema.json*
-*Session event schema: prompt_loop/handoff/schemas/session.schema.json*
+*Handoff packet schema: .claude/skills/prompt-loop/handoff/schemas/packet.schema.json*
+*Session event schema: .claude/skills/prompt-loop/handoff/schemas/session.schema.json*
