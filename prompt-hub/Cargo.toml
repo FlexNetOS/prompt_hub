@@ -63,6 +63,7 @@ preview = []
 i18n = []
 sandbox = []
 voice = []
+local-llm = ["dep:reqwest"]
 
 # ---------------------------------------------------------------------------
 # Dead features — removed from Cargo.toml entirely. These had no module files,

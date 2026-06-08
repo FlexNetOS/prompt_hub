@@ -56,6 +56,8 @@ pub mod junie;
 pub mod learn;
 pub mod lineage;
 pub mod load_balancer;
+#[cfg(feature = "local-llm")]
+pub mod local_llm;
 pub mod lock;
 pub mod metrics;
 pub mod models;

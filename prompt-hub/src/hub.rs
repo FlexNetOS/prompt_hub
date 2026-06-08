@@ -24,6 +24,8 @@ use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, Routi
 use crate::metrics::MetricsCollector;
 #[cfg(feature = "gradual-rollout")]
 use crate::models::CanaryDeployment;
+#[cfg(feature = "local-llm")]
+use crate::models::LocalModelConfig;
 use crate::models::*;
 #[cfg(feature = "sandbox")]
 use crate::models::{Sandbox, SandboxConfig, SandboxMode};
@@ -189,6 +191,8 @@ pub struct PromptHub {
     sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
     #[cfg(feature = "voice")]
     voice_engine: std::sync::Arc<std::sync::Mutex<VoicePipelineEngine>>,
+    #[cfg(feature = "local-llm")]
+    local_model_config: std::sync::Arc<std::sync::Mutex<Vec<LocalModelConfig>>>,
     #[cfg(feature = "gradual-rollout")]
     active_rollouts: std::sync::Mutex<Vec<GraduatedRolloutConfig>>,
     #[cfg(feature = "multimodal")]
@@ -288,6 +292,8 @@ impl PromptHub {
             voice_engine: std::sync::Arc::new(
                 std::sync::Mutex::new(VoicePipelineEngine::default()),
             ),
+            #[cfg(feature = "local-llm")]
+            local_model_config: Arc::new(std::sync::Mutex::new(Vec::<LocalModelConfig>::new())),
             #[cfg(feature = "gradual-rollout")]
             active_rollouts: std::sync::Mutex::new(Vec::new()),
             #[cfg(feature = "multimodal")]
@@ -334,6 +340,9 @@ impl PromptHub {
 
         #[cfg(feature = "sandbox")]
         info!("Sandbox engine initialized in permissive mode");
+
+        #[cfg(feature = "local-llm")]
+        info!("Local LLM engine initialized (no models configured yet)");
 
         #[cfg(feature = "gradual-rollout")]
         info!("Gradual rollout engine initialized");
@@ -2148,6 +2157,45 @@ impl PromptHub {
             .lock()
             .expect("voice engine lock poisoned");
         engine.get_history().to_vec()
+    }
+
+    // ── Local LLM ────────────────────────────────────────────────────────
+
+    /// Register a local model endpoint for on-device inference.
+    #[cfg(feature = "local-llm")]
+    pub fn configure_local_model(&mut self, config: LocalModelConfig) {
+        let mut configs = self
+            .local_model_config
+            .lock()
+            .expect("local-model mutex poisoned");
+        configs.push(config);
+    }
+
+    /// Check the health of all configured local model endpoints.
+    #[cfg(feature = "local-llm")]
+    pub async fn local_model_health(&self) -> Vec<(String, LocalModelHealth)> {
+        let configs = self
+            .local_model_config
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_default();
+
+        let mut results = Vec::new();
+        for config in configs {
+            let health = self.health_check_local(&config.base_url).await;
+            results.push((config.model_name, health));
+        }
+        results
+    }
+
+    /// Internal helper: probe a single local endpoint's health.
+    #[cfg(feature = "local-llm")]
+    async fn health_check_local(&self, base_url: &str) -> LocalModelHealth {
+        let url = format!("{base_url}/api/tags");
+        match reqwest::get(&url).await {
+            Ok(resp) if resp.status().is_success() => LocalModelHealth::Healthy,
+            _ => LocalModelHealth::Unavailable,
+        }
     }
 
     // ── Analytics ──────────────────────────────────────────────────────

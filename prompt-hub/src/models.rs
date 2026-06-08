@@ -859,6 +859,95 @@ pub struct LLMProvider {
     pub timeout_seconds: u32,
 }
 
+/// Local inference providers we can target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LocalProviderKind {
+    Ollama,
+    Llamafile,
+    WhisperCPP,
+}
+
+impl std::fmt::Display for LocalProviderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LocalProviderKind::Ollama => write!(f, "ollama"),
+            LocalProviderKind::Llamafile => write!(f, "llamafile"),
+            LocalProviderKind::WhisperCPP => write!(f, "whisper-cpp"),
+        }
+    }
+}
+
+/// Configuration for a single local model endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalModelConfig {
+    /// Provider type (determines API protocol).
+    pub provider: LocalProviderKind,
+    /// Base URL of the local inference server
+    /// (e.g. "http://localhost:11434", "http://localhost:8081/v1").
+    pub base_url: String,
+    /// Model identifier as understood by the provider
+    /// (e.g. "llama3.2", "mistral-nemo:latest").
+    pub model_name: String,
+    /// Sampling temperature [0.0, 2.0].
+    pub temperature: f32,
+    /// Top-p sampling threshold.
+    pub top_p: f32,
+    /// Maximum number of tokens in the response.
+    pub max_tokens: u32,
+}
+
+impl LocalModelConfig {
+    pub fn new(provider: LocalProviderKind, base_url: &str, model_name: &str) -> Self {
+        Self {
+            provider,
+            base_url: base_url.to_string(),
+            model_name: model_name.to_string(),
+            temperature: 0.7,
+            top_p: 0.9,
+            max_tokens: 2048,
+        }
+    }
+
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = temperature;
+        self
+    }
+
+    pub fn with_top_p(mut self, top_p: f32) -> Self {
+        self.top_p = top_p;
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+}
+
+/// Health status of a local model instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LocalModelHealth {
+    Healthy,
+    Degraded,
+    Unavailable,
+}
+
+impl LocalModelHealth {
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, LocalModelHealth::Healthy)
+    }
+}
+
+/// Information about a model available on a local endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub name: String,
+    pub format: String,
+    pub size_bytes: u64,
+    pub status: LocalModelHealth,
+    pub downloaded_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 /// Canary deployment configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanaryDeployment {
