@@ -1,0 +1,34 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0041",
+  "title": "Feature-gate hub.rs `test_retention_gc_accessible` for default-features builds",
+  "status": "backlog",
+  "priority": "P2",
+  "objective": "hub.rs test `test_retention_gc_accessible` and its set/get_retention_period calls reference the `#[cfg(feature = \"retention\")]`-gated `crate::retention` module, but the test fn itself is NOT feature-gated. Under DEFAULT features `cargo test -p prompt-hub` and `cargo clippy -p prompt-hub --all-targets` fail with E0432 unresolved import `crate::retention`. Distinct from PHTASK-0028 (argon2 OsRng, done). Pre-existing; uncaught because CI's default-build job builds the library only (no --tests) and the test/clippy jobs use --all-features. Found cycle 88 verifying PHTASK-0038. Fix (NO-DOWNGRADE): gate the test fn behind `#[cfg(feature = \"retention\")]` so default-features test compilation succeeds \u2014 wire the test to its feature, never delete it.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`cargo test -p prompt-hub` (default features) compiles and runs",
+    "`cargo clippy -p prompt-hub --all-targets` (default features) is clean",
+    "the retention test still compiles and runs under --all-features"
+  ],
+  "test_commands": [
+    "cargo test -p prompt-hub",
+    "cargo clippy -p prompt-hub --all-targets -- -D warnings",
+    "cargo test -p prompt-hub --all-features retention"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:98dfb9c61d1104031d80d75fd102b20cf3a4f4b25cc3964401ce50eeba270940",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:85db338896d690895466de3ac56d8d107cf48b114cb1ee18d9bb8765d88ca85d"
+  },
+  "source": "discovered during cycle 88 verification of PHTASK-0038",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only. Here the fix WIRES the test to its existing feature gate; it does not delete the test."
+}
