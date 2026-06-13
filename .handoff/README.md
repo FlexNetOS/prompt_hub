@@ -6,7 +6,7 @@ ADR-0004 §3; FLEET_GUIDE at `meta/handoff/FLEET_GUIDE.md`).
 
 > Cold-start onboarding: read `context/capsule.json` + this README, then run `hf resume`.
 
-## Layout
+## Layout (full kernel structure, copied from the reference + adapted — see ADR-0001)
 - `context/capsule.json` (`handoff.context_capsule.v1`) — who this repo is and what's next.
 - `tasks/PHTASK-NNNN.task.json` (`handoff.task.v1`) — the execution cards. **This is the
   backlog**, migrated from the deprecated `_workspace/backlog.md`. Each card carries a
@@ -14,8 +14,21 @@ ADR-0004 §3; FLEET_GUIDE at `meta/handoff/FLEET_GUIDE.md`).
 - `packets/latest.md` (`handoff.packet.v2`) — the resume packet. **Derived** — regenerate with
   `hf fleet render prompt_hub` (run from the meta root), never hand-edit.
 - `active.md` — one-line pointer to the next card + done count.
+- `policy.toml` (`handoff.policy.v1`) — loop policy (remote/loop/merge/preflight/sync) for this
+  member: origin `FlexNetOS/prompt_hub`, trunk `main`, squash auto-merge.
+- `policies/rules.toml` (`handoff.policy.rules.v1`) — fail-closed write/network/dependency gates,
+  drift rules, the protected-file guard, and the blocked-command list.
+- `hooks/` (`handoff.hooks.v1`) — lifecycle automation: `hooks.toml` (the contract) +
+  `loop-entry.sh` (SessionStart: render packet + suggest the `prompt-loop` skill) +
+  `session-end.sh` (SessionEnd: re-render the packet). Adapted to the member model.
+- `skills/session-resume.skill.md` — the cold-start resume procedure.
+- `decisions/ADR-0001-adopt-handoff-kernel.md` — the adoption decision record.
 - `history/` — provenance: the archived `_workspace/` artifacts (full backlog, every HANDOFF,
   loop_state, cycle notes) + the migration generator. Nothing from the old system was lost.
+
+> The hook scripts are present but **not auto-wired** into `.claude/settings.json` (left for the
+> owner to opt into). To activate the unattended substrate, add SessionStart →
+> `.handoff/hooks/loop-entry.sh` and SessionEnd → `.handoff/hooks/session-end.sh`.
 
 ## Rules (ADR-0004 §3)
 - **Git-committed TEXT ONLY** — never a `ledger.db`, never binary state in this directory.
