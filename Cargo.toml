@@ -25,7 +25,7 @@ axum = { version = "0.8.8" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.140" }
 serde_yaml = { version = "0.9.34" }
-toml = { version = "0.8.22" }
+toml = { version = "1.1.2" }
 # Local-only: storage uses `Builder::new_local`. Dropping libsql's default
 # `replication`/`remote`/`sync`/`tls` features removes its bundled hyper-rustls
 # → rustls 0.22 → rustls-webpki 0.102 chain (4 RUSTSEC advisories we don't use).
@@ -45,7 +45,7 @@ handlebars = { version = "6.4.0" }
 tera = { version = "1.20.1" }
 tiktoken-rs = { version = "0.12" }
 tokenizers = { version = "0.23" }
-libloading = { version = "0.8.6" }
+libloading = { version = "0.9.0" }
 inventory = { version = "0.3.20" }
 regex = { version = "1.11.2" }
 fancy-regex = { version = "0.16.2" }
@@ -75,7 +75,7 @@ dashmap = { version = "6.1" }
 # vulnerable `protobuf` crate. See prompt-hub `otel` feature.
 prometheus = { version = "0.14.0", default-features = false }
 utoipa = { version = "5.0" }
-schemars = { version = "0.8" }
+schemars = { version = "1.2" }
 reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls", "json"] }
 sha2 = { version = "0.11.0" }
 tempfile = { version = "3.19.1" }

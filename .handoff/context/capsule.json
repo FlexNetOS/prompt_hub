@@ -1,0 +1,10 @@
+{
+  "schema": "handoff.context_capsule.v1",
+  "project_name": "prompt_hub",
+  "role": "Rust workspace of three crates (prompt-hub core lib, prompthub CLI, prompthub-server axum API) implementing prompt management for LLM agent swarms: libsql/SQLite storage, FTS5+ONNX hybrid search, RBAC, injection sanitization, audit logging, and a large feature-gated module matrix. It is being continuously built by an autonomous \"construction crew\" loop harness whose durable state lives in _workspace/ (backlog.md, loop_state.md, HANDOFF.md).",
+  "plane": "front-door",
+  "tier": "B",
+  "northstar": "A non-technical user makes any request; prompt_hub transforms, communicates, and delivers it as intended (SwarmBundle -> handoff.task.v1).",
+  "next_command": "W7/HFTASK-0003: SwarmBundle -> handoff.task.v1 dispatch + transport ADR (HFTASK-0019)",
+  "source": "ARCHITECTURE-TRUTH.md census 2026-06-12"
+}
