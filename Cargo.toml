@@ -36,7 +36,7 @@ tracing = { version = "0.1.41" }
 tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
 tracing-appender = { version = "0.2.3" }
 uuid = { version = "1.18.0", features = ["v4", "v7", "serde"] }
-chrono = { version = "0.4.41", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 semver = { version = "1.0.26", features = ["serde"] }
 validator = { version = "0.19", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive", "cargo", "env"] }
