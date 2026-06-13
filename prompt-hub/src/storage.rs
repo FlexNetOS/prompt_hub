@@ -248,8 +248,8 @@ impl Storage {
 
                 // `execute_batch` runs ALL statements in a migration file (most
                 // migrations are multi-statement: table + indexes) and treats a
-                // comments-only file (e.g. the 0008 version marker) as a no-op,
-                // unlike `execute`, which runs one statement and errors on empty.
+                // comments-only file as a no-op, unlike `execute`, which runs
+                // one statement and errors on empty.
                 conn.execute_batch(sql).await.map_err(|e| {
                     HubError::StorageError(format!("Migration {name} SQL failed: {e}"))
                 })?;
@@ -1560,6 +1560,65 @@ mod tests {
     async fn test_storage_init() {
         let storage = in_memory_storage().await;
         assert!(storage.health_check().await.is_ok());
+    }
+
+    /// Migration 0008 establishes generation-params indexes; confirm they
+    /// land on a fresh `:memory:` database (all migrations run on construction)
+    /// and that a prompt carrying `generation_params` round-trips through the
+    /// indexed column.
+    #[tokio::test]
+    async fn test_migration_0008_generation_params_indexes() {
+        let storage = in_memory_storage().await;
+        let conn = storage.acquire().await.expect("acquire connection");
+
+        for index in [
+            "idx_prompts_generation_params",
+            "idx_prompts_gen_temperature",
+            "idx_prompts_gen_max_tokens",
+        ] {
+            let mut rows = conn
+                .query(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                    params!(index),
+                )
+                .await
+                .expect("query sqlite_master");
+            assert!(
+                rows.next().await.expect("read index row").is_some(),
+                "migration 0008 index `{index}` was not created",
+            );
+        }
+
+        // The migration must also be recorded as applied (id 8).
+        let mut applied = conn
+            .query("SELECT 1 FROM _migrations WHERE id = 8", params!())
+            .await
+            .expect("query _migrations");
+        assert!(
+            applied.next().await.expect("read migration row").is_some(),
+            "migration 0008 was not recorded in _migrations",
+        );
+        drop(conn);
+
+        // A prompt with custom generation params survives a write/read cycle.
+        let mut prompt = test_prompt("gen_params");
+        prompt.generation_params = Some(GenerationParams {
+            temperature: 0.42,
+            max_tokens: Some(256),
+            ..Default::default()
+        });
+        storage.insert_prompt(&prompt).await.expect("insert failed");
+
+        let fetched = storage
+            .get_prompt(prompt.id)
+            .await
+            .expect("get failed")
+            .expect("prompt not found");
+        let params = fetched
+            .generation_params
+            .expect("generation_params not persisted");
+        assert_eq!(params.temperature, 0.42);
+        assert_eq!(params.max_tokens, Some(256));
     }
 
     #[tokio::test]
