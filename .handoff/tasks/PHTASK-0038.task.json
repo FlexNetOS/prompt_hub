@@ -2,7 +2,7 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0038",
   "title": "Add tests to `hooks.rs` (orchestrator path)",
-  "status": "backlog",
+  "status": "done",
   "priority": "P1",
   "objective": "hooks.rs (Hook trait, HookRegistry, JunieHook) is security-critical orchestrator infra with ZERO test coverage. Add: pre_execute triggers, post_execute result transformation, hook ordering.",
   "path_scope": [
@@ -26,5 +26,6 @@
     "acceptance_hash": "blake3:1fb9a8c5e76aca6f37ddcf4e5d42c6d06dbc4153c08bfd6b5848bc9fbd321c67"
   },
   "source": "migrated from _workspace/backlog.md (2026-06-13)",
-  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "Added 8 tests to prompt-hub/src/hooks.rs (#[cfg(test)] mod tests) covering the orchestrator path with NO source downgrade: JunieHook stable name; JunieHook pre/post_execute succeed; empty HookRegistry is a no-op; pre_execute and post_execute run all hooks in registration order (verified via a RecordingHook with an Arc<Mutex<Vec<String>>> call log); pre_execute and post_execute short-circuit on the first hook error and propagate it (HubError::Internal); HookRegistry Debug reports hook count. The private async trigger_pre_execute/trigger_post_execute are exercised from inside the module. Gates green under canonical --all-features: cargo test -p prompt-hub hooks => 8 passed; clippy --all-features --all-targets -D warnings clean; default-features library build (cargo build -p prompt-hub, the CI default-build gate) green; cargo fmt --check clean. Done via worktree loop/phtask-0038-hooks-tests."
 }
