@@ -25,6 +25,7 @@ use crate::health::HealthAggregator;
 use crate::hooks::{HookRegistry, JunieHook};
 #[cfg(feature = "i18n")]
 use crate::i18n::I18nEngine;
+use crate::junie::Junie;
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
 #[cfg(feature = "malware-scan")]
@@ -236,6 +237,10 @@ pub struct PromptHub {
     metrics: Arc<MetricsCollector>,
     sync: SyncManager,
     hooks: HookRegistry,
+    /// The in-repo Junie orchestrator agent. The default [`JunieHook`]
+    /// registered in [`HookRegistry`] wraps Junie's orchestration around core
+    /// operations; this field exposes the orchestrator handle directly.
+    junie: Junie,
     quality_gate: Arc<QualityGate>,
     lineage: LineageTracker,
     swarm_registry: Arc<SwarmRoleRegistry>,
@@ -354,6 +359,7 @@ impl PromptHub {
             metrics: metrics.clone(),
             sync: SyncManager::new(),
             hooks: HookRegistry::new(),
+            junie: Junie::new(),
             quality_gate: Arc::new(QualityGate::new()),
             lineage: LineageTracker::new(),
             swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
@@ -574,6 +580,17 @@ impl PromptHub {
     /// and satisfaction signals across the lifetime of this PromptHub instance.
     pub fn metrics(&self) -> Arc<MetricsCollector> {
         Arc::clone(&self.metrics)
+    }
+
+    /// Return a reference to the in-repo Junie orchestrator agent.
+    ///
+    /// Junie is the primary orchestrator for the PromptHub ecosystem; its
+    /// identity, role, and default system prompt are reachable through the
+    /// returned handle. The default [`JunieHook`] is also registered in the
+    /// hook registry so Junie's orchestration wraps core operations — this
+    /// accessor exposes the orchestrator itself as a first-class subsystem.
+    pub fn junie(&self) -> &Junie {
+        &self.junie
     }
 
     // ── Chaos engineering ─────────────────────────────────────────────────
@@ -3371,6 +3388,26 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config()).await;
         assert!(hub.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_hub_exposes_junie_accessor() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // The accessor returns a usable handle to the orchestrator agent.
+        let junie = hub.junie();
+        assert_eq!(junie.identity.name, "Junie");
+        assert_eq!(junie.role(), Role::Junie);
+        assert!(junie.system_prompt().contains("Junie"));
+        // Junie is initialized with the orchestration capabilities.
+        assert!(junie.identity.capabilities.contains(&Capability::Execute));
+
+        // Calling it twice yields the same stable identity (it is a real field,
+        // not a freshly-constructed value each call).
+        assert_eq!(hub.junie().identity.id, junie.identity.id);
     }
 
     #[tokio::test]
