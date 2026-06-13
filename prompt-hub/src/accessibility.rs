@@ -329,6 +329,16 @@ fn structured_json(
     while i < lines.len() {
         let line = lines[i];
 
+        // Blank lines are structural separators. Skip them explicitly —
+        // otherwise a blank line matches no block detector AND starts no
+        // paragraph (the paragraph accumulator below requires a non-empty
+        // line), so `i` would never advance and the loop would spin forever
+        // (e.g. on leading "\n\n" before a list).
+        if line.trim().is_empty() {
+            i += 1;
+            continue;
+        }
+
         // Detect headings (lines starting with # followed by space)
         if let Some(level) = detect_heading(line) {
             let text = strip_heading_marker(line);
@@ -358,7 +368,15 @@ fn structured_json(
                 // Skip closing ```
                 i += 1;
             }
-            let body = code_body.join("\n");
+            // CommonMark: a fenced block's content includes the newline that
+            // ends each content line (incl. the last, before the closing fence).
+            // The line-based split drops terminators, so re-add a trailing "\n"
+            // for a non-empty body; an empty block stays "".
+            let body = if code_body.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", code_body.join("\n"))
+            };
             sections.push(serde_json::json!({
                 "type": "code_block",
                 "language": lang.unwrap_or_else(|| "text".to_string()),
@@ -910,6 +928,26 @@ mod tests {
         }
     }
 
+    /// Structured JSON: leading/embedded blank lines terminate (regression for
+    /// an infinite loop where a blank line advanced no index). Must finish.
+    #[test]
+    fn test_structured_json_blank_lines_terminate() {
+        // Leading blank lines + blank line between blocks — the exact shape that
+        // previously hung the parser (and, via cargo test having no per-test
+        // timeout, hung the whole CI Test matrix).
+        let input = "\n\nfirst paragraph\n\n- a\n- b\n\n\nsecond paragraph\n";
+        let config = AccessibilityConfig::structured();
+        let output = transform(input, &config).unwrap();
+        match output {
+            AccessibleOutput::Structured(json) => {
+                let sections = json["sections"].as_array().expect("sections array");
+                assert!(sections.iter().any(|s| s["type"] == "list"));
+                assert!(sections.iter().any(|s| s["type"] == "paragraph"));
+            }
+            other => panic!("Expected Structured output, got {:?}", other),
+        }
+    }
+
     /// Structured JSON: identifies fenced code blocks.
     #[test]
     fn test_structured_json_detects_code_blocks() {
@@ -958,7 +996,9 @@ mod tests {
 
         match output {
             AccessibleOutput::Braille(text) => {
-                assert_eq!(text.len(), 2);
+                // Braille code points (U+2800–U+28FF) are 3 bytes each in UTF-8,
+                // so assert on char count, not byte length.
+                assert_eq!(text.chars().count(), 2);
                 // a -> U+2801 (dots-1)
                 let a_braille = text.chars().next().expect("should have first char");
                 assert_eq!(a_braille, '\u{2801}');
@@ -996,7 +1036,9 @@ mod tests {
 
         match output {
             AccessibleOutput::Braille(text) => {
-                assert_eq!(text.len(), 5); // a + space + b (space becomes U+2800)
+                // "a b" -> 3 braille cells (a, U+2800 blank, b); assert char
+                // count, not byte length (each cell is 3 UTF-8 bytes).
+                assert_eq!(text.chars().count(), 3);
                 assert_eq!(text.chars().nth(1), Some('\u{2800}'));
             }
             other => panic!("Expected Braille output, got {:?}", other),
