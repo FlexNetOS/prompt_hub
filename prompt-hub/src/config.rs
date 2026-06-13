@@ -15,6 +15,9 @@ pub enum EmbedderBackend {
     /// ONNX Runtime inference via the `ort` crate (real ML models).
     /// Requires the `smart-ort` feature flag.
     OnnxRuntime,
+    /// Qdrant vector store — requires the `qdrant` feature flag.
+    #[cfg(feature = "qdrant")]
+    Qdrant,
 }
 
 /// Hub configuration for database, search, and runtime settings.
@@ -41,6 +44,11 @@ pub struct HubConfig {
     /// Which embedder backend to use for vector generation.
     #[serde(default)]
     pub embedding_backend: EmbedderBackend,
+    /// Qdrant connection configuration (optional). When present, enables
+    /// vector search backed by a remote Qdrant cluster.
+    #[cfg(feature = "qdrant")]
+    #[serde(default)]
+    pub qdrant_config: Option<crate::qdrant::QdrantConfig>,
 }
 
 impl Default for HubConfig {
@@ -56,6 +64,8 @@ impl Default for HubConfig {
             embedding_model: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
             embedding_dimension: 384,
             embedding_backend: EmbedderBackend::default(),
+            #[cfg(feature = "qdrant")]
+            qdrant_config: None,
         }
     }
 }

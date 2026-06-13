@@ -19,13 +19,21 @@
 #![allow(dead_code, async_fn_in_trait, unused_assignments)]
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "accessibility")]
+pub mod accessibility;
 pub mod analytics;
 pub mod audit;
 pub mod auth;
+#[cfg(feature = "auto-purge")]
+pub mod auto_purge;
 #[cfg(feature = "beta-program")]
 pub mod beta_program;
 #[cfg(feature = "budget")]
 pub mod budget;
+#[cfg(feature = "chaos")]
+pub mod chaos;
+#[cfg(feature = "chaos-automation")]
+pub mod chaos_auto;
 #[cfg(feature = "circuit-breaker")]
 pub mod circuit_breaker;
 #[cfg(feature = "confidence")]
@@ -44,6 +52,8 @@ pub mod evolution;
 pub mod fallback;
 #[cfg(feature = "retention")]
 pub mod garbage_collector;
+#[cfg(feature = "gather")]
+pub mod gather;
 #[cfg(feature = "gradual-rollout")]
 pub mod gradual_rollout;
 pub mod health;
@@ -59,7 +69,11 @@ pub mod load_balancer;
 #[cfg(feature = "local-llm")]
 pub mod local_llm;
 pub mod lock;
+#[cfg(feature = "malware-scan")]
+pub mod malware_scan;
 pub mod metrics;
+#[cfg(feature = "mobile")]
+pub mod mobile;
 pub mod models;
 #[cfg(feature = "moderation")]
 pub mod moderation;
@@ -68,6 +82,8 @@ pub mod multi_provider;
 #[cfg(feature = "multimodal")]
 pub mod multimodal;
 pub mod multimodal_input;
+#[cfg(feature = "offline")]
+pub mod offline;
 pub mod plugins;
 pub mod pollination;
 #[cfg(feature = "preview")]
@@ -75,6 +91,8 @@ pub mod preview;
 #[cfg(feature = "privacy")]
 pub mod privacy;
 pub mod provider_health;
+#[cfg(feature = "qdrant")]
+pub mod qdrant;
 pub mod quality_gate;
 #[cfg(feature = "quota")]
 pub mod quota;
@@ -95,10 +113,14 @@ pub mod swarm;
 pub mod sync;
 pub mod templates;
 pub mod tokens;
+#[cfg(feature = "touch")]
+pub mod touch;
 #[cfg(feature = "vibe")]
 pub mod vibe;
 #[cfg(feature = "voice")]
 pub mod voice;
+#[cfg(feature = "voice-anonymize")]
+pub mod voice_anonymize;
 
 // Re-export commonly used types
 pub use config::HubConfig;
@@ -106,6 +128,14 @@ pub use error::{HubError, Result};
 pub use hub::PromptHub;
 pub use models::UserProfile;
 pub use models::*;
+
+#[cfg(feature = "gather")]
+pub use gather::{
+    CodePattern, FileCategory, PathPattern, PatternType, RelevanceEntry, SmartContext,
+};
+
+#[cfg(feature = "offline")]
+pub use offline::{ConflictEntry, OfflineConfig, OfflineStore, SyncStatus};
 
 #[cfg(test)]
 mod lib_tests {
