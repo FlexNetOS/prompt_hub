@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use crate::auth::{Action, RbacAuthManager};
 use crate::error::Result;
 use crate::hub::PromptHub;
 use crate::models::{AgentIdentity, Pagination, Prompt, Role};
@@ -63,6 +64,13 @@ pub fn default_prompts() -> Vec<Prompt> {
 /// - [`crate::error::HubError::Unauthorized`] if *identity* lacks `Write`.
 /// - any storage/sanitize error surfaced by [`PromptHub::register`].
 pub async fn seed_database(hub: &PromptHub, identity: &AgentIdentity) -> Result<usize> {
+    // Authorize Write up front, unconditionally. Otherwise an unauthorized
+    // caller hitting an already-seeded store would skip every `register` (the
+    // only other auth point) and silently get `Ok(0)` — i.e. the Write gate
+    // would hold only when there was something to insert. Enforce it before
+    // the existence probe so seeding is a real authorization boundary.
+    RbacAuthManager::authorize_action(identity, Action::Write)?;
+
     // Names already present, so seeding stays idempotent. A large per_page
     // pulls the (small) base set in one page.
     let existing: std::collections::HashSet<String> = hub
@@ -254,10 +262,25 @@ mod tests {
     #[tokio::test]
     async fn seed_database_requires_write() {
         let hub = hub().await;
-        // Anonymous identity lacks Write → register inside seeding is rejected.
+        // Anonymous identity lacks Write → rejected up front.
         let err = seed_database(&hub, &AgentIdentity::default())
             .await
             .expect_err("seeding without Write is rejected");
+        assert!(matches!(err, crate::error::HubError::Unauthorized(_)));
+    }
+
+    #[tokio::test]
+    async fn seed_database_requires_write_even_when_already_seeded() {
+        // Regression for PHTASK-0044: on an ALREADY-seeded store the per-template
+        // `register` calls are all skipped, so the only check left is the up-front
+        // authorize. Without it an unauthorized caller silently got `Ok(0)`.
+        let hub = hub().await;
+        let identity = seeder_identity();
+        assert_eq!(seed_database(&hub, &identity).await.unwrap(), 6);
+
+        let err = seed_database(&hub, &AgentIdentity::default())
+            .await
+            .expect_err("seeding a seeded store without Write is still rejected");
         assert!(matches!(err, crate::error::HubError::Unauthorized(_)));
     }
 }
