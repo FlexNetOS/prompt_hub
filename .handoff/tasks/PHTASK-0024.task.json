@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0024",
+  "title": "Server routes: load_balancer (5 endpoints)",
+  "status": "done",
+  "priority": "P2",
+  "objective": "5 endpoints under /api/v1/lb/ (providers/select/latency/failure/stats) + DTOs + routing_strategy_to_string. Lesson: test axum State handlers directly, not via the handle_post Router clone harness.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "acceptance_criteria": [
+    "5 lb endpoints wired; 5 tests via direct-handler pattern; gates green"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:072e75a2cb31207bbf259befa1172b4f124af8331b761e2768c39db9be28e28b",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135",
+    "acceptance_hash": "blake3:3b608daa52248350fbe66542cfefa078484fd2488e8e40bacc0506be6b768427"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "39ed393",
+  "cycle": 80
+}

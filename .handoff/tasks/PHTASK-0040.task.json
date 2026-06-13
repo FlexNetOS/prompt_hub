@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0040",
+  "title": "Default identity lacks Write for non-operator callers",
+  "status": "blocked",
+  "priority": "P3",
+  "objective": "AgentIdentity::default() (models.rs:139) returns anonymous with empty capabilities. Server default_agent() grants Read+Write so the HTTP API is fine; this only affects programmatic PromptHub::new() callers. Documented workaround: AgentIdentity::local_operator(). Blocked: design decision needed on whether default should carry Write.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "a decision is recorded on default identity capabilities (and applied or explicitly deferred)"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:bd943e60f09159217edadb130c070189aeb090d58bbe6ff6e81df445fed72e21",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:065f69c77b141e88307ade32b1c2accb64496dd2e931a0795e081fa8a76352f7"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "block_reason": "Design decision pending; documented workaround exists (local_operator). Not actionable without owner direction on default capability policy."
+}

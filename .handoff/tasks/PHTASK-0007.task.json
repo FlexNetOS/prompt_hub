@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0007",
+  "title": "Recover feature: `gradual-rollout`",
+  "status": "done",
+  "priority": "P1",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Replaced stale `canary` with full gradual-rollout: RolloutStage/Segment, AutoRollbackPolicy, RolloutEngine (SHA-256 bucket hashing, auto-rollback, stage advance).",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`gradual-rollout` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:89e73d9b5eeb1a24d3caa4d515660b688c2aeb93bedc754efe12973379784cfe",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:cd1cd37edc50e26b9ddb751df94fa33776756c72be1b62d8b03c52eb151fa0d8"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "05ad5d2"
+}

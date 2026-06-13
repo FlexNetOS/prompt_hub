@@ -1,0 +1,31 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0036",
+  "title": "Move inline CLI commands to dedicated files",
+  "status": "backlog",
+  "priority": "P2",
+  "objective": "rollback/evolve/vibe/gather/preview/cost/deploy/feedback are dispatched inline in main.rs with no dedicated command files -> test/maintenance gap. Extract to commands/*.rs.",
+  "path_scope": [
+    "prompthub/**"
+  ],
+  "acceptance_criteria": [
+    "the listed inline CLI commands live in dedicated commands/*.rs files with tests"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:f460765cf3cbf27fb31838f39cd1a277d17f848c61336c47643c0bd4c64cf5a3",
+    "path_scope_hash": "blake3:6be561b2fe59dedf307317a0ace5ff90247a383d55afb92d8183438a3ba01286",
+    "acceptance_hash": "blake3:ad0d70baa1f755cf36ba804a6ca11cb36542ad6c2761183068114e7defbe9e40"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

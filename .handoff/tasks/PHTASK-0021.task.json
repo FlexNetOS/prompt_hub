@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0021",
+  "title": "Recover feature: `auto-purge`",
+  "status": "done",
+  "priority": "P2",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Periodic purge daemon (tokio Interval): DaysOld/Tags/Domain/Status policies first-match-wins; Delete/Archive/Retain; atomic archive-then-delete; AtomicUsize stats. 14 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`auto-purge` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:30685bd4d2faa19de1b755dd63393036f1e2b9aed849ad762f377524f2e0e389",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:e38e025ee7591df47b269ac11b5d8e97220c3881601f61871dc630bfc76ed6c5"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "88e88a9",
+  "cycle": 72
+}

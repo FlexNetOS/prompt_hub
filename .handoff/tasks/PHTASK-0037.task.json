@@ -1,0 +1,29 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0037",
+  "title": "Write real DDL for migration 0008_generation_params",
+  "status": "backlog",
+  "priority": "P2",
+  "objective": "0008_generation_params.sql is ~all comments (~1 line SQL). Add the generation_params table / ALTER TABLE if not present, or restructure as an application-layer check.",
+  "path_scope": [
+    "prompt-hub/migrations/**"
+  ],
+  "acceptance_criteria": [
+    "migration 0008 contains real, applied DDL or is consciously restructured"
+  ],
+  "test_commands": [
+    "cargo test -p prompt-hub migration"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:6d331368b3a1b32b1a9763dc1542bbd4e1da268270836c2c39f85eac6016685b",
+    "path_scope_hash": "blake3:90bf7a86aa0211449fa375d1da825c9cf3cb0ba36410f646ce9de20d388952b3",
+    "acceptance_hash": "blake3:1d68edcec9999ce8d2f094192657fb532d0bdf6e9b38ba0d05108ce9c9855284"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

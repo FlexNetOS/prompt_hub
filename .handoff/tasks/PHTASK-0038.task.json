@@ -1,0 +1,29 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0038",
+  "title": "Add tests to `hooks.rs` (orchestrator path)",
+  "status": "backlog",
+  "priority": "P1",
+  "objective": "hooks.rs (Hook trait, HookRegistry, JunieHook) is security-critical orchestrator infra with ZERO test coverage. Add: pre_execute triggers, post_execute result transformation, hook ordering.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "hooks.rs has tests for pre/post execute and ordering"
+  ],
+  "test_commands": [
+    "cargo test -p prompt-hub hooks"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:0462899a040bc12c601baf146039489bf7d83578528ed547414b5f6f0db995e8",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:1fb9a8c5e76aca6f37ddcf4e5d42c6d06dbc4153c08bfd6b5848bc9fbd321c67"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

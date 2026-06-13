@@ -1,0 +1,31 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0032",
+  "title": "Safe plugin discovery for `plugins.rs`",
+  "status": "backlog",
+  "priority": "P2",
+  "objective": "plugins.rs (306 lines): PluginRegistry has list/register but dynamic loading is disabled by #![forbid(unsafe_code)]. Implement safe inventory-based discovery or gate behind an unsafe-compatible feature.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "plugins.rs offers a safe discovery path or is explicitly feature-gated"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:cf3a834869d95ecf78239dd13a6cc89287b8843b1128fa9b4378f4b8f478eb6d",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:26ab4075af48d2018c43b52df70d6873b4629ad44281f0f4ab06a09944c938be"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

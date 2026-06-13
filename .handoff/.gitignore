@@ -1,0 +1,11 @@
+# .handoff is git-text-only for COMMITTED state (capsule, cards, packet, active, history).
+# These are ephemeral local runner control + scratch + logs — never committed
+# (the durable signal is tasks/*.task.json + packets/latest.md + commits).
+STOP
+DONE
+NEEDS-HUMAN
+HANDOFF
+work/
+*.log
+# ADR-0004 §3: never a per-repo ledger.db — events live in the FLEET ledger (meta/.handoff).
+ledger.db

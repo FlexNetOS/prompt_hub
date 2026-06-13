@@ -1,0 +1,30 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0028",
+  "title": "Fix default-features build of prompt-hub (argon2 OsRng)",
+  "status": "backlog",
+  "priority": "P0",
+  "objective": "`cargo build -p prompt-hub` with DEFAULT features fails: E0432 unresolved import argon2::password_hash::rand_core::OsRng in auth.rs. Stash-confirmed PRE-EXISTING; masked because CI only builds --all-features. Fix: gate the OsRng import behind the feature that provides getrandom, or add a default-features CI job + fix root cause.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`cargo build -p prompt-hub` (default features) succeeds",
+    "a default-features build job exists in CI"
+  ],
+  "test_commands": [
+    "cargo build -p prompt-hub"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:b11f3d4821df326fafb77fa8df3c19d0531b3c10fa7fd2da5be034b564c979c9",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:b8c270d546dab79b040819d771bd46263131369180685154338d51723cd3cfb0"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}
