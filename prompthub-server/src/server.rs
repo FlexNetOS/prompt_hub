@@ -39,6 +39,19 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/prompts", get(routes::list_prompts))
         .route("/api/v1/prompts/{id}", get(routes::get_prompt))
         .route("/api/v1/prompts/{id}/evolve", post(routes::evolve_prompt))
+        .route(
+            "/api/v1/prompts/{id}/tokens",
+            post(routes::count_prompt_tokens_route),
+        )
+        .route(
+            "/api/v1/prompts/{id}/cost",
+            post(routes::estimate_prompt_cost_route),
+        )
+        .route(
+            "/api/v1/prompts/{id}/render",
+            post(routes::render_prompt_route),
+        )
+        .route("/api/v1/input/process", post(routes::process_input_route))
         .route("/api/v1/prompts/search", get(routes::search_prompts))
         // Lock management
         .route("/api/v1/prompts/{id}/lock", post(routes::lock_prompt))

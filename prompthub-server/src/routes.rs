@@ -65,6 +65,35 @@ fn default_evolution_strategy() -> String {
     "mutate".to_string()
 }
 
+// ── Token / cost / input / render request DTOs ────────────────────────────
+
+/// Request body for counting a stored prompt's tokens under a model.
+#[derive(Debug, Deserialize)]
+pub struct TokenRequest {
+    /// Model identifier to count against (e.g. `"gpt-4"`).
+    pub model: String,
+}
+
+/// Request body for estimating a stored prompt's cost under a model.
+#[derive(Debug, Deserialize)]
+pub struct CostRequest {
+    /// Model identifier to price against (e.g. `"gpt-4"`).
+    pub model: String,
+    /// Anticipated completion length, in tokens.
+    pub expected_output_tokens: usize,
+}
+
+/// Request body for rendering a stored prompt's `user_template`.
+///
+/// `vars` is a JSON object of template variable name → value bindings. It
+/// defaults to an empty map when omitted, which still renders templates that
+/// declare no `required_vars`.
+#[derive(Debug, Deserialize)]
+pub struct RenderRequest {
+    #[serde(default)]
+    pub vars: std::collections::HashMap<String, Value>,
+}
+
 use crate::state::AppState;
 
 // ── Request / response DTOs ──────────────────────────────────────────────
@@ -1265,6 +1294,188 @@ pub async fn evolve_prompt(
     }
 }
 
+// ── Token / cost / input / render handler functions ──────────────────────
+
+/// Count the tokens of a stored prompt under the requested model.
+///
+/// Thin shell over [`PromptHub::count_prompt_tokens`]: parses the path UUID,
+/// delegates to the core hub method (RBAC Read → fetch → tokenize), and returns
+/// the resulting model + token count. The core `TokenCount` type does not derive
+/// `Serialize`, so its fields are mapped into the response JSON by hand (the same
+/// precedent used for the budget/satisfaction routes). `HubError` is mapped to
+/// the same HTTP statuses as the other id-based routes (`NotFound` → 404,
+/// `Unauthorized` → 403, other → 500).
+#[instrument(skip(state))]
+pub async fn count_prompt_tokens_route(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<TokenRequest>,
+) -> Response {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid UUID format: {}", id);
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
+        }
+    };
+
+    if payload.model.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "model cannot be empty").into_response();
+    }
+
+    match state
+        .hub
+        .count_prompt_tokens(uuid, &payload.model, &default_agent())
+        .await
+    {
+        Ok(count) => {
+            info!(prompt = %id, model = %count.model, tokens = count.tokens, "Counted prompt tokens via HTTP");
+            success(json!({
+                "model": count.model,
+                "tokens": count.tokens,
+            }))
+            .into_response()
+        }
+        Err(HubError::NotFound(_)) => {
+            error(StatusCode::NOT_FOUND, format!("Prompt '{}' not found", id)).into_response()
+        }
+        Err(HubError::Unauthorized(msg)) => error(StatusCode::FORBIDDEN, msg).into_response(),
+        Err(e) => {
+            warn!("Failed to count tokens for prompt {}: {}", id, e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Estimate the input + output cost of a stored prompt under the requested model.
+///
+/// Thin shell over [`PromptHub::estimate_prompt_cost`]. The core
+/// `CostEstimateDetail` type does not derive `Serialize`, so its fields are
+/// mapped into the response JSON by hand. Error mapping mirrors the other
+/// id-based routes (`NotFound` → 404, `Unauthorized` → 403, other → 500).
+#[instrument(skip(state))]
+pub async fn estimate_prompt_cost_route(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<CostRequest>,
+) -> Response {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid UUID format: {}", id);
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
+        }
+    };
+
+    if payload.model.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "model cannot be empty").into_response();
+    }
+
+    match state
+        .hub
+        .estimate_prompt_cost(
+            uuid,
+            &payload.model,
+            payload.expected_output_tokens,
+            &default_agent(),
+        )
+        .await
+    {
+        Ok(cost) => {
+            info!(prompt = %id, model = %cost.model, total_cost = cost.total_cost, "Estimated prompt cost via HTTP");
+            success(json!({
+                "model": cost.model,
+                "input_tokens": cost.input_tokens,
+                "output_tokens": cost.output_tokens,
+                "input_cost": cost.input_cost,
+                "output_cost": cost.output_cost,
+                "total_cost": cost.total_cost,
+            }))
+            .into_response()
+        }
+        Err(HubError::NotFound(_)) => {
+            error(StatusCode::NOT_FOUND, format!("Prompt '{}' not found", id)).into_response()
+        }
+        Err(HubError::Unauthorized(msg)) => error(StatusCode::FORBIDDEN, msg).into_response(),
+        Err(e) => {
+            warn!("Failed to estimate cost for prompt {}: {}", id, e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Classify a raw multimodal [`UserInput`] into an [`Intent`].
+///
+/// Thin shell over [`PromptHub::process_input`]: the request body deserializes
+/// directly into the core `UserInput` model (which derives `Deserialize`), the
+/// hub classifies it, and the resulting `Intent` — which derives `Serialize` —
+/// is returned as JSON. A `ValidationError` from the core maps to 422; any other
+/// error maps to 500.
+#[instrument(skip(state, payload))]
+pub async fn process_input_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<UserInput>,
+) -> Response {
+    match state.hub.process_input(payload).await {
+        Ok(intent) => {
+            info!(domain = ?intent.domain, task_type = ?intent.task_type, "Processed user input via HTTP");
+            success(json!(intent)).into_response()
+        }
+        Err(HubError::ValidationError(msg)) => {
+            error(StatusCode::UNPROCESSABLE_ENTITY, msg).into_response()
+        }
+        Err(e) => {
+            warn!("Failed to process input: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Render a stored prompt's `user_template` with the supplied variables.
+///
+/// Thin shell over [`PromptHub::render_prompt`]: parses the path UUID, delegates
+/// to the core method (RBAC Read → required-var check → template render), and
+/// returns the rendered string. A missing required variable or a template
+/// failure surfaces from the core as `ValidationError` and maps to 422; the
+/// id-based errors mirror the other routes (`NotFound` → 404,
+/// `Unauthorized` → 403, other → 500).
+#[instrument(skip(state, payload))]
+pub async fn render_prompt_route(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<RenderRequest>,
+) -> Response {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid UUID format: {}", id);
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
+        }
+    };
+
+    match state
+        .hub
+        .render_prompt(uuid, payload.vars, &default_agent())
+        .await
+    {
+        Ok(rendered) => {
+            info!(prompt = %id, "Rendered prompt template via HTTP");
+            success(json!({ "rendered": rendered })).into_response()
+        }
+        Err(HubError::NotFound(_)) => {
+            error(StatusCode::NOT_FOUND, format!("Prompt '{}' not found", id)).into_response()
+        }
+        Err(HubError::Unauthorized(msg)) => error(StatusCode::FORBIDDEN, msg).into_response(),
+        Err(HubError::ValidationError(msg)) => {
+            error(StatusCode::UNPROCESSABLE_ENTITY, msg).into_response()
+        }
+        Err(e) => {
+            warn!("Failed to render prompt {}: {}", id, e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
 // ── Satisfaction handler functions (above) ────────────────────────────────
 // ── Test module below ─────────────────────────────────────────────────────
 
@@ -1873,5 +2084,178 @@ mod tests {
             status == StatusCode::OK || status == StatusCode::INTERNAL_SERVER_ERROR,
             "crossover should reach the hub, got {status}"
         );
+    }
+
+    // ── Token / cost / input / render route tests ───────────────────────
+
+    /// Register a prompt with a `{{name}}` template var declared as required,
+    /// returning its UUID. Used by the render happy-path / missing-var tests.
+    async fn seed_render_prompt(state: &Arc<AppState>) -> Uuid {
+        let prompt = Prompt {
+            id: Uuid::new_v4(),
+            name: "greeter".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            status: Status::Active,
+            system_prompt: "You are a greeter.".to_string(),
+            user_template: "Hello, {{name}}!".to_string(),
+            required_vars: vec!["name".to_string()],
+            domain: Domain::default(),
+            tags: Vec::new(),
+            target_roles: Vec::new(),
+            metadata: PromptMeta::default(),
+            metrics: PromptMetrics::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            author: default_agent(),
+            deleted_at: None,
+            generation_params: None,
+            locale: None,
+            multimodal: None,
+        };
+        state
+            .hub
+            .register(prompt, &default_agent())
+            .await
+            .expect("register render prompt")
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens_happy_path() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        let response = count_prompt_tokens_route(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(TokenRequest {
+                model: "gpt-4".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens_not_found() {
+        let state = evolve_test_state().await;
+        let random = Uuid::new_v4();
+
+        let response = count_prompt_tokens_route(
+            axum::extract::State(state),
+            axum::extract::Path(random.to_string()),
+            axum::Json(TokenRequest {
+                model: "gpt-4".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_estimate_prompt_cost_happy_path() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        let response = estimate_prompt_cost_route(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(CostRequest {
+                model: "gpt-4".into(),
+                expected_output_tokens: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_estimate_prompt_cost_not_found() {
+        let state = evolve_test_state().await;
+        let random = Uuid::new_v4();
+
+        let response = estimate_prompt_cost_route(
+            axum::extract::State(state),
+            axum::extract::Path(random.to_string()),
+            axum::Json(CostRequest {
+                model: "gpt-4".into(),
+                expected_output_tokens: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_process_input_happy_path() {
+        let state = evolve_test_state().await;
+
+        let response = process_input_route(
+            axum::extract::State(state),
+            axum::Json(UserInput {
+                input_type: InputType::Text,
+                raw_data: Vec::new(),
+                extracted_text: "Build me a REST API in Rust".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_render_prompt_happy_path() {
+        let state = evolve_test_state().await;
+        let id = seed_render_prompt(&state).await;
+
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("name".to_string(), Value::String("World".to_string()));
+
+        let response = render_prompt_route(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(RenderRequest { vars }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_render_prompt_missing_required_var_rejected() {
+        let state = evolve_test_state().await;
+        let id = seed_render_prompt(&state).await;
+
+        // `name` is required but absent → core returns ValidationError → 422.
+        let response = render_prompt_route(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(RenderRequest {
+                vars: std::collections::HashMap::new(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn test_render_prompt_not_found() {
+        let state = evolve_test_state().await;
+        let random = Uuid::new_v4();
+
+        let response = render_prompt_route(
+            axum::extract::State(state),
+            axum::extract::Path(random.to_string()),
+            axum::Json(RenderRequest {
+                vars: std::collections::HashMap::new(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
