@@ -52,7 +52,8 @@ pub struct RelevanceEntry {
 /// A structural pattern extracted from a source file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodePattern {
-    /// Absolute path of the source file.
+    /// Path of the source file, relative to the project root, using
+    /// forward slashes (normalized cross-platform).
     pub file_path: String,
     /// Type of pattern detected.
     pub pattern_type: PatternType,
@@ -349,7 +350,8 @@ impl SmartContextGatherer {
                             .ok()
                             .map(|p| p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"))
                             .unwrap_or_else(|| {
-                                path.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+                                path.to_string_lossy()
+                                    .replace(std::path::MAIN_SEPARATOR, "/")
                             }),
                         relevance_score: score,
                         category,
