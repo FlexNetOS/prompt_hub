@@ -5,11 +5,22 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 1
-cycles_total: 83
+cycles_this_session: 2
+cycles_total: 84
 apply_mode: APPLY (default for /prompt-loop)
-status: Cycle 82 evolve_prompt route DONE
-last_item: evolve_prompt server route (POST /api/v1/prompts/{id}/evolve) — DONE
+status: Cycle 83 tokens.rs hub wiring DONE
+last_item: tokens.rs hub wiring (count_prompt_tokens + estimate_prompt_cost) — DONE
+
+### Cycle 83 — wire tokens.rs into hub (P2a, high)
+- `count_prompt_tokens(id, model, identity) -> TokenCount` + `estimate_prompt_cost(id, model, expected_output_tokens, identity) -> CostEstimateDetail`
+- RBAC Read via reuse of `get_by_id` (authorize verified at hub.rs:933); `None`→NotFound
+- Thin façade — logic stays in tokens.rs (was dead/zero-callers, now live)
+- 4 hub tests (happy/not_found/unauthorized × 2); all pass name-filtered
+- Gates green: check/clippy -D warnings/fmt --all-features; tiktoken path compiles
+- FINDING (new backlog 0c): `cargo build -p prompt-hub` DEFAULT features fails pre-existing
+  (E0432 argon2 OsRng / getrandom in auth.rs) — stash-confirmed not a regression; CI only
+  builds --all-features so it's masked. Logged as P0/0c high.
+- Git: stacked on feat/evolve-prompt-route (PR #80 in flight); own PR serialized after #80 merges
 
 ### Cycle 82 — evolve_prompt server route (P2b, high)
 - POST `/api/v1/prompts/{id}/evolve` — thin shell over `PromptHub::evolve_prompt(id, strategy, identity)`
