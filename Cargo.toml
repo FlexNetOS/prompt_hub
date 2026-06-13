@@ -25,7 +25,7 @@ axum = { version = "0.8.8" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.140" }
 serde_yaml = { version = "0.9.34" }
-toml = { version = "0.8.22" }
+toml = { version = "1.1.2" }
 # Local-only: storage uses `Builder::new_local`. Dropping libsql's default
 # `replication`/`remote`/`sync`/`tls` features removes its bundled hyper-rustls
 # → rustls 0.22 → rustls-webpki 0.102 chain (4 RUSTSEC advisories we don't use).
