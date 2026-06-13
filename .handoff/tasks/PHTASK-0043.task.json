@@ -2,7 +2,8 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0043",
   "title": "Add CI default-features test-compile + clippy job (regression gate for PHTASK-0041)",
-  "status": "backlog",
+  "status": "done",
+  "resolution": "Added a new additive `default-test` job (name: 'Default-Features Test Compile') to .github/workflows/ci.yml, placed beside the existing `default-build` job. Under DEFAULT features it runs `cargo test -p prompt-hub --no-run` (compiles the test suite without running) and `cargo clippy -p prompt-hub --all-targets -- -D warnings` (lints test code too). Mirrors sibling-job setup exactly: actions/checkout@v6, dtolnay/rust-toolchain@stable, Swatinem/rust-cache@v2. No existing job/gate was weakened or removed (NO DOWNGRADE — add only); the stable job name lets the owner add it to the required-checks set server-side (no in-repo branch-protection file exists). YAML validated well-formed via PyYAML (all 12 jobs parse). Local sanity-run from worktree on current main: `cargo test -p prompt-hub --no-run` -> Finished, EXIT=0 (16 test executables built); `cargo clippy -p prompt-hub --all-targets -- -D warnings` -> Finished, EXIT=0 (clean).",
   "priority": "P3",
   "objective": "PHTASK-0041 greened default-features test COMPILATION (all feature-specific tests are now cfg-gated to their features). But NO CI job runs the test suite under default features, so a future ungated feature-test could silently reintroduce the E0432/E0433/E0599 break (exactly how it went unnoticed originally). Lock in the win: add a CI job that runs `cargo test -p prompt-hub --no-run` (and ideally `cargo clippy -p prompt-hub --all-targets -- -D warnings`) with DEFAULT features, alongside the existing default-build job in ci.yml. Upgrade only \u2014 add a regression gate; do not weaken any existing gate.",
   "path_scope": [
