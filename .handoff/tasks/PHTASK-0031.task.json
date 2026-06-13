@@ -1,0 +1,31 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0031",
+  "title": "Complete or remove `multimodal_input.rs`",
+  "status": "backlog",
+  "priority": "P1",
+  "objective": "multimodal_input.rs (345 lines): process() has empty match arms for all InputType variants; zero references. Complete the file-upload handling (extends multimodal PR #53) or remove the pub mod.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "multimodal_input process() handles all InputType variants OR module removed"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:eaf438eea5bd2181212400d7ee116ec650751f9a2c2fa3098ab7abbc843e3eed",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:c7db7fac60d75748d71160b69f22f8194ec8c4c8184aa71bac927150a7799969"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

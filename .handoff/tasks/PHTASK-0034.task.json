@@ -1,0 +1,31 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0034",
+  "title": "Make Junie a first-class PromptHub field",
+  "status": "backlog",
+  "priority": "P3",
+  "objective": "JunieHook only reachable via hooks module; no direct hub field, no dedicated CLI wiring beyond commands/junie.rs. Add Junie as a first-class PromptHub field with accessors.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "PromptHub exposes a Junie accessor; CLI wiring consistent"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:8b9e7f279c3958171735b4fd43fecc6011ca2f69e6f57e1f8f3a1ea4381d24fe",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:c90e43dc21d1ac32eee4191d8224d5e5b7d9dfe54f73cb887ebc1af8729fc133"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

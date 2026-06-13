@@ -1,0 +1,31 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0029",
+  "title": "Decide `defaults.rs` (seed_database no-op)",
+  "status": "backlog",
+  "priority": "P2",
+  "objective": "defaults.rs (117 lines): seed_database() is Ok(()) no-op; template constants duplicated. Decision: implement real seeding or remove the pub mod.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "defaults.rs either seeds for real or is removed; no dead pub surface"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:cc20f7dd325d72b91c9fb396bdc1f38dbe4e92734dec1e1e3ead700c5d9f2d98",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:f8c0d09eed2515709884313a20cc6042c9290b413c5f08b38e9322f299be18b3"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

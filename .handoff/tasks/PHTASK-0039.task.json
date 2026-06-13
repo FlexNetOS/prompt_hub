@@ -1,0 +1,29 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0039",
+  "title": "Integration test for hub.get() RBAC+intent flow",
+  "status": "backlog",
+  "priority": "P1",
+  "objective": "hub.get() has RBAC + intent logic but no dedicated integration test of the full flow (auth check -> storage lookup -> audit trail).",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "an integration test verifies get() auth -> lookup -> audit end to end"
+  ],
+  "test_commands": [
+    "cargo test -p prompt-hub get"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:a1bc475f61a3bd93daf8f5492c9668e1b9cc01ed55af25ec0bcd31857270a2ba",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:4a8db43f0fbd2728d099fc009774789932f8f499afa2d87c8e4ecd54226847f2"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+}

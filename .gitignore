@@ -10,3 +10,4 @@ prompthub.db
 # Editor / OS
 *.rs.bk
 .DS_Store
+.worktrees/

@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0022",
+  "title": "Server route: vibe_code",
+  "status": "done",
+  "priority": "P1",
+  "objective": "POST /api/v1/vibe/code with VibeCodeRequest DTO + parse_skill_level; full JSON response. Added `vibe` feature pass-through in server Cargo.toml.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "acceptance_criteria": [
+    "POST /api/v1/vibe/code wired to hub; gates green"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:8fd55b6a0845152b92bd4c23a0ce70ae131c92a4a5cc59b8138b1863f5837c33",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135",
+    "acceptance_hash": "blake3:0b03b01fd720ed004dab9378bff3cd63e2c33e0c77cdd84a9084df8199016e84"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "3f6411a",
+  "cycle": 78
+}

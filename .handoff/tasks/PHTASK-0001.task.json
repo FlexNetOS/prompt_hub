@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0001",
+  "title": "Remove dead `quality = []` Cargo feature stub",
+  "status": "done",
+  "priority": "P0",
+  "objective": "P0: `quality = []` in Cargo.toml had no backing module -> compile risk. Resolved by removing the stale stub (quality_gate concept already wired via PR #50).",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`quality = []` removed or backed by a module; workspace builds --all-features"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:c8c67590d49780a354141c32eb51773c88238216e0c9e5a70b751f3a796dbcc2",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:66881601969019c49ad07dba7a185832dfff62114d160037d9f45cd1bd1e3e90"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "b482efd"
+}
