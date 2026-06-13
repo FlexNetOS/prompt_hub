@@ -63,6 +63,102 @@ pub fn load_static_plugins() -> Vec<Box<dyn Plugin>> {
         })
 }
 
+// ---------------------------------------------------------------------------
+// Compile-time plugin discovery (safe, inventory-based)
+// ---------------------------------------------------------------------------
+//
+// The `register_plugin` function above records constructors at *runtime* into a
+// `Mutex<Vec<…>>`, which requires the registering crate to run a setup call.
+// The inventory-based path below performs *compile-time* discovery: a plugin
+// crate submits a `PluginDescriptor` once with the [`register_plugin!`] macro,
+// and the linker collects every submitted descriptor. `PluginRegistry::discover`
+// then gathers them with no runtime registration step and no `unsafe` code.
+//
+// True dynamic `.so`/`dlopen` loading is intentionally out of scope: it requires
+// `unsafe` (via `libloading`), which is forbidden crate-wide by
+// `#![forbid(unsafe_code)]`. The safe, supported discovery mechanism is this
+// static, link-time `inventory` registry — gated behind the `plugins` feature,
+// which is what brings in the `inventory` dependency.
+
+/// A compile-time plugin descriptor collected by the [`inventory`] crate.
+///
+/// Plugin crates submit one descriptor per plugin via the [`register_plugin!`]
+/// macro; the linker aggregates them so that [`PluginRegistry::discover`] can
+/// enumerate every registered plugin with no runtime registration step and no
+/// `unsafe` code.
+#[cfg(feature = "plugins")]
+pub struct PluginDescriptor {
+    /// Human-readable, kebab-case plugin name (unique within a build).
+    pub name: &'static str,
+    /// Constructor that produces a fresh boxed plugin instance.
+    pub constructor: PluginConstructor,
+}
+
+#[cfg(feature = "plugins")]
+impl PluginDescriptor {
+    /// Create a new descriptor from a name and constructor function.
+    ///
+    /// `const` so it can be used inside `inventory::submit!`.
+    pub const fn new(name: &'static str, constructor: PluginConstructor) -> Self {
+        Self { name, constructor }
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl std::fmt::Debug for PluginDescriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginDescriptor")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "plugins")]
+inventory::collect!(PluginDescriptor);
+
+/// Register a plugin for compile-time discovery via the [`inventory`] registry.
+///
+/// Call this at crate scope in a plugin crate; the descriptor is collected at
+/// link time and picked up by [`PluginRegistry::discover`] with no runtime
+/// registration call:
+///
+/// ```ignore
+/// use prompt_hub::{register_plugin, plugins::Plugin};
+///
+/// #[derive(Debug)]
+/// struct MyPlugin;
+/// impl Plugin for MyPlugin { /* … */ }
+///
+/// register_plugin!("my-plugin", || Box::new(MyPlugin));
+/// ```
+///
+/// Only available when the `plugins` feature is enabled (which provides the
+/// `inventory` dependency).
+#[cfg(feature = "plugins")]
+#[macro_export]
+macro_rules! register_plugin {
+    ($name:expr, $constructor:expr) => {
+        $crate::inventory::submit! {
+            $crate::plugins::PluginDescriptor::new($name, $constructor)
+        }
+    };
+}
+
+/// Discover every compile-time-registered plugin via the [`inventory`] registry.
+///
+/// Returns one freshly-constructed boxed plugin per submitted
+/// [`PluginDescriptor`]. Safe and `unsafe`-free — descriptors are aggregated at
+/// link time, not loaded from disk. Available only with the `plugins` feature.
+#[cfg(feature = "plugins")]
+pub fn discover_plugins() -> Vec<Box<dyn Plugin>> {
+    let plugins: Vec<Box<dyn Plugin>> = inventory::iter::<PluginDescriptor>
+        .into_iter()
+        .map(|desc| (desc.constructor)())
+        .collect();
+    info!("Discovered {} plugin(s) via inventory", plugins.len());
+    plugins
+}
+
 /// Trait for PromptHub plugins
 ///
 /// Plugins are registered at startup and participate in health checks and
@@ -132,6 +228,31 @@ impl PluginRegistry {
             name, path
         );
         Ok(name)
+    }
+
+    /// Discover and register every compile-time-registered plugin.
+    ///
+    /// Enumerates the [`inventory`]-collected [`PluginDescriptor`]s (submitted by
+    /// plugin crates via the [`register_plugin!`] macro), constructs each plugin,
+    /// and registers it (calling its `initialize`). Returns the number of plugins
+    /// discovered. Safe and `unsafe`-free — no `dlopen`, no dynamic loading.
+    ///
+    /// Available only with the `plugins` feature, which provides the `inventory`
+    /// dependency that backs the link-time registry.
+    #[cfg(feature = "plugins")]
+    #[instrument(skip(self))]
+    pub fn discover(&mut self) -> Result<usize> {
+        let discovered = discover_plugins();
+        let mut count = 0usize;
+        for plugin in discovered {
+            let name = plugin.name();
+            match self.register(plugin) {
+                Ok(()) => count += 1,
+                Err(e) => warn!("Failed to register discovered plugin '{}': {}", name, e),
+            }
+        }
+        info!("Registered {} discovered plugin(s)", count);
+        Ok(count)
     }
 
     /// List all registered plugins with name, version, and health.
@@ -274,6 +395,73 @@ mod tests {
         let path = std::path::Path::new("/some/lib/my_plugin.so");
         let name = registry.register_from_path(path).unwrap();
         assert_eq!(name, "my_plugin");
+    }
+
+    // -----------------------------------------------------------------------
+    // Inventory-based compile-time discovery
+    // -----------------------------------------------------------------------
+
+    /// A sample plugin submitted to the inventory registry at compile time.
+    #[cfg(feature = "plugins")]
+    #[derive(Debug, Default)]
+    struct DiscoveredPlugin;
+
+    #[cfg(feature = "plugins")]
+    impl Plugin for DiscoveredPlugin {
+        fn name(&self) -> &'static str {
+            "discovered-plugin"
+        }
+        fn version(&self) -> &'static str {
+            "0.1.0"
+        }
+        fn initialize(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn shutdown(&mut self) -> Result<()> {
+            Ok(())
+        }
+        fn health(&self) -> HealthStatus {
+            HealthStatus::Healthy
+        }
+    }
+
+    // Submit the descriptor at link time via the public macro under test.
+    #[cfg(feature = "plugins")]
+    crate::register_plugin!("discovered-plugin", || Box::new(DiscoveredPlugin)
+        as Box<dyn Plugin>);
+
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn test_discover_plugins_finds_submitted_descriptor() {
+        let plugins = discover_plugins();
+        assert!(
+            plugins
+                .iter()
+                .any(|p| p.name() == "discovered-plugin" && p.version() == "0.1.0"),
+            "inventory discovery should surface the submitted descriptor"
+        );
+    }
+
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn test_registry_discover_registers_and_invokes() {
+        let mut registry = PluginRegistry::new();
+        let count = registry.discover().expect("discover should succeed");
+        assert!(
+            count >= 1,
+            "at least the sample plugin should be discovered"
+        );
+
+        // The discovered plugin is now listed (registered + initialized) and
+        // can be invoked through the registry's health check.
+        let listed = registry.list();
+        let entry = listed
+            .iter()
+            .find(|(name, _, _)| *name == "discovered-plugin")
+            .expect("discovered plugin should be listed");
+        assert_eq!(entry.1, "0.1.0");
+        assert!(matches!(entry.2, HealthStatus::Healthy));
+        assert!(registry.all_healthy());
     }
 
     #[test]
