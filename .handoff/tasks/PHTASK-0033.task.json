@@ -2,7 +2,7 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0033",
   "title": "Complete `templates.rs` \u2014 wire TemplateEngine into hub rendering",
-  "status": "backlog",
+  "status": "done",
   "priority": "P1",
   "objective": "INCOMPLETE FEATURE (not dead code): templates.rs (200 lines) defines the TemplateEngine trait AND its HandlebarsEngine + TeraEngine impls (lines 71/113) already exist \u2014 but they are not wired into the hub's prompt-rendering path (the 'no impls' backlog note was stale). COMPLETE it: route the hub's prompt/user_template rendering through the feature-selected TemplateEngine (handlebars default / tera), so variable substitution and lint go through the engine. Upgrade only \u2014 finish the wiring; do not remove the trait.",
   "path_scope": [
@@ -30,5 +30,6 @@
     "acceptance_hash": "blake3:4709c6fbfa084c2036a0f6c68257963a076fd69ed50ebea3a417cfbc41a4946e"
   },
   "source": "migrated from _workspace/backlog.md (2026-06-13)",
-  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "COMPLETED (upgrade-only, no removal). templates.rs already had TemplateEngine + HandlebarsEngine/TeraEngine impls but nothing called them. Added templates::default_engine() (feature-selected factory: handlebars default > tera > built-in PlainEngine fallback) + a dependency-free PlainEngine so rendering works in every feature combo. Wired into the hub: PromptHub::render_prompt(id, vars, identity) renders a stored prompt's user_template through the engine (RBAC Read, required_vars validation, ValidationError on missing/parse fail) + PromptHub::lint_template(). 3 tests (hub render+missing-var+lint, PlainEngine, default_engine). Gates green: all-features check/clippy(-D warnings)/fmt; default build OK; tests pass."
 }
