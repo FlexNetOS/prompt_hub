@@ -426,7 +426,7 @@ impl OfflineStore {
 // OfflineState — wrapper used by PromptHub
 // ---------------------------------------------------------------------------
 
-/// State wrapping the offline store and current sync status, held inside [`PromptHub`].
+/// State wrapping the offline store and current sync status, held inside [`PromptHub`](crate::hub::PromptHub).
 #[derive(Debug)]
 pub struct OfflineState {
     pub store: OfflineStore,

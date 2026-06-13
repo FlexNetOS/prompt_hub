@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Touch-driven CRUD interaction layer for PromptHub.
 //!
 //! Maps raw touch gestures (`TouchEvent`) to high-level [`TouchAction`] values
