@@ -9,10 +9,9 @@ A non-technical user makes any request; prompt_hub transforms, communicates, and
 Git > FLEET ledger (meta/.handoff/ledger.db) > tasks/*.task.json > this packet.
 
 ## 3. Progress
-Done: 27/40.  FLEET tamper-evident events verified: 17.
+Done: 28/40.  FLEET tamper-evident events verified: 19.
 
 ## 4. Remaining
-- [P0] **PHTASK-0028** — Fix default-features build of prompt-hub (argon2 OsRng)
 - [P2] **PHTASK-0029** — Decide `defaults.rs` (seed_database no-op)
 - [P3] **PHTASK-0030** — Wire or gate `shutdown.rs` (ShutdownCoordinator)
 - [P1] **PHTASK-0031** — Complete or remove `multimodal_input.rs`

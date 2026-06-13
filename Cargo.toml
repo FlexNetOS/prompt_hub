@@ -50,11 +50,15 @@ inventory = { version = "0.3.20" }
 regex = { version = "1.11.2" }
 fancy-regex = { version = "0.16.2" }
 argon2 = { version = "0.5.3" }
-# auth.rs uses `OsRng` (gated behind password-hash's `getrandom` feature, which
-# argon2 doesn't forward). Depend on password-hash directly with `getrandom` so
-# `OsRng` resolves in isolated default-feature builds (e.g. `cargo publish`
-# verify), not only via workspace feature unification.
-password-hash = { version = "0.6", features = ["getrandom"] }
+# auth.rs uses `argon2::password_hash::rand_core::OsRng`, gated behind the
+# password-hash `getrandom` feature, which argon2's own `rand` feature does NOT
+# forward (it only enables `password-hash/rand_core`). argon2 0.5.3 re-exports
+# `password-hash` v0.5.0, so we depend on that SAME version with `getrandom` here:
+# Cargo feature-unification then turns on `getrandom` for the v0.5.0 crate argon2
+# re-exports, so `OsRng` resolves in isolated default-feature builds too (not only
+# under --all-features). NOTE: the version MUST match argon2's (0.5.x) — a 0.6.x
+# dep is a different crate and never unifies (that was the latent default-build bug).
+password-hash = { version = "0.5", features = ["getrandom"] }
 rustls = { version = "0.23.26" }
 tokio-rustls = { version = "0.26.2" }
 ratatui = { version = "0.30" }

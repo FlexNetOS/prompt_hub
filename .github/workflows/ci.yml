@@ -24,6 +24,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-features
 
+  # Default-features build guard. Every other job uses --all-features, which
+  # masked a default-features-only break (argon2 OsRng needs password-hash's
+  # `getrandom`; a version-mismatched dep meant it only resolved under
+  # --all-features). This job builds each crate with DEFAULT features so an
+  # isolated `cargo build -p prompt-hub` / `cargo publish` can never silently
+  # regress again. PHTASK-0028.
+  default-build:
+    name: Default-Features Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p prompt-hub
+      - run: cargo build -p prompthub
+      - run: cargo build -p prompthub-server
+
   test:
     name: Test
     strategy:
