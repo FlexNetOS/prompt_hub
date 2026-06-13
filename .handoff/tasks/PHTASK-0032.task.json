@@ -1,15 +1,17 @@
 {
   "schema": "handoff.task.v1",
   "id": "PHTASK-0032",
-  "title": "Safe plugin discovery for `plugins.rs`",
+  "title": "Complete `plugins.rs` \u2014 safe plugin discovery + load",
   "status": "backlog",
   "priority": "P2",
-  "objective": "plugins.rs (306 lines): PluginRegistry has list/register but dynamic loading is disabled by #![forbid(unsafe_code)]. Implement safe inventory-based discovery or gate behind an unsafe-compatible feature.",
+  "objective": "INCOMPLETE FEATURE (not dead code): plugins.rs (306 lines) has a PluginRegistry with list/register, but discovery/loading is unfinished under #![forbid(unsafe_code)]. COMPLETE it: implement SAFE, compile-time plugin discovery (e.g. the `inventory` crate / linkme-style registration already hinted by the `plugins` feature) so registered plugins are discovered and invoked through the registry \u2014 no unsafe dynamic loading. Upgrade only \u2014 finish safe plugin support; do not gate the feature out.",
   "path_scope": [
     "prompt-hub/**"
   ],
   "acceptance_criteria": [
-    "plugins.rs offers a safe discovery path or is explicitly feature-gated"
+    "PluginRegistry discovers compile-time-registered plugins via a safe mechanism (no unsafe)",
+    "a registered plugin can be looked up and invoked through the registry",
+    "a test registers + discovers + invokes a sample plugin"
   ],
   "test_commands": [
     "cargo check --workspace --all-features",
@@ -23,9 +25,10 @@
   "correlation_id": "prompt-hub-construction",
   "role": "implementer",
   "intent_lock": {
-    "objective_hash": "blake3:cf3a834869d95ecf78239dd13a6cc89287b8843b1128fa9b4378f4b8f478eb6d",
+    "objective_hash": "blake3:3df29ca8b318f3e33fa34ab1bc7eac49a68daeb2573b330774ceb908df4f4787",
     "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
-    "acceptance_hash": "blake3:26ab4075af48d2018c43b52df70d6873b4629ad44281f0f4ab06a09944c938be"
+    "acceptance_hash": "blake3:8e4b992512a0eea26213d3648765dad1513db4a32b4c71c28415f32b62509764"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
 }

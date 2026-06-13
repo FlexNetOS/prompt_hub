@@ -1,15 +1,17 @@
 {
   "schema": "handoff.task.v1",
   "id": "PHTASK-0030",
-  "title": "Wire or gate `shutdown.rs` (ShutdownCoordinator)",
+  "title": "Complete `shutdown.rs` \u2014 graceful PromptHub shutdown",
   "status": "backlog",
   "priority": "P3",
-  "objective": "shutdown.rs (119 lines): ShutdownCoordinator never instantiated outside module; wait_for_signal() incomplete. Wire into PromptHub::shutdown() or mark internal with a proper cfg gate.",
+  "objective": "INCOMPLETE FEATURE (not dead code): shutdown.rs (119 lines) has a ShutdownCoordinator whose wait_for_signal() is unfinished and which is never driven. COMPLETE it: finish wait_for_signal() (SIGINT/SIGTERM handling) and wire the coordinator into a real PromptHub::shutdown() that drains in-flight work, flushes storage/metrics, and stops background daemons (auto-purge, chaos-automation schedulers) cleanly. Upgrade only \u2014 finish graceful shutdown; do not gate it out.",
   "path_scope": [
     "prompt-hub/**"
   ],
   "acceptance_criteria": [
-    "ShutdownCoordinator is wired into a real shutdown path or gated internal-only"
+    "PromptHub::shutdown() drives ShutdownCoordinator to a clean stop (drain + flush)",
+    "wait_for_signal() is fully implemented",
+    "a test exercises the shutdown flow"
   ],
   "test_commands": [
     "cargo check --workspace --all-features",
@@ -23,9 +25,10 @@
   "correlation_id": "prompt-hub-construction",
   "role": "implementer",
   "intent_lock": {
-    "objective_hash": "blake3:35bca4ff02df0199fbd99a0994695f66fe3f825308efd6889e4b531d90f28491",
+    "objective_hash": "blake3:a87bfd908d70622dbc47ceb1b1203e67d8bf9c614fc7e33776dd7307d71dfe0e",
     "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
-    "acceptance_hash": "blake3:2d7f5f66c082a7535810488542be15c95c3d565b25ecdc41ae9f2b824a707757"
+    "acceptance_hash": "blake3:7b60e3167017791d718adceae9695659f31f5ca1fa5d3ab02ae0dddd2403e5d8"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
 }
