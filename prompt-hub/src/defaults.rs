@@ -200,6 +200,15 @@ mod tests {
         }
     }
 
+    /// An explicitly capability-less identity for RBAC-denial assertions.
+    /// (`AgentIdentity::default()` now carries Read+Write — PHTASK-0040.)
+    fn unauthorized() -> AgentIdentity {
+        AgentIdentity {
+            capabilities: Vec::new(),
+            ..AgentIdentity::default()
+        }
+    }
+
     async fn hub() -> PromptHub {
         PromptHub::new(Path::new(":memory:"), HubConfig::default())
             .await
@@ -263,7 +272,7 @@ mod tests {
     async fn seed_database_requires_write() {
         let hub = hub().await;
         // Anonymous identity lacks Write → rejected up front.
-        let err = seed_database(&hub, &AgentIdentity::default())
+        let err = seed_database(&hub, &unauthorized())
             .await
             .expect_err("seeding without Write is rejected");
         assert!(matches!(err, crate::error::HubError::Unauthorized(_)));
@@ -278,7 +287,7 @@ mod tests {
         let identity = seeder_identity();
         assert_eq!(seed_database(&hub, &identity).await.unwrap(), 6);
 
-        let err = seed_database(&hub, &AgentIdentity::default())
+        let err = seed_database(&hub, &unauthorized())
             .await
             .expect_err("seeding a seeded store without Write is still rejected");
         assert!(matches!(err, crate::error::HubError::Unauthorized(_)));

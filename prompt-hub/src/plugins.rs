@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use tracing::{info, instrument, warn};
 
 /// Static plugin registry — plugins register themselves at compile time via
-/// the [`register_plugin`] function.  Each entry stores a human-readable name
+/// the `register_plugin!` macro.  Each entry stores a human-readable name
 /// and a constructor function that produces a boxed trait object.
 /// Constructor function that produces a boxed plugin trait object.
 type PluginConstructor = fn() -> Box<dyn Plugin>;
@@ -70,7 +70,7 @@ pub fn load_static_plugins() -> Vec<Box<dyn Plugin>> {
 // The `register_plugin` function above records constructors at *runtime* into a
 // `Mutex<Vec<…>>`, which requires the registering crate to run a setup call.
 // The inventory-based path below performs *compile-time* discovery: a plugin
-// crate submits a `PluginDescriptor` once with the [`register_plugin!`] macro,
+// crate submits a `PluginDescriptor` once with the `register_plugin!` macro,
 // and the linker collects every submitted descriptor. `PluginRegistry::discover`
 // then gathers them with no runtime registration step and no `unsafe` code.
 //
@@ -82,7 +82,7 @@ pub fn load_static_plugins() -> Vec<Box<dyn Plugin>> {
 
 /// A compile-time plugin descriptor collected by the [`inventory`] crate.
 ///
-/// Plugin crates submit one descriptor per plugin via the [`register_plugin!`]
+/// Plugin crates submit one descriptor per plugin via the `register_plugin!`
 /// macro; the linker aggregates them so that [`PluginRegistry::discover`] can
 /// enumerate every registered plugin with no runtime registration step and no
 /// `unsafe` code.
@@ -215,7 +215,7 @@ impl PluginRegistry {
     /// Full dynamic loading (dlopen) requires `unsafe` code which is forbidden
     /// by `#![forbid(unsafe_code)]`.  This method records the intent and
     /// returns the stem of the path so that callers can fall back to static
-    /// registration via [`register_plugin`] and [`load_static_plugins`].
+    /// registration via `register_plugin!` and [`load_static_plugins`].
     #[instrument(skip(self))]
     pub fn register_from_path(&mut self, path: &Path) -> Result<String> {
         let name = path
@@ -233,7 +233,7 @@ impl PluginRegistry {
     /// Discover and register every compile-time-registered plugin.
     ///
     /// Enumerates the [`inventory`]-collected [`PluginDescriptor`]s (submitted by
-    /// plugin crates via the [`register_plugin!`] macro), constructs each plugin,
+    /// plugin crates via the `register_plugin!` macro), constructs each plugin,
     /// and registers it (calling its `initialize`). Returns the number of plugins
     /// discovered. Safe and `unsafe`-free — no `dlopen`, no dynamic loading.
     ///

@@ -2,7 +2,7 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0040",
   "title": "Default identity lacks Write for non-operator callers",
-  "status": "blocked",
+  "status": "done",
   "priority": "P3",
   "objective": "AgentIdentity::default() (models.rs:139) returns anonymous with empty capabilities. Server default_agent() grants Read+Write so the HTTP API is fine; this only affects programmatic PromptHub::new() callers. Documented workaround: AgentIdentity::local_operator(). Blocked: design decision needed on whether default should carry Write.",
   "path_scope": [
@@ -28,6 +28,6 @@
     "acceptance_hash": "blake3:065f69c77b141e88307ade32b1c2accb64496dd2e931a0795e081fa8a76352f7"
   },
   "source": "migrated from _workspace/backlog.md (2026-06-13)",
-  "block_reason": "Design decision pending; documented workaround exists (local_operator). Not actionable without owner direction on default capability policy.",
-  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "Owner decision (2026-06-13 via /verify follow-up): the default identity should carry Read+Write (mirroring the server's default_agent), a deliberate RBAC posture change. Implemented: AgentIdentity::default() now sets capabilities = vec![Read, Write] (was empty) with an updated doc comment explaining the posture and pointing unprivileged/denial callers at an explicit empty-capabilities identity (or local_operator for Admin). Blast-radius swept so denial coverage survives: test_get_rbac.rs anonymous() and defaults.rs unauthorized() now build an explicit empty-caps identity instead of default(); the two test_agent_identity_default tests (tests/test_models.rs + src/models.rs lib test) updated to assert Read+Write present, Admin absent. Gates: 876 lib tests pass; test_models 33, test_get_rbac 6, test_security 9, test_hub 18; workspace build+clippy -D warnings (--all-features AND default); fmt; rustdoc -D warnings. Done via worktree loop/phtask-0040-default-identity."
 }
