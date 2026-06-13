@@ -115,7 +115,8 @@ zero loss. This harness *builds* prompt_hub — it is **not** prompt_hub's produ
 > **State migrated 2026-06-13 (owner directive):** the durable state moved from the deprecated
 > `_workspace/{backlog,loop_state,HANDOFF}.md` to `.handoff/` (40 cards: 27 done, 12 backlog, 1
 > blocked). The old `_workspace/` is archived under `.handoff/history/` and stubbed with deprecation
-> pointers. `.handoff/` is git-text-only — never a `ledger.db` (ADR-0004 §3); run `hf resume`.
+> pointers. Per-repo `.handoff/ledger.db` is **committed** and feeds the central meta/handoff ledger
+> (ADR-0004 §3 revised 2026-06-13: federated per-repo ledger; WAL/shm sidecars stay ignored); run `hf resume`.
 
 **Trigger:** for any prompt_hub feature-development / "work the backlog" / "upgrade prompt_hub" /
 loop / resume request, use the **`prompt-loop`** skill. It orchestrates the crew
