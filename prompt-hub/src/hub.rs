@@ -976,7 +976,7 @@ impl PromptHub {
     /// Fetches the prompt by UUID (gated by [`RbacAuthManager`] Read
     /// authorization via [`PromptHub::get_by_id`]) and counts the tokens of its
     /// `system_prompt` and `user_template` under the named `model` using
-    /// [`TokenCounter`]. With the `tiktoken` feature this uses `tiktoken-rs`;
+    /// [`TokenCounter`](crate::tokens::TokenCounter). With the `tiktoken` feature this uses `tiktoken-rs`;
     /// otherwise a character/word heuristic is applied.
     ///
     /// # Arguments
@@ -1015,7 +1015,7 @@ impl PromptHub {
     /// authorization via [`PromptHub::get_by_id`]), counts the input tokens of
     /// its `system_prompt` and `user_template`, and combines them with
     /// `expected_output_tokens` to produce a cost estimate via
-    /// [`TokenCounter::estimate_prompt_cost`]. Pricing is approximate and based
+    /// [`TokenCounter::estimate_prompt_cost`](crate::tokens::TokenCounter::estimate_prompt_cost). Pricing is approximate and based
     /// on common provider tiers.
     ///
     /// # Arguments

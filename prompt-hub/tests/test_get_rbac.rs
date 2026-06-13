@@ -25,9 +25,14 @@ fn reader_writer() -> AgentIdentity {
     }
 }
 
-/// The capability-less anonymous identity — must be denied every read.
+/// An explicitly capability-less identity — must be denied every read.
+/// (Built directly rather than via `AgentIdentity::default()`, which now carries
+/// Read+Write by owner decision; PHTASK-0040.)
 fn anonymous() -> AgentIdentity {
-    AgentIdentity::default()
+    AgentIdentity {
+        capabilities: Vec::new(),
+        ..AgentIdentity::default()
+    }
 }
 
 async fn hub() -> PromptHub {

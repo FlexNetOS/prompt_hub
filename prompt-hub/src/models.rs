@@ -137,11 +137,22 @@ pub struct AgentIdentity {
 }
 
 impl Default for AgentIdentity {
+    /// The default identity carries [`Capability::Read`] + [`Capability::Write`]
+    /// (mirroring the HTTP server's `default_agent()`), so a programmatic
+    /// `PromptHub::new()` caller can read and create prompts out of the box
+    /// without first constructing an explicit identity. This is a deliberate
+    /// RBAC posture (owner decision, 2026-06-13): convenience for embedders,
+    /// while delete/admin/transfer still require an explicit privileged identity
+    /// such as [`AgentIdentity::local_operator`] (which also grants `Admin`).
+    ///
+    /// For an intentionally **un**privileged identity (e.g. to exercise an RBAC
+    /// denial path), construct one with an empty `capabilities` vec rather than
+    /// relying on `default()`.
     fn default() -> Self {
         Self {
             id: Uuid::new_v4(),
             name: "anonymous".to_string(),
-            capabilities: Vec::new(),
+            capabilities: vec![Capability::Read, Capability::Write],
             token_hash: String::new(),
             specialization_score: 0.0,
         }
@@ -1242,7 +1253,10 @@ mod model_tests {
     fn test_agent_identity_default() {
         let a = AgentIdentity::default();
         assert_eq!(a.name, "anonymous");
-        assert!(a.capabilities.is_empty());
+        // PHTASK-0040 (owner decision): default now carries Read+Write, not Admin.
+        assert!(a.capabilities.contains(&Capability::Read));
+        assert!(a.capabilities.contains(&Capability::Write));
+        assert!(!a.capabilities.contains(&Capability::Admin));
     }
 
     #[test]
