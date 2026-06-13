@@ -1,3 +1,5 @@
+#![cfg(feature = "voice")]
+
 use prompt_hub::PromptHub;
 use prompt_hub::config::HubConfig;
 use prompt_hub::models::{VoiceOutputFormat, VoicePipelineConfig};
