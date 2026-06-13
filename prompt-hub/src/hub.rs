@@ -1299,6 +1299,66 @@ impl PromptHub {
         MultiModalInput.process(input).await
     }
 
+    // ── Template rendering ────────────────────────────────────────────────
+
+    /// Render a stored prompt's `user_template` with the supplied variables.
+    ///
+    /// Resolves the prompt via RBAC-gated lookup, verifies every entry in the
+    /// prompt's `required_vars` is supplied, then renders the template through the
+    /// feature-selected [`TemplateEngine`](crate::templates::TemplateEngine)
+    /// (Handlebars by default, Tera under its feature, or the built-in fallback).
+    ///
+    /// # Arguments
+    /// * `id` — The prompt to render.
+    /// * `vars` — Variable name → JSON value bindings for the template.
+    /// * `identity` — Caller identity; requires `Read` capability.
+    ///
+    /// # Errors
+    /// - [`HubError::NotFound`] if no prompt with *id* exists.
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Read`.
+    /// - [`HubError::ValidationError`] if a `required_vars` entry is missing or the
+    ///   template fails to render.
+    #[instrument(skip(self, vars))]
+    pub async fn render_prompt(
+        &self,
+        id: Uuid,
+        vars: std::collections::HashMap<String, serde_json::Value>,
+        identity: &AgentIdentity,
+    ) -> Result<String> {
+        let prompt = self
+            .get_by_id(id, identity)
+            .await?
+            .ok_or(HubError::NotFound(id.to_string()))?;
+
+        let missing: Vec<String> = prompt
+            .required_vars
+            .iter()
+            .filter(|v| !vars.contains_key(*v))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(HubError::ValidationError(format!(
+                "Missing required template variables: {}",
+                missing.join(", ")
+            )));
+        }
+
+        let mut ctx = crate::templates::TemplateContext::new();
+        ctx.vars = vars;
+        let engine = crate::templates::default_engine();
+        let rendered = engine.render(&prompt.user_template, &ctx)?;
+        info!(prompt_id = %id, "Rendered prompt template");
+        Ok(rendered)
+    }
+
+    /// Lint a raw template string through the feature-selected
+    /// [`TemplateEngine`](crate::templates::TemplateEngine), returning any
+    /// structural issues (e.g. unbalanced `{{ }}` braces). Does not require a
+    /// stored prompt or authorization — it inspects the supplied text only.
+    pub fn lint_template(&self, template: &str) -> Vec<crate::templates::LintIssue> {
+        crate::templates::default_engine().lint(template)
+    }
+
     // ── Context gathering ─────────────────────────────────────────────────
 
     /// Gather project context from the filesystem at *project_path*.
@@ -3306,6 +3366,42 @@ mod tests {
 
         let fetched = hub.get(Role::Developer, "greet", &agent).await;
         assert!(fetched.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_render_prompt_and_missing_var() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+        let prompt = test_prompt(); // user_template "Hello, {{name}}!", required_vars ["name"]
+        let id = prompt.id;
+        hub.register(prompt, &agent).await.unwrap();
+
+        // Happy path: the template is rendered through the wired TemplateEngine.
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("name".to_string(), serde_json::json!("World"));
+        let rendered = hub
+            .render_prompt(id, vars, &agent)
+            .await
+            .expect("rendering with all required vars should succeed");
+        assert_eq!(rendered, "Hello, World!");
+
+        // Missing a required var → ValidationError (not a silent partial render).
+        let err = hub
+            .render_prompt(id, std::collections::HashMap::new(), &agent)
+            .await
+            .expect_err("missing required var should error");
+        assert!(matches!(err, HubError::ValidationError(_)));
+
+        // Lint surfaces unbalanced braces through the engine.
+        let issues = hub.lint_template("Hello, {{name}!");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.severity == crate::templates::LintSeverity::Error)
+        );
     }
 
     #[tokio::test]
