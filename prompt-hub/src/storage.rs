@@ -718,6 +718,45 @@ impl Storage {
         Ok(prompts)
     }
 
+    /// List ALL prompts regardless of soft-delete status.
+    ///
+    /// This is the auto-purge scan path: it must see archived/deleted prompts
+    /// so policies can evaluate `status` and `tags` fields even on prompts that
+    /// have been soft-deleted. Uses `deleted_at IS NULL OR deleted_at IS NOT NULL`
+    /// as a no-op tautology to avoid filtering.
+    #[cfg(feature = "auto-purge")]
+    pub async fn list_all_prompt_status(&self, limit: usize) -> Result<Vec<Prompt>> {
+        let conn = self.acquire().await?;
+
+        let sql = format!(
+            "SELECT id, name, version, status, system_prompt, user_template,
+                    required_vars, domain, tags, target_roles, metadata, metrics,
+                    author_id, created_at, updated_at, deleted_at,
+                    generation_params, locale, multimodal_config
+             FROM prompts
+             WHERE 1=1
+             ORDER BY updated_at DESC
+             LIMIT {};",
+            limit
+        );
+
+        let mut stmt = conn
+            .query(&sql, libsql::params_from_iter(Vec::<libsql::Value>::new()))
+            .await
+            .map_err(|e| HubError::StorageError(format!("List all prompts query: {e}")))?;
+
+        let mut prompts = Vec::new();
+        while let Some(row) = stmt
+            .next()
+            .await
+            .map_err(|e| HubError::StorageError(format!("List all prompts row: {e}")))?
+        {
+            prompts.push(self.row_to_prompt(&row)?);
+        }
+
+        Ok(prompts)
+    }
+
     /// Count active prompts, optionally filtered by domain and status.
     pub async fn count_prompts(
         &self,

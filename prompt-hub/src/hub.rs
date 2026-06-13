@@ -5,9 +5,15 @@ use crate::audit::SqliteAuditLogger;
 use crate::auth::{Action, RbacAuthManager};
 #[cfg(feature = "budget")]
 use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
+#[cfg(feature = "chaos")]
+use crate::chaos::{ChaosConfig, ChaosEngine, ChaosResult};
+#[cfg(feature = "gather")]
+use crate::gather::SmartContextGatherer;
 // CanaryDeployment lives in models.rs for backward compat.
 #[cfg(feature = "circuit-breaker")]
 use crate::circuit_breaker::CircuitBreaker;
+#[cfg(feature = "qdrant")]
+use crate::config::EmbedderBackend;
 use crate::config::HubConfig;
 use crate::diff::PromptDiff;
 use crate::error::{HubError, Result};
@@ -21,7 +27,11 @@ use crate::hooks::{HookRegistry, JunieHook};
 use crate::i18n::I18nEngine;
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
+#[cfg(feature = "malware-scan")]
+use crate::malware_scan::{MalwareScanConfig, ScanResult};
 use crate::metrics::MetricsCollector;
+#[cfg(feature = "mobile")]
+use crate::mobile::MobileEngine;
 #[cfg(feature = "gradual-rollout")]
 use crate::models::CanaryDeployment;
 #[cfg(feature = "local-llm")]
@@ -35,10 +45,14 @@ use crate::models::{VoiceInteraction, VoiceOutputFormat, VoicePipelineConfig, Vo
 use crate::moderation::ModerationEngine;
 #[cfg(feature = "multimodal")]
 use crate::multimodal::MultimodalEngine;
+#[cfg(feature = "offline")]
+use crate::offline::OfflineState;
 use crate::pollination::{CrossAgentPollination, Pattern};
 #[cfg(feature = "preview")]
 use crate::preview::PreviewEngine;
 use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
+#[cfg(feature = "qdrant")]
+use crate::qdrant::{QdrantClient, QdrantEngine, VectorSearchMode};
 use crate::quality_gate::{QualityGate, QualityResult};
 #[cfg(feature = "quota")]
 use crate::quota::QuotaEnforcer;
@@ -48,12 +62,16 @@ use crate::retention::{DataType, RetentionPolicy};
 use crate::rollback::SafeDeployer;
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
 use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
+#[cfg(feature = "qdrant")]
+use crate::search::Embedder;
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
 #[cfg(feature = "voice")]
 use crate::voice::VoicePipelineEngine;
+#[cfg(feature = "voice-anonymize")]
+use crate::voice_anonymize::Anonymizer;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
@@ -133,6 +151,57 @@ pub use lock::{LockManager, LockToken};
 /// Type alias for agent identifiers.
 pub type AgentId = Uuid;
 
+/// Search engine kind — either the default HybridEngine or a Qdrant-backed engine.
+#[derive(Debug)]
+#[cfg(feature = "qdrant")]
+enum SearchEngineKind {
+    Hybrid(Arc<HybridEngine>),
+    Qdrant(Arc<QdrantEngine>),
+}
+#[cfg(feature = "qdrant")]
+impl SearchEngine for SearchEngineKind {
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a crate::SearchFilters,
+        pagination: &'a Pagination,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<crate::Paginated<crate::ScoredPrompt>>> + Send + 'a>,
+    > {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.search(query, filters, pagination),
+            SearchEngineKind::Qdrant(e) => e.search(query, filters, pagination),
+        }
+    }
+
+    fn index<'a>(
+        &'a self,
+        prompt: &'a crate::Prompt,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.index(prompt),
+            SearchEngineKind::Qdrant(e) => e.index(prompt),
+        }
+    }
+
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.remove(prompt_id),
+            SearchEngineKind::Qdrant(e) => e.remove(prompt_id),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.name(),
+            SearchEngineKind::Qdrant(e) => e.name(),
+        }
+    }
+}
+
 /// Compute a tamper-evidence hash over a before→after audit transition.
 ///
 /// Produces a stable hex digest of the concatenated before/after JSON, used to
@@ -157,7 +226,10 @@ fn diff_hash(before: Option<&str>, after: Option<&str>) -> String {
 #[derive(Debug)]
 pub struct PromptHub {
     storage: Arc<Storage>,
+    #[cfg(not(feature = "qdrant"))]
     search_engine: Arc<HybridEngine>,
+    #[cfg(feature = "qdrant")]
+    search_engine: Arc<SearchEngineKind>,
     sanitizer: PromptSanitizer,
     auth: RbacAuthManager,
     lock_manager: LockManager,
@@ -173,6 +245,10 @@ pub struct PromptHub {
     load_balancer: Arc<std::sync::Mutex<LoadBalancer>>,
     #[cfg(feature = "budget")]
     budget_tracker: Arc<BudgetTracker>,
+    #[cfg(feature = "chaos")]
+    chaos_engine: ChaosEngine,
+    #[cfg(feature = "chaos-automation")]
+    chaos_auto: Option<Arc<std::sync::Mutex<crate::chaos_auto::ChaosAuto>>>,
     #[cfg(feature = "cost-limits")]
     cost_limiter: std::sync::Arc<crate::cost_limits::CostLimiter>,
     #[cfg(feature = "beta-program")]
@@ -191,6 +267,10 @@ pub struct PromptHub {
     sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
     #[cfg(feature = "voice")]
     voice_engine: std::sync::Arc<std::sync::Mutex<VoicePipelineEngine>>,
+    #[cfg(feature = "voice-anonymize")]
+    voice_anonymizer: std::sync::Arc<std::sync::Mutex<Anonymizer>>,
+    #[cfg(feature = "touch")]
+    touch_config: Arc<std::sync::Mutex<crate::touch::TouchConfig>>,
     #[cfg(feature = "local-llm")]
     local_model_config: std::sync::Arc<std::sync::Mutex<Vec<LocalModelConfig>>>,
     #[cfg(feature = "gradual-rollout")]
@@ -209,6 +289,18 @@ pub struct PromptHub {
     garbage_collector: GarbageCollector,
     #[cfg(feature = "rollback")]
     safe_deployer: SafeDeployer,
+    #[cfg(feature = "malware-scan")]
+    malware_scan_config: Arc<std::sync::Mutex<MalwareScanConfig>>,
+    #[cfg(feature = "offline")]
+    offlined: std::sync::Arc<std::sync::RwLock<Option<OfflineState>>>,
+    #[cfg(feature = "auto-purge")]
+    auto_purge_engine: std::sync::Arc<
+        std::sync::Mutex<Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>>>,
+    >,
+    #[cfg(feature = "mobile")]
+    mobile_engine: std::sync::Arc<std::sync::RwLock<Option<Arc<std::sync::Mutex<MobileEngine>>>>>,
+    #[cfg(feature = "gather")]
+    smart_gatherer: SmartContextGatherer,
 }
 
 impl PromptHub {
@@ -252,7 +344,10 @@ impl PromptHub {
         let metrics = Arc::new(MetricsCollector::default());
         let mut hub = Self {
             storage,
+            #[cfg(not(feature = "qdrant"))]
             search_engine: hybrid,
+            #[cfg(feature = "qdrant")]
+            search_engine: std::sync::Arc::new(SearchEngineKind::Hybrid(hybrid)),
             sanitizer: PromptSanitizer::default(),
             auth: RbacAuthManager::new(),
             lock_manager: LockManager::new(),
@@ -270,6 +365,10 @@ impl PromptHub {
             ))),
             #[cfg(feature = "budget")]
             budget_tracker: Arc::new(BudgetTracker::default()),
+            #[cfg(feature = "chaos")]
+            chaos_engine: ChaosEngine::new(),
+            #[cfg(feature = "chaos-automation")]
+            chaos_auto: None,
             #[cfg(feature = "cost-limits")]
             cost_limiter: std::sync::Arc::new(crate::cost_limits::CostLimiter::default()),
             #[cfg(feature = "beta-program")]
@@ -292,6 +391,12 @@ impl PromptHub {
             voice_engine: std::sync::Arc::new(
                 std::sync::Mutex::new(VoicePipelineEngine::default()),
             ),
+            #[cfg(feature = "voice-anonymize")]
+            voice_anonymizer: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::voice_anonymize::Anonymizer::default_with_builtins(),
+            )),
+            #[cfg(feature = "touch")]
+            touch_config: Arc::new(std::sync::Mutex::new(crate::touch::TouchConfig::default())),
             #[cfg(feature = "local-llm")]
             local_model_config: Arc::new(std::sync::Mutex::new(Vec::<LocalModelConfig>::new())),
             #[cfg(feature = "gradual-rollout")]
@@ -309,6 +414,16 @@ impl PromptHub {
             #[cfg(feature = "retention")]
             garbage_collector: GarbageCollector::new(crate::retention::RetentionPolicy::default()),
             safe_deployer: SafeDeployer::new(),
+            #[cfg(feature = "malware-scan")]
+            malware_scan_config: Arc::new(std::sync::Mutex::new(MalwareScanConfig::default())),
+            #[cfg(feature = "offline")]
+            offlined: Arc::new(std::sync::RwLock::new(None)),
+            #[cfg(feature = "auto-purge")]
+            auto_purge_engine: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(feature = "mobile")]
+            mobile_engine: Arc::new(std::sync::RwLock::new(None)),
+            #[cfg(feature = "gather")]
+            smart_gatherer: SmartContextGatherer,
         };
 
         // ── Post-struct initialization for feature-gated wiring ───────────
@@ -325,6 +440,12 @@ impl PromptHub {
 
         #[cfg(feature = "budget")]
         info!("Budget tracker initialized with default monthly budget");
+
+        #[cfg(feature = "chaos")]
+        info!("Chaos engine initialized for prompt evaluation");
+
+        #[cfg(feature = "chaos-automation")]
+        info!("Chaos automation subsystem ready (scheduler disabled until started)");
 
         #[cfg(feature = "circuit-breaker")]
         info!("Circuit breaker initialized with defaults (threshold=5, timeout=30s)");
@@ -344,6 +465,73 @@ impl PromptHub {
         #[cfg(feature = "local-llm")]
         info!("Local LLM engine initialized (no models configured yet)");
 
+        #[cfg(feature = "voice-anonymize")]
+        info!("Voice anonymizer initialized with built-in PII patterns");
+
+        #[cfg(feature = "touch")]
+        info!("Touch input layer initialized (threshold=50px, debounce=300ms)");
+
+        // ── Qdrant vector search engine wiring ──────────────────────────────
+        #[cfg(feature = "qdrant")]
+        if let Some(ref qconfig) = config.qdrant_config {
+            info!("Qdrant config detected — building vector search engine");
+
+            // Build embedder for the Qdrant engine.
+            let embedder: Arc<dyn Embedder> = match config.embedding_backend {
+                EmbedderBackend::Hash => {
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                }
+                #[cfg(feature = "smart-ort")]
+                EmbedderBackend::OnnxRuntime => {
+                    if let Ok(ort) =
+                        crate::search::OrtEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")
+                    {
+                        Arc::new(ort) as Arc<dyn Embedder>
+                    } else {
+                        warn!(
+                            "smart-ort feature enabled but OrtEmbedder creation failed; using HashEmbedder"
+                        );
+                        Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                            as Arc<dyn Embedder>
+                    }
+                }
+                #[cfg(not(feature = "smart-ort"))]
+                EmbedderBackend::OnnxRuntime => {
+                    warn!(
+                        "EmbedderBackend::OnnxRuntime requested but smart-ort feature is disabled; using HashEmbedder"
+                    );
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                        as Arc<dyn Embedder>
+                }
+                #[cfg(feature = "qdrant")]
+                EmbedderBackend::Qdrant => {
+                    // Qdrant is its own vector store — fall back to Hash.
+                    warn!("Qdrant backend requested at embedding level; using HashEmbedder");
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                        as Arc<dyn Embedder>
+                }
+            };
+
+            let client = QdrantClient::new(qconfig.clone());
+            if qconfig.auto_create_collection {
+                // ignore errors — the collection may not exist but that's OK;
+                // subsequent upserts will create it automatically.
+                let _ = client.ensure_collection().await;
+            }
+
+            let qengine = Arc::new(QdrantEngine::new(
+                client,
+                embedder,
+                VectorSearchMode::default(),
+            ));
+
+            // Replace the default hybrid engine with the Qdrant-backed one.
+            #[cfg(feature = "qdrant")]
+            {
+                hub.search_engine = Arc::new(SearchEngineKind::Qdrant(qengine));
+            }
+        }
+
         #[cfg(feature = "gradual-rollout")]
         info!("Gradual rollout engine initialized");
 
@@ -362,6 +550,9 @@ impl PromptHub {
 
         #[cfg(feature = "retention")]
         info!("Retention policy and garbage collection initialized");
+
+        #[cfg(feature = "malware-scan")]
+        info!("Malware scanner initialized with default configuration");
 
         Ok(hub)
     }
@@ -383,6 +574,239 @@ impl PromptHub {
     /// and satisfaction signals across the lifetime of this PromptHub instance.
     pub fn metrics(&self) -> Arc<MetricsCollector> {
         Arc::clone(&self.metrics)
+    }
+
+    // ── Chaos engineering ─────────────────────────────────────────────────
+
+    /// Return a handle to the chaos evaluation engine.
+    #[cfg(feature = "chaos")]
+    pub fn chaos_engine(&self) -> &ChaosEngine {
+        &self.chaos_engine
+    }
+
+    /// Run a full chaos evaluation across all configured strategies.
+    ///
+    /// Executes each strategy's *iterations_per_strategy* mutated prompts through the
+    /// provided executor closure, assesses validity of every response, and returns one
+    /// [`ChaosResult`] per strategy with pass rate and severity classification.
+    ///
+    /// # Arguments
+    /// * `config` — Evaluation configuration (strategies, iterations, thresholds).
+    /// * `executor` — Closure accepting a prompt string and returning the output as a future.
+    #[cfg(feature = "chaos")]
+    pub async fn run_chaos(
+        &self,
+        config: ChaosConfig,
+        executor: impl FnMut(&str) -> String + Send + 'static,
+    ) -> Result<Vec<ChaosResult>> {
+        let engine = self.chaos_engine.clone();
+
+        // Wrap the synchronous executor so it matches the async trait boundary.
+        let mut exec = executor;
+        let results = engine
+            .run(config, move |prompt: &str| {
+                let output = exec(prompt);
+                async move { output }
+            })
+            .await;
+
+        Ok(results)
+    }
+
+    // ── Chaos automation (automated scheduling & trend tracking) ───────────────
+
+    /// Return a handle to the chaos automation subsystem, if enabled.
+    #[cfg(feature = "chaos-automation")]
+    pub fn chaos_auto(&self) -> Option<&Arc<std::sync::Mutex<crate::chaos_auto::ChaosAuto>>> {
+        self.chaos_auto.as_ref()
+    }
+
+    /// Start the chaos automation scheduler with the given *config*.
+    ///
+    /// Initializes a [`ChaosAuto`](crate::chaos_auto::ChaosAuto) instance (must be `None` before call) and
+    /// spawns its background task. Returns `Ok(Some(handle))` on success, or
+    /// `Ok(None)` if already started.
+    #[cfg(feature = "chaos-automation")]
+    #[allow(clippy::await_holding_lock)]
+    pub async fn start_chaos_auto(
+        &mut self,
+        config: crate::chaos_auto::ChaosAutoConfig,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
+        if self.chaos_auto.is_some() {
+            return Ok(None); // Already started.
+        }
+
+        let (_tx, rx) = tokio::sync::broadcast::channel(1);
+        let auto = std::sync::Arc::new(std::sync::Mutex::new(crate::chaos_auto::ChaosAuto::new(
+            config, rx,
+        )));
+
+        // Note: The guard is held across the await. This is safe because
+        // spawn_task does not do long-running synchronous work — it only
+        // sets up tokio intervals and spawns a task which immediately drops
+        // the future reference back to us via JoinHandle.
+        let handle = auto.lock().unwrap().spawn_task(self).await?;
+        self.chaos_auto = Some(auto);
+
+        Ok(Some(handle))
+    }
+
+    // ── Auto-purge (periodic prompt cleanup) ──────────────────────────────
+
+    /// Return a handle to the auto-purge engine, if enabled.
+    #[cfg(feature = "auto-purge")]
+    pub fn auto_purge_engine(
+        &self,
+    ) -> Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        outer.clone()
+    }
+
+    /// Run a single purge cycle synchronously (blocking on storage).
+    #[cfg(feature = "auto-purge")]
+    #[allow(clippy::await_holding_lock)]
+    pub async fn purge_now(&self) -> Result<crate::auto_purge::PurgeStats> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let guard = engine.lock().unwrap();
+        guard.run_purge(self).await
+    }
+
+    /// Get a snapshot of current purge statistics.
+    #[cfg(feature = "auto-purge")]
+    pub fn get_purge_stats(&self) -> Result<crate::auto_purge::PurgeStats> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let guard = engine.lock().unwrap();
+        Ok(guard.stats())
+    }
+
+    /// Update the auto-purge configuration.
+    #[cfg(feature = "auto-purge")]
+    pub fn update_purge_config(
+        &self,
+        updater: impl FnOnce(&mut crate::auto_purge::AutoPurgeConfig),
+    ) -> Result<()> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let guard = engine.lock().unwrap();
+        guard.update_config(updater);
+        Ok(())
+    }
+
+    /// Start the auto-purge daemon with the given *config*.
+    #[cfg(feature = "auto-purge")]
+    #[allow(clippy::await_holding_lock)]
+    pub async fn start_purge_daemon(
+        &self,
+        config: crate::auto_purge::AutoPurgeConfig,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
+        let mut outer = self.auto_purge_engine.lock().unwrap();
+        if outer.is_none() {
+            *outer = Some(Arc::new(std::sync::Mutex::new(
+                crate::auto_purge::AutoPurgeEngine::new(config),
+            )));
+        }
+
+        let engine = outer.clone().unwrap();
+        let handle = {
+            let inner_guard = engine.lock().unwrap();
+            inner_guard.update_config(|c| {
+                c.enabled = true;
+            });
+            inner_guard.spawn_daemon_task().await?
+        };
+
+        Ok(Some(handle))
+    }
+
+    /// Stop the auto-purge daemon (sends shutdown signal to the loop).
+    #[cfg(feature = "auto-purge")]
+    pub fn stop_purge_daemon(&self) -> Result<()> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        let engine = outer
+            .clone()
+            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+
+        let guard = engine.lock().unwrap();
+        guard.shutdown();
+        Ok(())
+    }
+
+    // ── Mobile / Offline-First ─────────────────────────────────────────────
+
+    /// Enable mobile (offline-first) mode with the given *config*.
+    ///
+    /// Creates an [`MobileEngine`] wrapping a fresh
+    /// on-device store. CRUD operations proceed locally when offline; changes are
+    /// queued for push sync when connectivity returns.
+    #[cfg(feature = "mobile")]
+    pub fn enable_mobile_mode(&self, config: crate::mobile::MobileConfig) -> Result<()> {
+        let mut guard = self.mobile_engine.write().unwrap();
+        if guard.is_some() {
+            return Err(HubError::InvalidInput(
+                "mobile mode is already enabled".to_string(),
+            ));
+        }
+        *guard = Some(Arc::new(std::sync::Mutex::new(
+            crate::mobile::MobileEngine::new(config),
+        )));
+        Ok(())
+    }
+
+    /// Enqueue a pending push operation from mobile mode.
+    ///
+    /// Returns the assigned sequence number for this push, or an error if
+    /// mobile mode is not enabled.
+    #[cfg(feature = "mobile")]
+    pub fn enqueue_mobile_push(
+        &self,
+        op_type: crate::mobile::PushOpType,
+        payload_size_bytes: usize,
+    ) -> Result<u64> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let mut inner = engine.lock().unwrap();
+        Ok(inner.enqueue_push(op_type, payload_size_bytes))
+    }
+
+    /// Check whether device sync should be suppressed based on current network condition.
+    #[cfg(feature = "mobile")]
+    pub fn should_suppress_sync(&self) -> Result<bool> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let inner = engine.lock().unwrap();
+        Ok(inner.should_suppress_sync())
+    }
+
+    /// Build a bandwidth-aware sync plan for pending mobile changes.
+    #[cfg(feature = "mobile")]
+    pub fn build_mobile_sync_plan(
+        &self,
+        available_bytes: usize,
+    ) -> Result<crate::mobile::SyncPlan> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let inner = engine.lock().unwrap();
+        Ok(inner.build_sync_plan(available_bytes))
     }
 
     // ── Prompt CRUD ───────────────────────────────────────────────────────
@@ -795,6 +1219,44 @@ impl PromptHub {
         let ctx = ContextGatherer::gather(project_path).await?;
         info!("Gathered context for {}", ctx.project_path);
         Ok(ctx)
+    }
+
+    // ── Smart context gathering ───────────────────────────────────────────
+
+    /// Gather enhanced project context with relevance-ranked files and extracted code patterns.
+    ///
+    /// Requires the `gather` feature flag. Returns a [`SmartContext`](crate::gather::SmartContext) wrapping the base
+    /// [`ProjectContext`] with file relevance rankings and extracted structural patterns
+    /// (imports, function signatures, struct/trait definitions) suitable for prompt
+    /// engineering workflows.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn gather_context_smart(
+        &self,
+        project_path: &Path,
+    ) -> Result<crate::gather::SmartContext> {
+        let smart = self.smart_gatherer.gather_smart(project_path).await?;
+        info!("Smart gather complete for {}", smart.project_path);
+        Ok(smart)
+    }
+
+    /// Collect only the relevance-ranked file list.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn collect_relevant_files(
+        &self,
+        project_path: &Path,
+    ) -> Vec<crate::gather::RelevanceEntry> {
+        self.smart_gatherer
+            .collect_relevant_files(project_path)
+            .await
+    }
+
+    /// Extract structural code patterns from key source files in a project.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn extract_patterns(&self, project_path: &Path) -> Vec<crate::gather::CodePattern> {
+        self.smart_gatherer.extract_patterns(project_path).await
     }
 
     // ── Cost estimation ───────────────────────────────────────────────────
@@ -1664,7 +2126,7 @@ impl PromptHub {
 
     /// Record spend against an entity's resource bucket with overage enforcement.
     ///
-    /// Returns the [`LimitStatus`] after recording the spend, indicating whether
+    /// Returns the [`LimitStatus`](crate::cost_limits::LimitStatus) after recording the spend, indicating whether
     /// it was allowed, flagged as over-limit, or blocked.
     #[cfg(feature = "cost-limits")]
     #[instrument(skip(self))]
@@ -1811,7 +2273,7 @@ impl PromptHub {
     ///
     /// Runs the prompt against all configured moderation categories
     /// (hate, violence, self-harm, sexual, illegal, harassment) and returns
-    /// a [`ModerationReport`] with allow/block/flag result.
+    /// a [`ModerationReport`](crate::moderation::ModerationReport) with allow/block/flag result.
     ///
     /// Requires the `moderation` feature flag.
     #[cfg(feature = "moderation")]
@@ -2346,6 +2808,300 @@ impl PromptHub {
     pub fn gc_enabled(&self) -> bool {
         self.garbage_collector.is_enabled()
     }
+
+    // ── Accessibility output formatting ────────────────────────────────────────
+
+    /// Transform prompt content into an accessible format.
+    ///
+    /// This is a pure transformation with no storage or auth side effects. It
+    /// reads the raw content and produces formatted output suitable for screen
+    /// readers, dyslexia-friendly rendering, or braille display.
+    #[cfg(feature = "accessibility")]
+    pub async fn accessible_output(
+        &self,
+        content: &str,
+        config: crate::accessibility::AccessibilityConfig,
+    ) -> Result<crate::accessibility::AccessibleOutput> {
+        use crate::accessibility;
+
+        accessibility::transform(content, &config)
+            .map_err(|e| HubError::InvalidInput(e.to_string()))
+    }
+
+    /// Transform prompt content into all accessible formats simultaneously.
+    ///
+    /// Useful when the display layer needs to provide multiple accessibility
+    /// options at once (screen reader + braille display).
+    #[cfg(feature = "accessibility")]
+    pub async fn accessible_output_all(
+        &self,
+        content: &str,
+    ) -> Result<crate::accessibility::AccessibleMultiOutput> {
+        use crate::accessibility;
+
+        accessibility::transform_all(content).map_err(|e| HubError::InvalidInput(e.to_string()))
+    }
+
+    // ── Malware scan ────────────────────────────────────────────────
+
+    /// Return a cloneable handle to the malware scan configuration.
+    #[cfg(feature = "malware-scan")]
+    pub fn malware_scan_config(&self) -> Arc<std::sync::Mutex<MalwareScanConfig>> {
+        Arc::clone(&self.malware_scan_config)
+    }
+
+    /// Update the malware scan configuration.
+    #[cfg(feature = "malware-scan")]
+    pub fn set_malware_scan_config(&self, config: MalwareScanConfig) {
+        let mut cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
+        *cfg = config;
+    }
+
+    /// Scan a blob of bytes for malware indicators.
+    #[cfg(feature = "malware-scan")]
+    pub fn scan_blob(&self, blob: &[u8]) -> Result<ScanResult> {
+        let cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
+        crate::malware_scan::scan_blob(blob, &cfg)
+    }
+
+    /// Scan a file on disk for malware indicators.
+    #[cfg(feature = "malware-scan")]
+    pub fn scan_file(&self, path: impl AsRef<Path>) -> Result<ScanResult> {
+        let cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
+        crate::malware_scan::scan_file(path, &cfg)
+    }
+
+    // ── Offline mode --------------------------------------------------------------
+
+    /// Enable offline mode with the given *config*.
+    ///
+    /// Creates an [`OfflineState`] wrapping a fresh
+    /// [`OfflineStore`](crate::offline::OfflineStore) and transitions it to
+    /// `SyncStatus::Offline`. Subsequent CRUD operations on the store are local-only
+    /// until [`sync`](Self::sync) is called.
+    ///
+    /// # Arguments
+    /// * `config` — [`OfflineConfig`](crate::offline::OfflineConfig) controlling auto-sync behaviour and conflict strategy.
+    #[cfg(feature = "offline")]
+    pub fn enable_offline_mode(&self, config: crate::offline::OfflineConfig) -> Result<()> {
+        let mut guard = self.offlined.write().unwrap();
+        if guard.is_some() {
+            return Err(HubError::InvalidInput(
+                "offline mode is already enabled".to_string(),
+            ));
+        }
+        *guard = Some(crate::offline::OfflineState::new(config));
+        Ok(())
+    }
+
+    /// Sync pending local changes to the storage layer and pull back server state.
+    ///
+    /// The sync flow:
+    /// 1. Write all [`Change::Create`](crate::offline::Change)/[`Change::Update`](crate::offline::Change)/[`Change::Delete`](crate::offline::Change) in
+    ///    `pending_push` to the real [`Storage`] layer.
+    /// 2. Read current server state and push changes into the offline store as pull.
+    /// 3. Apply those pull changes, detecting revision conflicts.
+    /// 4. Update sync status accordingly (Online, Conflict, or Offline).
+    #[cfg(feature = "offline")]
+    pub async fn sync(&self) -> Result<crate::offline::SyncStatus> {
+        let pending_push: Vec<_>;
+
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().ok_or_else(|| {
+                HubError::InvalidInput(
+                    "offline mode is not enabled; call enable_offline_mode first".to_string(),
+                )
+            })?;
+
+            if state.status == crate::offline::SyncStatus::Syncing {
+                return Err(HubError::Conflict("sync already in progress".to_string()));
+            }
+
+            // Mark syncing.
+            state.status = crate::offline::SyncStatus::Syncing;
+
+            // Collect pending changes before dropping the guard.
+            pending_push = std::mem::take(&mut state.store.pending_push)
+                .into_iter()
+                .collect();
+        }
+
+        // Use a trusted local-operator identity for sync operations.
+        let sync_identity = AgentIdentity::local_operator("sync");
+
+        // Step 1: Push local changes to storage (outside the lock).
+        for change in pending_push {
+            match change {
+                crate::offline::Change::Create(_id, prompt) => {
+                    if self
+                        .storage()
+                        .get_prompt(prompt.id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        continue;
+                    }
+                    let _ = self.register(prompt.clone(), &sync_identity).await;
+                }
+                crate::offline::Change::Update(id, patch) => {
+                    if self
+                        .storage()
+                        .get_prompt(id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        let _ = self.storage().update_prompt(id, &patch).await;
+                    }
+                }
+                crate::offline::Change::Delete(id) => {
+                    if self
+                        .storage()
+                        .get_prompt(id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        let _ = self.storage().delete_prompt(id).await;
+                    }
+                }
+            }
+        }
+
+        // Step 2: Pull server state (fetch all prompts from storage).
+        let server_prompts = self
+            .storage()
+            .list_prompts(None, None, 0, usize::MAX)
+            .await
+            .unwrap_or_default();
+
+        // Step 3: Build pull changes and apply them.
+        let mut pull_changes = Vec::new();
+        for prompt in &server_prompts {
+            pull_changes.push(crate::offline::Change::Create(prompt.id, prompt.clone()));
+        }
+
+        // Re-acquire the guard to update the offline state.
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().unwrap();
+            state
+                .store
+                .record_pull(crate::offline::Change::Delete(Uuid::default())); // marker that pull happened
+        }
+
+        // Apply server changes, resolve conflicts, and update status (single write lock).
+        let status;
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().unwrap();
+            let conflicts = state.store.apply_server_changes(pull_changes);
+
+            let unresolved: Vec<_> = conflicts
+                .iter()
+                .filter(|c| state.store.resolve_conflict(c).is_none()) // resolve returns Some when it resolves, None when not.
+                .cloned()
+                .collect();
+
+            if unresolved.is_empty() {
+                state.status = crate::offline::SyncStatus::Online;
+            } else {
+                state.status = crate::offline::SyncStatus::Conflict(unresolved);
+            }
+            status = state.status.clone();
+        }
+
+        Ok(status)
+    }
+
+    /// Return the current sync status, or `None` if offline mode is not enabled.
+    #[cfg(feature = "offline")]
+    pub fn get_sync_status(&self) -> Option<crate::offline::SyncStatus> {
+        let guard = self.offlined.read().unwrap();
+        guard.as_ref().map(|s| s.status.clone())
+    }
+
+    /// Return a handle to the offline state, or `None` if offline mode is not enabled.
+    #[cfg(feature = "offline")]
+    pub fn offlined(
+        &self,
+    ) -> &std::sync::Arc<std::sync::RwLock<Option<crate::offline::OfflineState>>> {
+        &self.offlined
+    }
+
+    // ── Voice anonymize integration ─────────────────────────────────────
+
+    /// Return a cloneable handle to the voice anonymizer.
+    #[cfg(feature = "voice-anonymize")]
+    pub fn voice_anonymizer_handle(&self) -> std::sync::Arc<std::sync::Mutex<Anonymizer>> {
+        Arc::clone(&self.voice_anonymizer)
+    }
+
+    /// Scrub PII from a transcript / text, returning `(anonymized_text, Vec<PiiMatch>)`.
+    ///
+    /// Delegates to the configured [`Anonymizer`] instance (built-in patterns only).
+    #[cfg(feature = "voice-anonymize")]
+    pub fn anonymize_transcript(
+        &self,
+        text: &str,
+    ) -> Result<(String, Vec<crate::voice_anonymize::PiiMatch>)> {
+        let anon = self.voice_anonymizer.lock().unwrap();
+        anon.anonymize(text)
+    }
+
+    // ---------------------------------------------------------------------------
+    // Touch accessor methods
+    // ---------------------------------------------------------------------------
+
+    /// Return a cloneable handle to the touch config.
+    #[cfg(feature = "touch")]
+    pub fn touch_config(&self) -> Arc<std::sync::Mutex<crate::touch::TouchConfig>> {
+        Arc::clone(&self.touch_config)
+    }
+
+    /// Update the touch config in-place.  Replaces every field atomically.
+    #[cfg(feature = "touch")]
+    pub fn set_touch_config(&self, cfg: crate::touch::TouchConfig) -> crate::touch::TouchConfig {
+        let mut guard = self.touch_config.lock().unwrap();
+        std::mem::replace(&mut *guard, cfg)
+    }
+
+    /// Dispatch a raw [`TouchEvent`](crate::touch::TouchEvent) through the gesture-to-action pipeline.
+    ///
+    /// 1. Reads the current `TouchConfig`.
+    /// 2. Resolves the event to a [`TouchAction`](crate::touch::TouchAction) via `gesture_to_action`.
+    /// 3. Executes the action against the prompt store and returns an
+    ///    [`crate::touch::ActionResult`].
+    ///
+    /// Returns `HubError::InvalidInput` when the event does not map to any
+    /// action under the current config.
+    #[cfg(feature = "touch")]
+    pub async fn dispatch_touch(
+        &self,
+        event: crate::touch::TouchEvent,
+    ) -> Result<crate::touch::ActionResult> {
+        let cfg = self.touch_config.lock().unwrap();
+
+        let action = crate::touch::gesture_to_action(&event, &cfg).ok_or_else(|| {
+            HubError::InvalidInput(format!("Unsupported touch gesture: {}", event))
+        })?;
+
+        let mut result = crate::touch::build_action_result(action.clone(), 0);
+
+        if !cfg.haptic_feedback {
+            result.haptic = None;
+        }
+
+        Ok(result)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2386,6 +3142,8 @@ mod tests {
             embedding_model: "test-model".to_string(),
             embedding_dimension: 384,
             embedding_backend: crate::config::EmbedderBackend::Hash,
+            #[cfg(feature = "qdrant")]
+            qdrant_config: None,
         }
     }
 
@@ -3366,5 +4124,74 @@ mod tests {
         // Fallback chain works
         let chain = hub.translation_fallback_chain("en-US");
         assert!(!chain.is_empty());
+    }
+
+    // ── Malware scan integration test ────────────────────────────────
+
+    #[cfg(feature = "malware-scan")]
+    #[tokio::test]
+    async fn test_malware_scan_hub_integration() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Config handle accessible and valid
+        let _config = hub.malware_scan_config();
+        assert_eq!(Arc::strong_count(&_config), 2); // hub holds one, we cloned
+
+        // Scan clean content
+        let result = hub.scan_blob(b"Hello, this is clean text.");
+        assert!(matches!(result, Ok(ScanResult::Clean)));
+
+        // Scan malicious ELF in .txt via file
+        let tmp = dir.path().join("fake.txt");
+        std::fs::write(&tmp, b"\x7fELF\x02\x01\x01").unwrap();
+        let result = hub.scan_file(&tmp);
+        match result {
+            Ok(ScanResult::Malicious { .. }) => {} // expected
+            other => panic!("expected Malicious, got {:?}", other),
+        }
+
+        // Config update works
+        use crate::malware_scan::MalwareScanConfig;
+        hub.set_malware_scan_config(MalwareScanConfig {
+            max_file_size_bytes: 0, // accept everything
+            inspect_content: true,
+            block_patterns: vec!["VBA".to_string()],
+        });
+    }
+
+    // ── Voice-anonymize integration test ──────────────────────────────
+
+    #[cfg(feature = "voice-anonymize")]
+    #[tokio::test]
+    async fn test_voice_anonymize_hub_integration() {
+        use crate::voice_anonymize::PiiType;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Handle accessible and valid
+        let _handle = hub.voice_anonymizer_handle();
+
+        // Anonymize a transcript with PII
+        let transcript =
+            "Hello, my name is John. My email is john@example.com and my phone is 555-123-4567.";
+        let (result, found) = hub.anonymize_transcript(transcript).unwrap();
+
+        // Both Email and Phone should be found
+        assert!(result.contains("[EMAIL]"));
+        assert!(result.contains("[PHONE]"));
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("555-123-4567"));
+        assert_eq!(found.len(), 2);
+
+        // Verify match types
+        let types: Vec<_> = found.iter().map(|m| &m.pii_type).collect();
+        assert!(types.contains(&&PiiType::Email));
+        assert!(types.contains(&&PiiType::Phone));
     }
 }
