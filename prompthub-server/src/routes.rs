@@ -1224,7 +1224,7 @@ fn parse_evolution_strategy(s: &str) -> Result<EvolutionStrategy, String> {
 
 /// Evolve a prompt into a new variant via the chosen [`EvolutionStrategy`].
 ///
-/// Thin shell over [`PromptHub::evolve_prompt`]: parses the path UUID and the
+/// Thin shell over [`PromptHub::evolve_prompt`](prompt_hub::hub::PromptHub::evolve_prompt): parses the path UUID and the
 /// strategy, delegates to the core hub method (which performs RBAC, evolution,
 /// persistence, indexing and audit), then returns the evolved [`Prompt`] as
 /// JSON. `HubError` is mapped to the same HTTP statuses used by the other
@@ -1298,7 +1298,7 @@ pub async fn evolve_prompt(
 
 /// Count the tokens of a stored prompt under the requested model.
 ///
-/// Thin shell over [`PromptHub::count_prompt_tokens`]: parses the path UUID,
+/// Thin shell over [`PromptHub::count_prompt_tokens`](prompt_hub::hub::PromptHub::count_prompt_tokens): parses the path UUID,
 /// delegates to the core hub method (RBAC Read → fetch → tokenize), and returns
 /// the resulting model + token count. The core `TokenCount` type does not derive
 /// `Serialize`, so its fields are mapped into the response JSON by hand (the same
@@ -1349,7 +1349,7 @@ pub async fn count_prompt_tokens_route(
 
 /// Estimate the input + output cost of a stored prompt under the requested model.
 ///
-/// Thin shell over [`PromptHub::estimate_prompt_cost`]. The core
+/// Thin shell over [`PromptHub::estimate_prompt_cost`](prompt_hub::hub::PromptHub::estimate_prompt_cost). The core
 /// `CostEstimateDetail` type does not derive `Serialize`, so its fields are
 /// mapped into the response JSON by hand. Error mapping mirrors the other
 /// id-based routes (`NotFound` → 404, `Unauthorized` → 403, other → 500).
@@ -1406,7 +1406,7 @@ pub async fn estimate_prompt_cost_route(
 
 /// Classify a raw multimodal [`UserInput`] into an [`Intent`].
 ///
-/// Thin shell over [`PromptHub::process_input`]: the request body deserializes
+/// Thin shell over [`PromptHub::process_input`](prompt_hub::hub::PromptHub::process_input): the request body deserializes
 /// directly into the core `UserInput` model (which derives `Deserialize`), the
 /// hub classifies it, and the resulting `Intent` — which derives `Serialize` —
 /// is returned as JSON. A `ValidationError` from the core maps to 422; any other
@@ -1433,7 +1433,7 @@ pub async fn process_input_route(
 
 /// Render a stored prompt's `user_template` with the supplied variables.
 ///
-/// Thin shell over [`PromptHub::render_prompt`]: parses the path UUID, delegates
+/// Thin shell over [`PromptHub::render_prompt`](prompt_hub::hub::PromptHub::render_prompt): parses the path UUID, delegates
 /// to the core method (RBAC Read → required-var check → template render), and
 /// returns the rendered string. A missing required variable or a template
 /// failure surfaces from the core as `ValidationError` and maps to 422; the
