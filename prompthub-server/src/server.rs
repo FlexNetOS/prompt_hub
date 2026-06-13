@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "budget")]
+use axum::routing::put;
 use axum::{
     Router,
     middleware::from_fn,
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,6 +32,7 @@ pub fn create_router(state: AppState) -> Router {
 
     let state_arc = Arc::new(state);
 
+    // Build the router: all routes first (no State yet), then apply State once.
     let router = Router::new()
         // Prompt CRUD
         .route("/api/v1/prompts", post(routes::register_prompt))
@@ -73,6 +76,28 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/v1/budget/reset", post(routes::reset_budget_period));
 
+    // Load balancer routes (always-on)
+    let router = router
+        .route("/api/v1/lb/providers", post(routes::add_lb_provider))
+        .route("/api/v1/lb/select", post(routes::select_provider))
+        .route("/api/v1/lb/latency", post(routes::record_lb_latency))
+        .route("/api/v1/lb/failure", post(routes::record_lb_failure))
+        .route("/api/v1/lb/stats", get(routes::get_lb_stats));
+
+    // Satisfaction routes (always-on)
+    let router = router
+        .route("/api/v1/satisfaction/csat", post(routes::record_csat))
+        .route("/api/v1/satisfaction/nps", post(routes::record_nps))
+        .route(
+            "/api/v1/satisfaction/events",
+            post(routes::record_satisfaction_event),
+        )
+        .route(
+            "/api/v1/satisfaction/metrics",
+            get(routes::get_satisfaction_metrics),
+        );
+
+    // Apply State BEFORE middleware — required for handlers using `State<T>` extractors.
     router
         .with_state(state_arc)
         // Middleware — applied directly on the Router (not bundled in a

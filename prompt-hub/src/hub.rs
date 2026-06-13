@@ -623,7 +623,7 @@ impl PromptHub {
 
     /// Start the chaos automation scheduler with the given *config*.
     ///
-    /// Initializes a [`ChaosAuto`] instance (must be `None` before call) and
+    /// Initializes a [`ChaosAuto`](crate::chaos_auto::ChaosAuto) instance (must be `None` before call) and
     /// spawns its background task. Returns `Ok(Some(handle))` on success, or
     /// `Ok(None)` if already started.
     #[cfg(feature = "chaos-automation")]
@@ -743,7 +743,7 @@ impl PromptHub {
 
     /// Enable mobile (offline-first) mode with the given *config*.
     ///
-    /// Creates an [`MobileEngine`](crate::mobile::MobileEngine) wrapping a fresh
+    /// Creates an [`MobileEngine`] wrapping a fresh
     /// on-device store. CRUD operations proceed locally when offline; changes are
     /// queued for push sync when connectivity returns.
     #[cfg(feature = "mobile")]
@@ -1225,7 +1225,7 @@ impl PromptHub {
 
     /// Gather enhanced project context with relevance-ranked files and extracted code patterns.
     ///
-    /// Requires the `gather` feature flag. Returns a [`SmartContext`] wrapping the base
+    /// Requires the `gather` feature flag. Returns a [`SmartContext`](crate::gather::SmartContext) wrapping the base
     /// [`ProjectContext`] with file relevance rankings and extracted structural patterns
     /// (imports, function signatures, struct/trait definitions) suitable for prompt
     /// engineering workflows.
@@ -2126,7 +2126,7 @@ impl PromptHub {
 
     /// Record spend against an entity's resource bucket with overage enforcement.
     ///
-    /// Returns the [`LimitStatus`] after recording the spend, indicating whether
+    /// Returns the [`LimitStatus`](crate::cost_limits::LimitStatus) after recording the spend, indicating whether
     /// it was allowed, flagged as over-limit, or blocked.
     #[cfg(feature = "cost-limits")]
     #[instrument(skip(self))]
@@ -2273,7 +2273,7 @@ impl PromptHub {
     ///
     /// Runs the prompt against all configured moderation categories
     /// (hate, violence, self-harm, sexual, illegal, harassment) and returns
-    /// a [`ModerationReport`] with allow/block/flag result.
+    /// a [`ModerationReport`](crate::moderation::ModerationReport) with allow/block/flag result.
     ///
     /// Requires the `moderation` feature flag.
     #[cfg(feature = "moderation")]
@@ -2884,13 +2884,13 @@ impl PromptHub {
 
     /// Enable offline mode with the given *config*.
     ///
-    /// Creates an [`OfflineState`](crate::offline::OfflineState) wrapping a fresh
+    /// Creates an [`OfflineState`] wrapping a fresh
     /// [`OfflineStore`](crate::offline::OfflineStore) and transitions it to
     /// `SyncStatus::Offline`. Subsequent CRUD operations on the store are local-only
-    /// until [`sync`] is called.
+    /// until [`sync`](Self::sync) is called.
     ///
     /// # Arguments
-    /// * `config` — [`OfflineConfig`] controlling auto-sync behaviour and conflict strategy.
+    /// * `config` — [`OfflineConfig`](crate::offline::OfflineConfig) controlling auto-sync behaviour and conflict strategy.
     #[cfg(feature = "offline")]
     pub fn enable_offline_mode(&self, config: crate::offline::OfflineConfig) -> Result<()> {
         let mut guard = self.offlined.write().unwrap();
@@ -2906,7 +2906,7 @@ impl PromptHub {
     /// Sync pending local changes to the storage layer and pull back server state.
     ///
     /// The sync flow:
-    /// 1. Write all [`Change::Create`]/[`Change::Update`]/[`Change::Delete`] in
+    /// 1. Write all [`Change::Create`](crate::offline::Change)/[`Change::Update`](crate::offline::Change)/[`Change::Delete`](crate::offline::Change) in
     ///    `pending_push` to the real [`Storage`] layer.
     /// 2. Read current server state and push changes into the offline store as pull.
     /// 3. Apply those pull changes, detecting revision conflicts.
@@ -3074,10 +3074,10 @@ impl PromptHub {
         std::mem::replace(&mut *guard, cfg)
     }
 
-    /// Dispatch a raw [`TouchEvent`] through the gesture-to-action pipeline.
+    /// Dispatch a raw [`TouchEvent`](crate::touch::TouchEvent) through the gesture-to-action pipeline.
     ///
     /// 1. Reads the current `TouchConfig`.
-    /// 2. Resolves the event to a [`TouchAction`] via `gesture_to_action`.
+    /// 2. Resolves the event to a [`TouchAction`](crate::touch::TouchAction) via `gesture_to_action`.
     /// 3. Executes the action against the prompt store and returns an
     ///    [`crate::touch::ActionResult`].
     ///
