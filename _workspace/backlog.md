@@ -23,6 +23,9 @@ The prior RESUME incorrectly declared the backlog TERMINAL based on stale data v
 
 ## P0: CRITICAL — Compile-Time Fixes Required
 
+### 0c: Default-features build of `prompt-hub` fails (pre-existing, found cycle 83)
+- [ ] **`cargo build -p prompt-hub` (DEFAULT features) fails** with `E0432: unresolved import argon2::password_hash::rand_core::OsRng` in `auth.rs`. Confirmed pre-existing (reproduces on a clean tree with no working changes) and NOT caught by CI because the canonical gates use `--all-features` (which pulls in a `getrandom`/rng-providing feature that default does not). Decision: either (a) add the missing feature to argon2's default-features path / gate the `OsRng` import behind the feature that provides it, or (b) add a default-features-only `cargo build -p prompt-hub` job to CI and fix the root cause. Priority: high (default `PromptHub::new()` consumers can't build the crate standalone). Source: cycle-83 verification, stash-confirmed.
+
 ### 0a: Create `quality.rs` module to match `quality = []` in Cargo.toml
 - [x] ~~**Remove dead quality = [] stub**~~ ✅ committed b482efd (no module exists, feature was stale) — implement QualityGate (already wired via PR #50, the module file is missing but wiring exists at hub.rs imports) OR remove `quality = []` from Cargo.toml if the product does not need a quality feature. Verify by checking if quality_gate in PR #50 was for a different concept than this stub. **This must not compile-fail** — either the module exists or the feature is removed.
 - [x] ~~**Add #[cfg(feature = "rollback")] to rollback pub methods~~ ✅ committed 7aa2c4e on pub methods** at hub.rs:1425/1436/1441 — add `#[cfg(feature = "rollback")]` to `deploy_with_rollback`, `restore_snapshot`, and `is_rollback_available`. Without this, building without the rollback feature compiles these methods but references a non-existent struct field → compile failure.
@@ -99,7 +102,7 @@ The following 17 features were marked as "dead" and removed from Cargo.toml duri
 - [ ] **`multimodal_input.rs` (345 lines)** — process() has empty match arms for all InputType variants; zero references anywhere. Decision: complete implementation (file upload types) or remove pub mod. Priority: high (extends multimodal PR #53).
 - [ ] **`plugins.rs` (306 lines)** — PluginRegistry has list/register but dynamic loading disabled by `#![forbid(unsafe_code)]`. Decision: implement safe inventory-based plugin discovery or gate behind unsafe-compatible feature. Priority: medium.
 - [ ] **`templates.rs` (200 lines)** — TemplateEngine trait defined with render/lint methods but no implementations wired anywhere. Decision: wire handlebars/tera impls as default or remove the unused trait. Priority: high (core prompt rendering).
-- [ ] **`tokens.rs` (253 lines)** — TokenCounter with tiktoken fallback exists but zero callers in hub.rs. Decision: wire into cost estimation path or add explicit feature gate. Priority: high.
+- [x] **`tokens.rs` (253 lines)** ✅ DONE (cycle 83) — wired into the PromptHub façade: `count_prompt_tokens(id, model, identity)` → `TokenCount` and `estimate_prompt_cost(id, model, expected_output_tokens, identity)` → `CostEstimateDetail`, both RBAC `Read`-gated via reuse of `get_by_id` (verified authorize at hub.rs:933), `None`→`NotFound`. Thin façade; logic stays in tokens.rs. 4 hub tests (happy/not_found/unauthorized × 2). Gates green (check/clippy -D warnings/fmt --all-features; tiktoken path compiles).
 - [ ] **`junie`** — JunieHook only accessible via hooks module; no direct hub field, no dedicated CLI wiring beyond `prompthub src/commands/junie.rs`. Decision: add Junie as first-class PromptHub field with dedicated accessors. Priority: low-medium.
 
 ### P2b: Server route coverage gap (~48 hub methods uncovered)

@@ -935,6 +935,87 @@ impl PromptHub {
         self.storage.get_prompt(id).await
     }
 
+    /// Count tokens for a stored prompt's combined system + user content.
+    ///
+    /// Fetches the prompt by UUID (gated by [`RbacAuthManager`] Read
+    /// authorization via [`PromptHub::get_by_id`]) and counts the tokens of its
+    /// `system_prompt` and `user_template` under the named `model` using
+    /// [`TokenCounter`]. With the `tiktoken` feature this uses `tiktoken-rs`;
+    /// otherwise a character/word heuristic is applied.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the stored prompt.
+    /// * `model` — Model identifier (e.g. `"gpt-4"`) to count tokens for.
+    /// * `identity` — Caller's [`AgentIdentity`] (used for RBAC Read).
+    ///
+    /// # Returns
+    /// A [`crate::tokens::TokenCount`] for the prompt under `model`.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks the `Read` capability.
+    /// - [`HubError::NotFound`] if no prompt exists with the given `id`.
+    #[instrument(skip(self))]
+    pub async fn count_prompt_tokens(
+        &self,
+        id: Uuid,
+        model: &str,
+        identity: &AgentIdentity,
+    ) -> Result<crate::tokens::TokenCount> {
+        let prompt = self
+            .get_by_id(id, identity)
+            .await?
+            .ok_or_else(|| HubError::NotFound(id.to_string()))?;
+        crate::tokens::TokenCounter::count_prompt(
+            &prompt.system_prompt,
+            &prompt.user_template,
+            model,
+        )
+        .await
+    }
+
+    /// Estimate the input + output cost of a stored prompt under `model`.
+    ///
+    /// Fetches the prompt by UUID (gated by [`RbacAuthManager`] Read
+    /// authorization via [`PromptHub::get_by_id`]), counts the input tokens of
+    /// its `system_prompt` and `user_template`, and combines them with
+    /// `expected_output_tokens` to produce a cost estimate via
+    /// [`TokenCounter::estimate_prompt_cost`]. Pricing is approximate and based
+    /// on common provider tiers.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the stored prompt.
+    /// * `model` — Model identifier (e.g. `"gpt-4"`) to price against.
+    /// * `expected_output_tokens` — Anticipated completion length, in tokens.
+    /// * `identity` — Caller's [`AgentIdentity`] (used for RBAC Read).
+    ///
+    /// # Returns
+    /// A [`crate::tokens::CostEstimateDetail`] with input/output token counts
+    /// and per-segment and total cost.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks the `Read` capability.
+    /// - [`HubError::NotFound`] if no prompt exists with the given `id`.
+    #[instrument(skip(self))]
+    pub async fn estimate_prompt_cost(
+        &self,
+        id: Uuid,
+        model: &str,
+        expected_output_tokens: usize,
+        identity: &AgentIdentity,
+    ) -> Result<crate::tokens::CostEstimateDetail> {
+        let prompt = self
+            .get_by_id(id, identity)
+            .await?
+            .ok_or_else(|| HubError::NotFound(id.to_string()))?;
+        crate::tokens::TokenCounter::estimate_prompt_cost(
+            &prompt.system_prompt,
+            &prompt.user_template,
+            model,
+            expected_output_tokens,
+        )
+        .await
+    }
+
     /// Search prompts using the configured search engine.
     ///
     /// Delegates to the internal hybrid search pipeline (FTS5 + optional
@@ -3204,6 +3285,107 @@ mod tests {
 
         let fetched = hub.get(Role::Developer, "greet", &agent).await;
         assert!(fetched.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+        let prompt = test_prompt();
+        let id = prompt.id;
+        hub.register(prompt, &agent).await.unwrap();
+
+        let count = hub
+            .count_prompt_tokens(id, "gpt-4", &agent)
+            .await
+            .expect("counting tokens for a stored prompt should succeed");
+        assert_eq!(count.model, "gpt-4");
+        assert!(count.tokens >= 1, "expected at least 1 token");
+    }
+
+    #[tokio::test]
+    async fn test_estimate_prompt_cost() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+        let prompt = test_prompt();
+        let id = prompt.id;
+        hub.register(prompt, &agent).await.unwrap();
+
+        let estimate = hub
+            .estimate_prompt_cost(id, "gpt-4", 100, &agent)
+            .await
+            .expect("estimating cost for a stored prompt should succeed");
+        assert_eq!(estimate.model, "gpt-4");
+        assert!(
+            estimate.input_tokens >= 1,
+            "expected at least 1 input token"
+        );
+        assert_eq!(estimate.output_tokens, 100);
+        assert!(
+            estimate.total_cost >= 0.0,
+            "total cost must be non-negative"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens_not_found() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+
+        let err = hub
+            .count_prompt_tokens(Uuid::new_v4(), "gpt-4", &agent)
+            .await
+            .expect_err("an unknown id should not resolve to a prompt");
+        assert!(matches!(err, HubError::NotFound(_)));
+
+        let err = hub
+            .estimate_prompt_cost(Uuid::new_v4(), "gpt-4", 100, &agent)
+            .await
+            .expect_err("an unknown id should not resolve to a prompt");
+        assert!(matches!(err, HubError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens_unauthorized() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let writer = test_agent();
+        let prompt = test_prompt();
+        let id = prompt.id;
+        hub.register(prompt, &writer).await.unwrap();
+
+        // An identity with no capabilities lacks `Read`, so the RBAC gate in
+        // `get_by_id` (reused by both methods) must reject it.
+        let unauthorized = AgentIdentity {
+            id: Uuid::new_v4(),
+            name: "no-caps".to_string(),
+            capabilities: vec![],
+            token_hash: "deadbeef".to_string(),
+            specialization_score: 0.0,
+        };
+
+        let err = hub
+            .count_prompt_tokens(id, "gpt-4", &unauthorized)
+            .await
+            .expect_err("an identity without Read must be rejected");
+        assert!(matches!(err, HubError::Unauthorized(_)));
+
+        let err = hub
+            .estimate_prompt_cost(id, "gpt-4", 100, &unauthorized)
+            .await
+            .expect_err("an identity without Read must be rejected");
+        assert!(matches!(err, HubError::Unauthorized(_)));
     }
 
     #[tokio::test]
