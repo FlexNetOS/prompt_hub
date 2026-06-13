@@ -121,6 +121,12 @@ pub mod voice;
 #[cfg(feature = "voice-anonymize")]
 pub mod voice_anonymize;
 
+// Re-export `inventory` so the `register_plugin!` macro can reference
+// `$crate::inventory` from downstream plugin crates without a direct dependency.
+#[cfg(feature = "plugins")]
+#[doc(hidden)]
+pub use inventory;
+
 // Re-export commonly used types
 pub use config::HubConfig;
 pub use error::{HubError, Result};
