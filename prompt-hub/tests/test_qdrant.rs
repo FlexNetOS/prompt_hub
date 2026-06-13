@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "qdrant")]
 
 //! Integration tests for the Qdrant vector search feature.
 //!

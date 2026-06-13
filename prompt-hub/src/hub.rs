@@ -4390,6 +4390,7 @@ mod tests {
 
     // ── Retention + GC integration test ────────────────────────────────
 
+    #[cfg(feature = "retention")]
     #[tokio::test]
     async fn test_retention_gc_accessible() {
         let dir = tempfile::tempdir().unwrap();
@@ -4418,6 +4419,7 @@ mod tests {
         assert!(hub.gc_enabled());
     }
 
+    #[cfg(feature = "multimodal")]
     #[tokio::test]
     async fn test_multimodal_accessible() {
         let dir = tempfile::tempdir().unwrap();

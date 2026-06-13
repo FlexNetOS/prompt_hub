@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "voice-anonymize")]
 
 /// Integration test: default anonymizer detects and replaces email, phone, SSN.
 #[test]
