@@ -98,7 +98,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-tarpaulin
-      - run: cargo tarpaulin --workspace --all-features --out xml
+      # --timeout guards tarpaulin's ptrace engine against "Timed out waiting for
+      # test response": under instrumentation a large async suite can exceed the
+      # 60s default per-test ceiling even though every test passes in milliseconds
+      # uninstrumented. 300s is generous headroom; it does not slow healthy runs.
+      - run: cargo tarpaulin --workspace --all-features --timeout 300 --out xml
       - uses: codecov/codecov-action@v7
         with:
           files: ./cobertura.xml
