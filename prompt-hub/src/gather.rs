@@ -341,11 +341,16 @@ impl SmartContextGatherer {
                     let category = self.category_file(&fname_lower, &path);
 
                     entries.push(RelevanceEntry {
+                        // Normalize to forward slashes so paths are stable
+                        // cross-platform (Windows yields `\` separators otherwise,
+                        // which breaks `path == "src/main.rs"`-style lookups).
                         path: path
                             .strip_prefix(root)
                             .ok()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.to_string_lossy().to_string()),
+                            .map(|p| p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"))
+                            .unwrap_or_else(|| {
+                                path.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
+                            }),
                         relevance_score: score,
                         category,
                     });
