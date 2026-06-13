@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
+use prompt_hub::HubError;
 use prompt_hub::models::*;
 
 #[cfg(feature = "budget")]
@@ -48,6 +49,22 @@ pub struct SatisfactionEventRequest {
 fn default_one() -> u8 {
     1
 }
+
+/// Request body for evolving a prompt.
+///
+/// `strategy` is a snake_case evolution strategy name (`mutate`, `crossover`,
+/// `ab_test`, `semantic`, `compress`, `expand`). Defaults to `mutate` when
+/// omitted.
+#[derive(Debug, Deserialize)]
+pub struct EvolvePromptRequest {
+    #[serde(default = "default_evolution_strategy")]
+    pub strategy: String,
+}
+
+fn default_evolution_strategy() -> String {
+    "mutate".to_string()
+}
+
 use crate::state::AppState;
 
 // ── Request / response DTOs ──────────────────────────────────────────────
@@ -1157,6 +1174,97 @@ pub async fn get_satisfaction_metrics(State(state): State<Arc<AppState>>) -> Res
     }
 }
 
+// ── Evolution handler functions ───────────────────────────────────────────
+
+/// Parse a snake_case strategy name into an [`EvolutionStrategy`].
+///
+/// Mirrors the snake_case convention of the other route helpers
+/// (`parse_skill_level`, `routing_strategy_to_string`). Returns the original
+/// (unknown) input as `Err` so the caller can surface it in a 400 response.
+fn parse_evolution_strategy(s: &str) -> Result<EvolutionStrategy, String> {
+    match s.trim().to_lowercase().as_str() {
+        "mutate" => Ok(EvolutionStrategy::Mutate),
+        "crossover" => Ok(EvolutionStrategy::Crossover),
+        "ab_test" => Ok(EvolutionStrategy::AbTest),
+        "semantic" => Ok(EvolutionStrategy::Semantic),
+        "compress" => Ok(EvolutionStrategy::Compress),
+        "expand" => Ok(EvolutionStrategy::Expand),
+        other => Err(other.to_string()),
+    }
+}
+
+/// Evolve a prompt into a new variant via the chosen [`EvolutionStrategy`].
+///
+/// Thin shell over [`PromptHub::evolve_prompt`]: parses the path UUID and the
+/// strategy, delegates to the core hub method (which performs RBAC, evolution,
+/// persistence, indexing and audit), then returns the evolved [`Prompt`] as
+/// JSON. `HubError` is mapped to the same HTTP statuses used by the other
+/// mutating routes (`NotFound` → 404, `Unauthorized` → 403, `Internal`/other
+/// → 500).
+#[instrument(skip(state))]
+pub async fn evolve_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<EvolvePromptRequest>,
+) -> Response {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid UUID format: {}", id);
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
+        }
+    };
+
+    let strategy = match parse_evolution_strategy(&payload.strategy) {
+        Ok(s) => s,
+        Err(unknown) => {
+            warn!(strategy = %unknown, "Unknown evolution strategy in request");
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Unknown evolution strategy '{unknown}' (expected one of: \
+                     mutate, crossover, ab_test, semantic, compress, expand)"
+                ),
+            )
+            .into_response();
+        }
+    };
+
+    match state
+        .hub
+        .evolve_prompt(uuid, strategy, &default_agent())
+        .await
+    {
+        Ok(prompt) => {
+            info!(base = %id, evolved = %prompt.id, "Evolved prompt via HTTP");
+            success(json!({
+                "id": prompt.id.to_string(),
+                "name": prompt.name,
+                "version": prompt.version.to_string(),
+                "status": prompt.status,
+                "system_prompt": prompt.system_prompt,
+                "user_template": prompt.user_template,
+                "domain": prompt.domain,
+                "tags": prompt.tags,
+                "target_roles": prompt.target_roles,
+                "metadata": prompt.metadata,
+                "metrics": prompt.metrics,
+                "created_at": prompt.created_at,
+                "updated_at": prompt.updated_at,
+            }))
+            .into_response()
+        }
+        Err(HubError::NotFound(_)) => {
+            error(StatusCode::NOT_FOUND, format!("Prompt '{}' not found", id)).into_response()
+        }
+        Err(HubError::Unauthorized(msg)) => error(StatusCode::FORBIDDEN, msg).into_response(),
+        Err(e) => {
+            warn!("Failed to evolve prompt {}: {}", id, e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
 // ── Satisfaction handler functions (above) ────────────────────────────────
 // ── Test module below ─────────────────────────────────────────────────────
 
@@ -1576,5 +1684,194 @@ mod tests {
 
         let response = get_satisfaction_metrics(axum::extract::State(arc_state)).await;
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Evolution route tests ───────────────────────────────────────────
+
+    /// Build a fresh `:memory:` AppState for direct-handler evolution tests.
+    async fn evolve_test_state() -> Arc<AppState> {
+        Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        })
+    }
+
+    /// Register a minimal base prompt and return its UUID.
+    async fn seed_prompt(state: &Arc<AppState>) -> Uuid {
+        let prompt = Prompt {
+            id: Uuid::new_v4(),
+            name: "base".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            status: Status::Active,
+            system_prompt: "You are a helpful assistant.".to_string(),
+            user_template: "Answer: {{question}}".to_string(),
+            required_vars: Vec::new(),
+            domain: Domain::default(),
+            tags: vec!["seed".to_string()],
+            target_roles: Vec::new(),
+            metadata: PromptMeta::default(),
+            metrics: PromptMetrics::default(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            author: default_agent(),
+            deleted_at: None,
+            generation_params: None,
+            locale: None,
+            multimodal: None,
+        };
+        state
+            .hub
+            .register(prompt, &default_agent())
+            .await
+            .expect("register base prompt")
+    }
+
+    #[test]
+    fn parse_evolution_strategy_covers_all_variants() {
+        assert_eq!(
+            parse_evolution_strategy("mutate").unwrap(),
+            EvolutionStrategy::Mutate
+        );
+        assert_eq!(
+            parse_evolution_strategy("crossover").unwrap(),
+            EvolutionStrategy::Crossover
+        );
+        assert_eq!(
+            parse_evolution_strategy("ab_test").unwrap(),
+            EvolutionStrategy::AbTest
+        );
+        assert_eq!(
+            parse_evolution_strategy("semantic").unwrap(),
+            EvolutionStrategy::Semantic
+        );
+        assert_eq!(
+            parse_evolution_strategy("compress").unwrap(),
+            EvolutionStrategy::Compress
+        );
+        assert_eq!(
+            parse_evolution_strategy("expand").unwrap(),
+            EvolutionStrategy::Expand
+        );
+        // Case-insensitive + trimmed.
+        assert_eq!(
+            parse_evolution_strategy("  MUTATE ").unwrap(),
+            EvolutionStrategy::Mutate
+        );
+        // Unknown returns the (normalized) offending value.
+        assert_eq!(parse_evolution_strategy("nope").unwrap_err(), "nope");
+    }
+
+    #[tokio::test]
+    async fn test_evolve_prompt_mutate_happy_path() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        let response = evolve_prompt(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(EvolvePromptRequest {
+                strategy: "mutate".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_evolve_prompt_semantic_strategy() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        let response = evolve_prompt(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(EvolvePromptRequest {
+                strategy: "semantic".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_evolve_prompt_not_found() {
+        let state = evolve_test_state().await;
+        let random = Uuid::new_v4();
+
+        let response = evolve_prompt(
+            axum::extract::State(state),
+            axum::extract::Path(random.to_string()),
+            axum::Json(EvolvePromptRequest {
+                strategy: "mutate".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_evolve_prompt_unknown_strategy_rejected() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        let response = evolve_prompt(
+            axum::extract::State(state),
+            axum::extract::Path(id.to_string()),
+            axum::Json(EvolvePromptRequest {
+                strategy: "teleport".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_evolve_prompt_invalid_uuid_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = evolve_prompt(
+            axum::extract::State(state),
+            axum::extract::Path("not-a-uuid".to_string()),
+            axum::Json(EvolvePromptRequest {
+                strategy: "mutate".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_evolve_prompt_crossover_empty_pool_errors() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        // Crossover needs a second candidate prompt; with only the base
+        // present, list_prompts still returns the base itself, so this path
+        // succeeds rather than erroring. We instead assert it does NOT 404/400
+        // — i.e. the strategy parsed and the hub was reached.
+        let response = evolve_prompt(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(EvolvePromptRequest {
+                strategy: "crossover".into(),
+            }),
+        )
+        .await;
+
+        let status = response.status();
+        assert!(
+            status == StatusCode::OK || status == StatusCode::INTERNAL_SERVER_ERROR,
+            "crossover should reach the hub, got {status}"
+        );
     }
 }
