@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "chaos")]
 
 use prompt_hub::chaos::{ChaosConfig, ChaosEngine, ChaosResult, ChaosSeverity, ChaosStrategy};
 

@@ -2,7 +2,7 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0039",
   "title": "Integration test for hub.get() RBAC+intent flow",
-  "status": "backlog",
+  "status": "done",
   "priority": "P1",
   "objective": "hub.get() has RBAC + intent logic but no dedicated integration test of the full flow (auth check -> storage lookup -> audit trail).",
   "path_scope": [
@@ -26,5 +26,6 @@
     "acceptance_hash": "blake3:4a8db43f0fbd2728d099fc009774789932f8f499afa2d87c8e4ecd54226847f2"
   },
   "source": "migrated from _workspace/backlog.md (2026-06-13)",
-  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "Added prompt-hub/tests/test_get_rbac.rs (6 tests) covering the full get() flow end to end against a :memory: hub, NO source change (test-only): (1) get() denies a caller without Read (HubError::Unauthorized, checked before any search); (2) get_by_id() denies a caller without Read; (3) get_by_id() returns the exact registered prompt for an authorized caller (auth -> storage lookup); (4) get_by_id() returns Ok(None) for an unknown id; (5) get() finds the registered Developer prompt by role+intent search (auth -> intent lookup); (6) registration writes a queryable audit trail (audit_trail(id).total >= 1) \u2014 the create->audit->retrieve loop. Gates: cargo test -p prompt-hub --test test_get_rbac => 6 passed (--all-features AND default features); clippy --all-features --all-targets -D warnings clean; cargo fmt --check clean; default-features library build (CI default-build gate) green. Done via worktree loop/phtask-0039-get-rbac-test."
 }
