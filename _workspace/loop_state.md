@@ -5,10 +5,20 @@ loop: prompt-loop
 branch: main (on latest commit)
 worktree: none
 cycle_budget: 5
-cycles_this_session: 0
-cycles_total: 82
+cycles_this_session: 1
+cycles_total: 83
 apply_mode: APPLY (default for /prompt-loop)
-status: Cycle 81 satisfaction DONE
+status: Cycle 82 evolve_prompt route DONE
+last_item: evolve_prompt server route (POST /api/v1/prompts/{id}/evolve) — DONE
+
+### Cycle 82 — evolve_prompt server route (P2b, high)
+- POST `/api/v1/prompts/{id}/evolve` — thin shell over `PromptHub::evolve_prompt(id, strategy, identity)`
+- `EvolvePromptRequest{strategy}` (serde default "mutate") + `parse_evolution_strategy` helper
+- 6 EvolutionStrategy variants: mutate/crossover/ab_test/semantic/compress/expand (snake_case, case-insensitive)
+- Error map: bad uuid/unknown strategy→400, NotFound→404, Unauthorized→403, other→500
+- No feature gate (evolve_prompt always-on); registered in always-on CRUD block of server.rs:41
+- 7 tests via direct-handler pattern (cycle-80 lesson); pass without hang (name-filtered)
+- Gates green: check --all-features / clippy -D warnings / fmt / default build
 
 ## P1 Recovery Status — 13 of 13 features built! ✅
 | Feature | Cycle | Tests | Commit |
