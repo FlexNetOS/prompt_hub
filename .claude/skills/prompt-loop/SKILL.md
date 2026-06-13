@@ -9,6 +9,16 @@ The orchestrator. It runs prompt_hub feature development as a **chain of short c
 
 > **Scope guard:** this harness *builds* prompt_hub. It is not prompt_hub's own agent/Junie product runtime — keep the two separate. The "how to build one feature" discipline is the `feature-build` skill; this skill is "what to build next and how the loop runs".
 
+> **⛔ NO DOWNGRADES — UPGRADE ONLY (owner directive, 2026-06-13, standing & non-negotiable).**
+> A module/feature that *looks* like dead code, a stub, an "old feature", or an empty/no-op
+> implementation is **NOT dead** — it is an **incomplete feature to be COMPLETED**. Every cycle's
+> only valid resolution is to **finish/wire/implement the feature fully**. **Never** remove a module,
+> delete a trait/type, `#[cfg]`-gate something out to make a warning go away, stub with `todo!()`,
+> or "simplify by dropping" a capability. Cards must never offer "complete **OR remove**" — the
+> remove/gate-out branch is forbidden. The `backlog-curator` authors completion-only cards; the
+> build team completes the feature; verification confirms the capability now exists and works.
+> If something seems unreachable, the gap is *wiring*, not deletion. When in doubt: build it up.
+
 ## State backend — `.handoff/` (CANONICAL; supersedes `_workspace/`)
 
 > **Adopted 2026-06-13 (owner directive).** The durable state moved from the deprecated

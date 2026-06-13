@@ -1,15 +1,17 @@
 {
   "schema": "handoff.task.v1",
   "id": "PHTASK-0033",
-  "title": "Wire `templates.rs` TemplateEngine (verify stale claim)",
+  "title": "Complete `templates.rs` \u2014 wire TemplateEngine into hub rendering",
   "status": "backlog",
   "priority": "P1",
-  "objective": "templates.rs (200 lines): TemplateEngine trait \u2014 backlog claimed 'no impls', but HandlebarsEngine + TeraEngine impls EXIST (lines 71/113). Verify whether they are wired into the hub rendering path; wire them as the default renderer or remove if truly unused.",
+  "objective": "INCOMPLETE FEATURE (not dead code): templates.rs (200 lines) defines the TemplateEngine trait AND its HandlebarsEngine + TeraEngine impls (lines 71/113) already exist \u2014 but they are not wired into the hub's prompt-rendering path (the 'no impls' backlog note was stale). COMPLETE it: route the hub's prompt/user_template rendering through the feature-selected TemplateEngine (handlebars default / tera), so variable substitution and lint go through the engine. Upgrade only \u2014 finish the wiring; do not remove the trait.",
   "path_scope": [
     "prompt-hub/**"
   ],
   "acceptance_criteria": [
-    "TemplateEngine impls are wired into hub rendering OR the unused trait is removed, with the stale 'no impls' claim corrected"
+    "the hub renders a prompt's template via the selected TemplateEngine (handlebars default, tera under its feature)",
+    "variable substitution + template lint are reachable through the hub API",
+    "a test renders a template with vars through the hub"
   ],
   "test_commands": [
     "cargo check --workspace --all-features",
@@ -23,9 +25,10 @@
   "correlation_id": "prompt-hub-construction",
   "role": "implementer",
   "intent_lock": {
-    "objective_hash": "blake3:844c3f36c7cddff357e38ecbea61a31b94ab83f829e3af49f15c33edb695abaf",
+    "objective_hash": "blake3:f60755923f06695e44cd6528b476810ccd715cffda48fbd710d71f3c858f369c",
     "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
-    "acceptance_hash": "blake3:b172e54ab9cbc944bfe51cc70a79d867a9e4faf3f698a994e1a5fae5c9af4f73"
+    "acceptance_hash": "blake3:4709c6fbfa084c2036a0f6c68257963a076fd69ed50ebea3a417cfbc41a4946e"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
 }
