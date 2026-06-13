@@ -1278,6 +1278,27 @@ impl PromptHub {
         Ok(result)
     }
 
+    /// Convert a multi-modal [`UserInput`] into a structured [`Intent`].
+    ///
+    /// Delegates to [`MultiModalInput`](crate::multimodal_input::MultiModalInput),
+    /// which handles every `InputType` — text, voice, screenshot, sketch, file,
+    /// and URL — inferring the domain, role, task type, and complexity of the
+    /// request. This is the front-door normalizer that turns any input modality
+    /// into the `Intent` consumed by the vibe/orchestration path.
+    ///
+    /// Always available (not feature-gated); the processor is stateless.
+    ///
+    /// # Arguments
+    /// * `input` — The [`UserInput`] to normalize (its `input_type` + `extracted_text`).
+    ///
+    /// # Returns
+    /// A structured [`Intent`] suitable for downstream classification or routing.
+    #[instrument(skip(self))]
+    pub async fn process_input(&self, input: UserInput) -> Result<Intent> {
+        use crate::multimodal_input::MultiModalInput;
+        MultiModalInput.process(input).await
+    }
+
     // ── Context gathering ─────────────────────────────────────────────────
 
     /// Gather project context from the filesystem at *project_path*.
@@ -3304,6 +3325,41 @@ mod tests {
             .expect("counting tokens for a stored prompt should succeed");
         assert_eq!(count.model, "gpt-4");
         assert!(count.tokens >= 1, "expected at least 1 token");
+    }
+
+    #[tokio::test]
+    async fn test_process_input_text_and_screenshot() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Text modality → coding-domain Create intent (full normalization runs).
+        let text_intent = hub
+            .process_input(UserInput {
+                input_type: InputType::Text,
+                raw_data: vec![],
+                extracted_text: "Create a REST API with user authentication".to_string(),
+            })
+            .await
+            .expect("processing text input through the hub should succeed");
+        assert_eq!(text_intent.domain, Domain::Coding);
+        assert_eq!(text_intent.task_type, TaskType::Create);
+        assert_eq!(text_intent.role, Role::Orchestrator);
+
+        // A non-text modality the vibe text-classifier can't handle on its own:
+        // a screenshot routes to the design domain via the architect role.
+        let shot_intent = hub
+            .process_input(UserInput {
+                input_type: InputType::Screenshot,
+                raw_data: vec![1, 2, 3],
+                extracted_text: "Login page with dark mode".to_string(),
+            })
+            .await
+            .expect("processing screenshot input through the hub should succeed");
+        assert_eq!(shot_intent.domain, Domain::Design);
+        assert_eq!(shot_intent.role, Role::Architect);
+        assert!(shot_intent.raw_text.contains("Build UI like screenshot"));
     }
 
     #[tokio::test]

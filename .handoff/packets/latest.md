@@ -9,12 +9,11 @@ A non-technical user makes any request; prompt_hub transforms, communicates, and
 Git > FLEET ledger (meta/.handoff/ledger.db) > tasks/*.task.json > this packet.
 
 ## 3. Progress
-Done: 28/40.  FLEET tamper-evident events verified: 19.
+Done: 29/40.  FLEET tamper-evident events verified: 20.
 
 ## 4. Remaining
 - [P2] **PHTASK-0029** — Decide `defaults.rs` (seed_database no-op)
 - [P3] **PHTASK-0030** — Wire or gate `shutdown.rs` (ShutdownCoordinator)
-- [P1] **PHTASK-0031** — Complete or remove `multimodal_input.rs`
 - [P2] **PHTASK-0032** — Safe plugin discovery for `plugins.rs`
 - [P1] **PHTASK-0033** — Wire `templates.rs` TemplateEngine (verify stale claim)
 - [P3] **PHTASK-0034** — Make Junie a first-class PromptHub field

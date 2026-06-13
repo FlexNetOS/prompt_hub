@@ -2,7 +2,7 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0031",
   "title": "Complete or remove `multimodal_input.rs`",
-  "status": "backlog",
+  "status": "done",
   "priority": "P1",
   "objective": "multimodal_input.rs (345 lines): process() has empty match arms for all InputType variants; zero references. Complete the file-upload handling (extends multimodal PR #53) or remove the pub mod.",
   "path_scope": [
@@ -27,5 +27,7 @@
     "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
     "acceptance_hash": "blake3:c7db7fac60d75748d71160b69f22f8194ec8c4c8184aa71bac927150a7799969"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "drift_note": "CARD PREMISE WAS STALE (Rust-native invariant: code wins over prose). The objective claimed 'process() has empty match arms for all InputType variants' \u2014 FALSE: the module is fully implemented (all 6 InputType arms construct proper Intents + infer_domain/task_type/complexity heuristics) with 11 passing tests. The real gap was 'zero references' = the complete module was UNWIRED.",
+  "resolution": "Decision = COMPLETE-by-wiring (not remove \u2014 it's good, tested code). Verified the module is complete (11 tests pass). Added PromptHub::process_input(UserInput)->Intent (hub.rs, always-on, delegates to MultiModalInput::process), making the staged feature reachable from the fa\u00e7ade (and thence CLI/server). Added hub test test_process_input_text_and_screenshot. Gates green: all-features check/clippy(-D warnings)/fmt; default-features build OK; new + 11 module tests pass."
 }
