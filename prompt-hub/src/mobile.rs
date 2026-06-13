@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Mobile-first prompt management layer.
 //!
 //! Provides offline-first CRUD with SQLite-on-device storage, bandwidth-aware sync, and
