@@ -958,7 +958,9 @@ mod tests {
 
         match output {
             AccessibleOutput::Braille(text) => {
-                assert_eq!(text.len(), 2);
+                // Braille code points (U+2800–U+28FF) are 3 bytes each in UTF-8,
+                // so assert on char count, not byte length.
+                assert_eq!(text.chars().count(), 2);
                 // a -> U+2801 (dots-1)
                 let a_braille = text.chars().next().expect("should have first char");
                 assert_eq!(a_braille, '\u{2801}');
@@ -996,7 +998,9 @@ mod tests {
 
         match output {
             AccessibleOutput::Braille(text) => {
-                assert_eq!(text.len(), 5); // a + space + b (space becomes U+2800)
+                // "a b" -> 3 braille cells (a, U+2800 blank, b); assert char
+                // count, not byte length (each cell is 3 UTF-8 bytes).
+                assert_eq!(text.chars().count(), 3);
                 assert_eq!(text.chars().nth(1), Some('\u{2800}'));
             }
             other => panic!("Expected Braille output, got {:?}", other),
