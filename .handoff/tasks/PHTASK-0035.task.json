@@ -2,7 +2,7 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0035",
   "title": "Cover remaining hub methods with server routes",
-  "status": "backlog",
+  "status": "done",
   "priority": "P1",
   "objective": "~48 hub methods have full core impls but NO HTTP surface (evolve + satisfaction now done). Wire the next top-priority methods (e.g. fallback chains, remaining feature engines) as routes.",
   "path_scope": [
@@ -29,4 +29,5 @@
   },
   "source": "migrated from _workspace/backlog.md (2026-06-13)",
   "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
+  "resolution": "Exposed 4 already-built but HTTP-surfaceless core methods as routes (thin shells, no downgrade): POST /api/v1/prompts/{id}/tokens (count_prompt_tokens), /cost (estimate_prompt_cost), /render (render_prompt), POST /api/v1/input/process (process_input). 4 request DTOs; manual JSON mapping for non-Serialize TokenCount/CostEstimateDetail (no core-API change); Intent serialized directly. Error map mirrors evolve_prompt (bad uuid 400, NotFound 404, Unauthorized 403, ValidationError 422). 8 direct-handler tests (cycle-80 lesson). Gates green both configs; default-build guards hold. Done via worktree feat/hub-methods-server-routes."
 }
