@@ -1074,6 +1074,29 @@ impl PromptHub {
         })
     }
 
+    /// Seed the store with the built-in base role templates (idempotent).
+    ///
+    /// Registers the default Orchestrator/Architect/Implementer/Critic/Reviewer
+    /// templates and the standard handoff template for any that are not already
+    /// present (matched by name), each through the normal RBAC + sanitize +
+    /// audit [`PromptHub::register`] path. Safe to call on every startup: a
+    /// second call inserts nothing.
+    ///
+    /// # Arguments
+    /// * `identity` — caller's [`AgentIdentity`]; must hold the `Write`
+    ///   capability (enforced by the underlying registrations).
+    ///
+    /// # Returns
+    /// The number of templates newly inserted by this call.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write`.
+    /// - any storage/sanitize error surfaced by [`PromptHub::register`].
+    #[instrument(skip(self))]
+    pub async fn seed_defaults(&self, identity: &AgentIdentity) -> Result<usize> {
+        crate::defaults::seed_database(self, identity).await
+    }
+
     // ── Lock management ───────────────────────────────────────────────────
 
     /// Acquire an edit lock on a prompt for exclusive modification.

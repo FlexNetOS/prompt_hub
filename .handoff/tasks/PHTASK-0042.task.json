@@ -1,0 +1,36 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0042",
+  "title": "Wire `prompthub init --seed` to PromptHub::seed_defaults",
+  "status": "backlog",
+  "priority": "P3",
+  "objective": "INCOMPLETE FEATURE (thin-shell wiring): the core seeding feature is now complete \u2014 `PromptHub::seed_defaults(identity)` idempotently registers the six base role templates (done in PHTASK-0029). Surface it from the CLI: add a `--seed` flag to the `init` command (prompthub/src/cli.rs `Commands::Init`) and have commands/init.rs call `hub.seed_defaults()` after creating the store, reporting how many templates were inserted. Upgrade only \u2014 wire the existing core method into the CLI entry point; do not reimplement seeding in the shell.",
+  "path_scope": [
+    "prompthub/**"
+  ],
+  "acceptance_criteria": [
+    "`prompthub init --seed` creates the store and calls PromptHub::seed_defaults",
+    "init reports the number of templates seeded",
+    "a CLI test covers the --seed path"
+  ],
+  "test_commands": [
+    "cargo test -p prompthub init",
+    "cargo clippy -p prompthub --all-targets -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [
+    "PHTASK-0029"
+  ],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:c5e25364bceb593ea601d10b229eb96aaa1c72d57e87053bf8da20ca625b3ddc",
+    "path_scope_hash": "blake3:6be561b2fe59dedf307317a0ace5ff90247a383d55afb92d8183438a3ba01286",
+    "acceptance_hash": "blake3:fe274b23b16a0fdbc2690ce7cf20e95183c0e9432ee3ff2475604b52e8fcc2a8"
+  },
+  "source": "follow-up from PHTASK-0029 (core seeding complete; CLI shell wiring is separate crate scope)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. Wire the existing core method into the CLI; never reimplement or stub."
+}
