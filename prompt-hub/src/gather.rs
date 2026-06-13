@@ -455,7 +455,11 @@ impl SmartContextGatherer {
         let mut patterns = Vec::new();
 
         for entry in entries {
-            let full_path = root.join(&entry.path).to_string_lossy().to_string();
+            // Read through the absolute path, but record the already-normalized
+            // forward-slash relative path so emitted patterns are cross-platform
+            // stable (matches RelevanceEntry.path; avoids leaking Windows `\`).
+            let full_path = root.join(&entry.path);
+            let rel_path = entry.path.clone();
             if let Ok(content) = tokio::fs::read_to_string(&full_path).await {
                 let lines: Vec<&str> = content.lines().take(PATTERN_READ_LINES).collect();
                 for (idx, line) in lines.iter().enumerate() {
@@ -465,7 +469,7 @@ impl SmartContextGatherer {
                     // Import patterns.
                     if let Some(m) = regex_import(trimmed) {
                         patterns.push(CodePattern {
-                            file_path: full_path.clone(),
+                            file_path: rel_path.clone(),
                             pattern_type: PatternType::Import(PathPattern(m.to_string())),
                             line_number: line_num,
                             significance_score: 0.6,
@@ -476,7 +480,7 @@ impl SmartContextGatherer {
                     // Function signatures.
                     if let Some(m) = regex_fn(trimmed) {
                         patterns.push(CodePattern {
-                            file_path: full_path.clone(),
+                            file_path: rel_path.clone(),
                             pattern_type: PatternType::FunctionSignature(m.to_string()),
                             line_number: line_num,
                             significance_score: 0.7,
@@ -487,7 +491,7 @@ impl SmartContextGatherer {
                     // Struct definitions.
                     if let Some(m) = regex_struct(trimmed) {
                         patterns.push(CodePattern {
-                            file_path: full_path.clone(),
+                            file_path: rel_path.clone(),
                             pattern_type: PatternType::StructDefinition {
                                 name: m.to_string(),
                                 fields_count: count_fields(trimmed),
@@ -501,7 +505,7 @@ impl SmartContextGatherer {
                     // Trait definitions.
                     if let Some(m) = regex_trait(trimmed) {
                         patterns.push(CodePattern {
-                            file_path: full_path.clone(),
+                            file_path: rel_path.clone(),
                             pattern_type: PatternType::TraitDefinition {
                                 name: m.to_string(),
                                 methods: count_trait_methods(&content),
