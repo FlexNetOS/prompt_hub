@@ -28,7 +28,6 @@ pub mod auth;
 pub mod auto_purge;
 #[cfg(feature = "beta-program")]
 pub mod beta_program;
-#[cfg(feature = "budget")]
 pub mod budget;
 #[cfg(feature = "chaos")]
 pub mod chaos;
