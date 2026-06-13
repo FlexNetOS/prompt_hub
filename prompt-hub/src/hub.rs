@@ -236,6 +236,8 @@ pub struct PromptHub {
     lock_manager: LockManager,
     metrics: Arc<MetricsCollector>,
     sync: SyncManager,
+    /// Drives orderly shutdown of background daemons and the axum server.
+    shutdown_coordinator: crate::shutdown::ShutdownCoordinator,
     hooks: HookRegistry,
     /// The in-repo Junie orchestrator agent. The default [`JunieHook`]
     /// registered in [`HookRegistry`] wraps Junie's orchestration around core
@@ -358,6 +360,7 @@ impl PromptHub {
             lock_manager: LockManager::new(),
             metrics: metrics.clone(),
             sync: SyncManager::new(),
+            shutdown_coordinator: crate::shutdown::ShutdownCoordinator::new(),
             hooks: HookRegistry::new(),
             junie: Junie::new(),
             quality_gate: Arc::new(QualityGate::new()),
@@ -591,6 +594,22 @@ impl PromptHub {
     /// accessor exposes the orchestrator itself as a first-class subsystem.
     pub fn junie(&self) -> &Junie {
         &self.junie
+    }
+
+    /// Return a clone of the hub's [`ShutdownCoordinator`](crate::shutdown::ShutdownCoordinator).
+    ///
+    /// Background daemons and the axum server subscribe to the returned handle
+    /// (via [`subscribe`](crate::shutdown::ShutdownCoordinator::subscribe)) so
+    /// they all unwind on a single signal. The signal is fired by
+    /// [`PromptHub::shutdown`] or, for signal-driven exit, by
+    /// [`ShutdownCoordinator::wait_for_signal`](crate::shutdown::ShutdownCoordinator::wait_for_signal).
+    pub fn shutdown_coordinator(&self) -> crate::shutdown::ShutdownCoordinator {
+        self.shutdown_coordinator.clone()
+    }
+
+    /// Whether [`shutdown`](Self::shutdown) has already been initiated.
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutdown_coordinator.is_shutting_down()
     }
 
     // ── Chaos engineering ─────────────────────────────────────────────────
@@ -1548,19 +1567,62 @@ impl PromptHub {
 
     // ── Graceful shutdown helper ──────────────────────────────────────────
 
-    /// Gracefully shut down the hub: optimize storage, drain metrics.
+    /// Gracefully shut down the hub in an orderly sequence.
     ///
-    /// Flushes pending WAL checkpoints to disk (via `optimize_on_close`),
-    /// stops metric collection, and releases background resources. Intended
-    /// for use at process exit or during hot-reload cycles.
+    /// Drives the [`ShutdownCoordinator`](crate::shutdown::ShutdownCoordinator)
+    /// and unwinds resources in dependency order:
+    ///
+    /// 1. **Broadcast** the shutdown signal so every subscriber (the axum
+    ///    server, spawned daemons) begins to unwind. Idempotent — calling
+    ///    `shutdown` twice fires the signal once.
+    /// 2. **Stop background daemons** that own their own scheduler loops: the
+    ///    auto-purge daemon and the chaos-automation scheduler (feature-gated).
+    /// 3. **Flush storage** — checkpoint the WAL to disk via
+    ///    [`optimize_on_close`](crate::storage::Storage::optimize_on_close) so
+    ///    no committed data is left only in the write-ahead log.
+    ///
+    /// Daemon-stop steps are best-effort and logged on failure (e.g. a daemon
+    /// that was never started): they must not abort the storage flush, which is
+    /// the data-safety-critical step. Only a WAL-flush failure is returned as an
+    /// error.
+    ///
+    /// Intended for use at process exit or during hot-reload cycles.
     ///
     /// # Returns
     /// `Ok(())` on success, or a [`HubError::StorageError`] if the WAL flush
     /// fails (which would indicate potential data loss).
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
-        info!("Shutting down PromptHub storage...");
+        info!("PromptHub shutdown initiated");
+
+        // 1. Broadcast the shutdown signal to all subscribers. Idempotent.
+        let fired = self.shutdown_coordinator.shutdown();
+        if !fired {
+            info!("PromptHub shutdown already in progress");
+        }
+
+        // 2. Stop background daemons that run their own scheduler loops.
+        #[cfg(feature = "auto-purge")]
+        {
+            // Best-effort: the daemon may never have been started.
+            if let Err(e) = self.stop_purge_daemon() {
+                tracing::debug!("auto-purge daemon not stopped during shutdown: {e}");
+            }
+        }
+        #[cfg(feature = "chaos-automation")]
+        {
+            if let Some(auto) = self.chaos_auto.as_ref()
+                && let Ok(guard) = auto.lock()
+            {
+                guard.shutdown();
+                info!("chaos-automation scheduler signalled to stop");
+            }
+        }
+
+        // 3. Flush storage last so committed data survives the WAL checkpoint.
+        info!("Flushing PromptHub storage...");
         self.storage.optimize_on_close().await?;
+
         info!("PromptHub shutdown complete");
         Ok(())
     }
@@ -3408,6 +3470,47 @@ mod tests {
         // Calling it twice yields the same stable identity (it is a real field,
         // not a freshly-constructed value each call).
         assert_eq!(hub.junie().identity.id, junie.identity.id);
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_runs_cleanly() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        assert!(!hub.is_shutting_down());
+
+        // A subscriber should observe the shutdown signal driven by shutdown().
+        let mut rx = hub.shutdown_coordinator().subscribe();
+
+        hub.shutdown().await.expect("shutdown should run cleanly");
+        assert!(hub.is_shutting_down());
+        assert!(
+            rx.try_recv().is_ok(),
+            "shutdown() should broadcast to subscribers"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_is_idempotent() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        // Two shutdowns must both succeed (the second is a no-op broadcast plus
+        // an idempotent storage flush).
+        hub.shutdown().await.expect("first shutdown");
+        hub.shutdown().await.expect("second shutdown");
+        assert!(hub.is_shutting_down());
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_coordinator_is_shared() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        let coordinator = hub.shutdown_coordinator();
+        // Firing the cloned coordinator must be visible through the hub.
+        assert!(coordinator.shutdown());
+        assert!(hub.is_shutting_down());
     }
 
     #[tokio::test]
