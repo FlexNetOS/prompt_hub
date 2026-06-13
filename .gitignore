@@ -12,6 +12,7 @@ prompthub.db
 .DS_Store
 .worktrees/
 
-# .handoff ledger residency (ADR-0004 §3: ledger is local; fleet/witnessed state is the kernel's)
-.handoff/ledger.db
-.handoff/*.db
+# .handoff per-repo ledger is COMMITTED and feeds the central meta/handoff ledger
+# (ADR-0004 §3 revised 2026-06-13: federated per-repo ledger). WAL/shm sidecars stay
+# ignored via *.db-shm / *.db-wal above; only the ledger db itself is tracked.
+!.handoff/ledger.db

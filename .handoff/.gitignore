@@ -7,5 +7,7 @@ NEEDS-HUMAN
 HANDOFF
 work/
 *.log
-# ADR-0004 §3: never a per-repo ledger.db — events live in the FLEET ledger (meta/.handoff).
-ledger.db
+# ADR-0004 §3 revised 2026-06-13: per-repo ledger.db is COMMITTED and feeds the central
+# meta/handoff ledger (federated per-repo ledger). Negation overrides the root `*.db` ignore;
+# WAL/shm sidecars (ledger.db-wal / -shm) stay ignored via the root *.db-wal / *.db-shm rules.
+!ledger.db
