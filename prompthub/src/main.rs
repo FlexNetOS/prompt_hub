@@ -45,9 +45,9 @@ async fn main() -> Result<()> {
         .init();
 
     match args.command {
-        Commands::Init { path } => {
+        Commands::Init { path, seed } => {
             info!("Initializing prompthub");
-            commands::init::run(path.as_deref()).await?;
+            commands::init::run(path.as_deref(), seed).await?;
         }
         Commands::Add { file, interactive } => {
             info!("Adding prompt");
