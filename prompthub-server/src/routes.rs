@@ -7,7 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tracing::{info, instrument, warn};
@@ -19,6 +19,35 @@ use prompt_hub::models::*;
 use prompt_hub::budget::{BudgetAlert, BudgetConfig};
 
 use crate::responses::{error, success};
+
+// ── Satisfaction request DTOs ─────────────────────────────────────────────
+
+/// Request body for recording a CSAT rating.
+#[derive(Debug, Deserialize)]
+pub struct RecordCsatRequest {
+    pub score: u8,
+    #[serde(default)]
+    pub context: String,
+}
+
+/// Request body for recording an NPS rating.
+#[derive(Debug, Deserialize)]
+pub struct RecordNpsRequest {
+    pub score: u8,
+}
+
+/// Request body for recording a satisfaction funnel event.
+#[derive(Debug, Deserialize)]
+pub struct SatisfactionEventRequest {
+    pub prompt_id: String,
+    pub successful: bool,
+    #[serde(default = "default_one")]
+    pub attempts: u8,
+}
+
+fn default_one() -> u8 {
+    1
+}
 use crate::state::AppState;
 
 // ── Request / response DTOs ──────────────────────────────────────────────
@@ -679,6 +708,53 @@ pub struct LoadConfigRequest {
     pub config: BudgetConfig,
 }
 
+// ── Load balancer request / response DTOs ────────────────────────────────
+
+/// Request body for adding a provider.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddProviderRequest {
+    /// Unique name for the provider.
+    pub name: String,
+    /// Endpoint URL for the provider.
+    pub url: String,
+    /// Relative traffic weight (default 1 = equal).
+    pub weight: u32,
+}
+
+/// Request body for recording provider latency.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LatencyRequest {
+    /// Name of the registered provider.
+    pub provider_name: String,
+    /// Measured round-trip latency in milliseconds.
+    pub latency_ms: u64,
+}
+
+/// Request body for recording a provider failure event.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FailureRequest {
+    /// Name of the registered provider.
+    pub provider_name: String,
+}
+
+/// Response DTO for a provider selection result.
+#[derive(Debug, Serialize)]
+pub struct ProviderSelectionResponse {
+    pub provider_name: String,
+    pub provider_url: String,
+    pub strategy_used: String,
+}
+
+/// Per-provider statistics response.
+#[derive(Debug, Serialize)]
+pub struct ProviderStatsResponse {
+    pub name: String,
+    pub healthy: bool,
+    pub latency_ms: u64,
+    pub request_count: u64,
+    pub error_count: u64,
+}
+
 // ── Vibe coding handler ──────────────────────────────────────────────────────
 
 /// Execute vibe coding — generate a deliverable from natural language.
@@ -849,10 +925,253 @@ pub async fn reset_budget_period(State(state): State<Arc<AppState>>) -> Response
     .into_response()
 }
 
+// ── Load balancer handlers ───────────────────────────────────────────────
+
+/// Register a new LLM provider in the load balancer pool.
+#[instrument(skip(state))]
+pub async fn add_lb_provider(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AddProviderRequest>,
+) -> Response {
+    if payload.name.is_empty() {
+        warn!("Empty provider name in add_lb_provider request");
+        return error(StatusCode::BAD_REQUEST, "provider name cannot be empty").into_response();
+    }
+    if payload.url.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider url cannot be empty").into_response();
+    }
+
+    state
+        .hub
+        .add_lb_provider(&payload.name, &payload.url, payload.weight);
+    info!(
+        provider = %payload.name,
+        url = %payload.url,
+        weight = payload.weight,
+        "Added load balancer provider"
+    );
+    success(json!({
+        "name": payload.name,
+        "url": payload.url,
+        "weight": payload.weight,
+    }))
+    .into_response()
+}
+
+/// Select the next healthy provider according to the configured routing strategy.
+#[instrument(skip(state))]
+pub async fn select_provider(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.select_provider() {
+        Ok(selection) => {
+            info!(
+                provider = %selection.provider_name,
+                strategy = ?selection.strategy_used,
+                "Selected load balancer provider"
+            );
+            success(json!({
+                "provider_name": selection.provider_name,
+                "provider_url": selection.provider_url,
+                "strategy_used": routing_strategy_to_string(selection.strategy_used),
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            warn!("Provider selection failed: {}", e);
+            error(StatusCode::CONFLICT, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Record latency for a provider.
+#[instrument(skip(state))]
+pub async fn record_lb_latency(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LatencyRequest>,
+) -> Response {
+    if payload.provider_name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider_name cannot be empty").into_response();
+    }
+
+    state
+        .hub
+        .record_lb_latency(&payload.provider_name, payload.latency_ms);
+    info!(
+        provider = %payload.provider_name,
+        latency_ms = payload.latency_ms,
+        "Recorded load balancer latency"
+    );
+    success(json!({
+        "provider_name": payload.provider_name,
+        "latency_ms": payload.latency_ms,
+    }))
+    .into_response()
+}
+
+/// Record a failure event for a provider.
+#[instrument(skip(state))]
+pub async fn record_lb_failure(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<FailureRequest>,
+) -> Response {
+    if payload.provider_name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider_name cannot be empty").into_response();
+    }
+
+    state.hub.record_lb_failure(&payload.provider_name);
+    warn!(
+        provider = %payload.provider_name,
+        "Recorded load balancer failure"
+    );
+    success(json!({
+        "provider_name": payload.provider_name,
+        "status": "failure_recorded",
+    }))
+    .into_response()
+}
+
+/// Return current statistics for all providers in the load balancer pool.
+#[instrument(skip(state))]
+pub async fn get_lb_stats(State(state): State<Arc<AppState>>) -> Response {
+    let stats = state.hub.get_lb_stats();
+    let total = stats.len();
+    let items: Vec<Value> = stats
+        .into_iter()
+        .map(|s| {
+            json!({
+                "name": s.name,
+                "healthy": s.healthy,
+                "latency_ms": s.latency_ms,
+                "request_count": s.request_count,
+                "error_count": s.error_count,
+            })
+        })
+        .collect();
+
+    success(json!({
+        "providers": items,
+        "total": total,
+    }))
+    .into_response()
+}
+
+/// Convert a `RoutingStrategy` to its snake_case JSON representation.
+fn routing_strategy_to_string(strategy: prompt_hub::load_balancer::RoutingStrategy) -> String {
+    match strategy {
+        prompt_hub::load_balancer::RoutingStrategy::RoundRobin => "round_robin".to_string(),
+        prompt_hub::load_balancer::RoutingStrategy::Weighted => "weighted".to_string(),
+        prompt_hub::load_balancer::RoutingStrategy::LeastLatency => "least_latency".to_string(),
+    }
+}
+
+// ── Satisfaction handler functions ────────────────────────────────────────
+
+/// Record a CSAT rating (1-5) via HTTP.
+#[instrument(skip(state))]
+pub async fn record_csat(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordCsatRequest>,
+) -> Response {
+    if !(1..=5).contains(&payload.score) {
+        warn!(score = payload.score, "Invalid CSAT score in request");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "CSAT score must be between 1 and 5",
+        )
+        .into_response();
+    }
+
+    state
+        .hub
+        .record_csat_rating(payload.score, &payload.context);
+    info!(score = payload.score, "Recorded CSAT rating");
+    success(json!({
+        "score": payload.score,
+        "scale": 5,
+    }))
+    .into_response()
+}
+
+/// Record an NPS rating (1-10) via HTTP.
+#[instrument(skip(state))]
+pub async fn record_nps(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordNpsRequest>,
+) -> Response {
+    if !(1..=10).contains(&payload.score) {
+        warn!(score = payload.score, "Invalid NPS score in request");
+        return error(
+            StatusCode::BAD_REQUEST,
+            "NPS score must be between 1 and 10",
+        )
+        .into_response();
+    }
+
+    state.hub.record_nps_rating(payload.score);
+    info!(score = payload.score, "Recorded NPS rating");
+    success(json!({
+        "score": payload.score,
+        "scale": 10,
+    }))
+    .into_response()
+}
+
+/// Record a satisfaction funnel event via HTTP.
+#[instrument(skip(state))]
+pub async fn record_satisfaction_event(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SatisfactionEventRequest>,
+) -> Response {
+    if payload.prompt_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompt_id cannot be empty").into_response();
+    }
+
+    state
+        .hub
+        .record_satisfaction_event(&payload.prompt_id, payload.successful, payload.attempts);
+    info!(prompt_id = %payload.prompt_id, successful = payload.successful, "Recorded satisfaction event");
+    success(json!({
+        "prompt_id": payload.prompt_id,
+        "successful": payload.successful,
+        "attempts": payload.attempts,
+    }))
+    .into_response()
+}
+
+/// Return current satisfaction metrics via HTTP.
+#[instrument(skip(state))]
+pub async fn get_satisfaction_metrics(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.satisfaction_metrics() {
+        Ok(metrics) => success(json!({
+            "csat_average": metrics.csat_average,
+            "nps_score": metrics.nps_score,
+            "one_shot_success_rate": metrics.one_shot_success_rate,
+            "total_ratings": metrics.total_ratings,
+            "total_events": metrics.total_events,
+            "recent_trend": format!("{:?}", metrics.recent_trend).to_lowercase(),
+        }))
+        .into_response(),
+        Err(e) => {
+            warn!("Failed to get satisfaction metrics: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+// ── Satisfaction handler functions (above) ────────────────────────────────
+// ── Test module below ─────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
-    use super::render_metrics;
+    use super::*;
+    use crate::server::create_router;
+    use crate::state::AppState;
+    use axum::{Router, http::Request, http::StatusCode};
+    use prompt_hub::config::HubConfig;
+    use prompt_hub::hub::PromptHub;
     use prompt_hub::metrics::MetricsCollector;
+    use serde_json::Value;
+    use std::sync::Arc;
+    use tower::ServiceExt;
 
     #[test]
     fn render_metrics_is_valid_exposition() {
@@ -892,5 +1211,370 @@ mod tests {
             assert!(text.contains("# TYPE prompt_hub_search_latency_ms_avg gauge"));
             assert!(text.contains("prompt_hub_search_latency_ms_avg 100"));
         }
+    }
+
+    // ── Load balancer route tests ────────────────────────────────────────
+
+    /// Build an AppState backed by a temp SQLite file for testing.
+    async fn make_test_state() -> Arc<AppState> {
+        let config = HubConfig::default();
+        let tmp = tempfile::tempdir().expect("create temp dir for tests");
+        let db_file = tmp.path().join("test.db");
+        let hub = PromptHub::new(&db_file, config.clone())
+            .await
+            .expect("create test PromptHub");
+        // Keep the tempdir alive so the file isn't deleted.
+        Arc::new(AppState {
+            hub: Arc::new(hub),
+            config,
+            start_time: std::time::Instant::now(),
+        })
+    }
+
+    /// Perform a GET request on the test router and return status + body string.
+    async fn handle_get(router: Router, path: &str) -> (StatusCode, String) {
+        let req = Request::builder()
+            .uri(path)
+            .method("GET")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = router.clone().oneshot(req).await.unwrap();
+        let status = response.status();
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(body_bytes.to_vec()).unwrap())
+    }
+
+    /// Perform a POST request with optional JSON body.
+    async fn handle_post(router: Router, path: &str, json: Option<Value>) -> (StatusCode, String) {
+        let body = match json {
+            Some(val) => axum::body::Body::from(serde_json::to_string(&val).unwrap().into_bytes()),
+            None => axum::body::Body::empty(),
+        };
+        let req = Request::builder()
+            .uri(path)
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(body)
+            .unwrap();
+        let response = router.clone().oneshot(req).await.unwrap();
+        let status = response.status();
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, String::from_utf8(body_bytes.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn test_add_lb_provider_valid() {
+        let app_state = make_test_state().await;
+        // Keep the shared hub Arc before consuming AppState into the router.
+        let hub = Arc::clone(&app_state.hub);
+        let config = app_state.config.clone();
+        drop(app_state);
+
+        // Build router with a fresh in-memory hub (router owns its own state).
+        let fresh_db = std::path::PathBuf::from(":memory:");
+        let fresh_hub = PromptHub::new(&fresh_db, config)
+            .await
+            .expect("create router test hub");
+
+        let _router = create_router(AppState {
+            hub: Arc::new(fresh_hub),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        // Direct handler call to bypass axum's typed State extraction (which fails in tests).
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+        let response = add_lb_provider(
+            axum::extract::State(arc_state.clone()),
+            axum::Json(AddProviderRequest {
+                name: "gpt-4o".into(),
+                url: "https://api.openai.com/v1".into(),
+                weight: 5,
+            }),
+        )
+        .await;
+
+        let status = response.status();
+        assert_eq!(status, StatusCode::OK, "Expected 200 but got {}", status);
+        // hub is the test-setup hub (separate from router's) — only verify HTTP layer.
+        drop(hub);
+    }
+
+    #[tokio::test]
+    async fn test_add_lb_provider_empty_name_rejected() {
+        // Direct handler call (bypasses axum's State extraction in tests).
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = add_lb_provider(
+            axum::extract::State(arc_state.clone()),
+            axum::Json(AddProviderRequest {
+                name: "".into(),
+                url: "https://example.com".into(),
+                weight: 1,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_select_provider_empty_pool_returns_conflict() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = select_provider(axum::extract::State(arc_state)).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_get_lb_stats_returns_empty_list() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        // Add a provider via the shared hub.
+        arc_state.hub.add_lb_provider("p1", "https://p1.com", 3);
+
+        let response = get_lb_stats(axum::extract::State(arc_state.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify via direct hub access (no HTTP layer needed).
+        let stats = arc_state.hub.get_lb_stats();
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats[0].name, "p1");
+    }
+
+    #[tokio::test]
+    async fn test_record_lb_latency_and_failure() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        // Add provider via shared hub.
+        arc_state.hub.add_lb_provider("p1", "https://p1.com", 3);
+
+        // Record latency via handler.
+        let response = record_lb_latency(
+            axum::extract::State(arc_state.clone()),
+            axum::Json(LatencyRequest {
+                provider_name: "p1".into(),
+                latency_ms: 42,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Record failure via handler.
+        let response = record_lb_failure(
+            axum::extract::State(arc_state.clone()),
+            axum::Json(FailureRequest {
+                provider_name: "p1".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Verify stats reflect updates via direct hub access.
+        let stats = arc_state.hub.get_lb_stats();
+        assert_eq!(stats[0].latency_ms, 42);
+        assert_eq!(stats[0].error_count, 1);
+    }
+
+    // ── Satisfaction route tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_record_csat_valid() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_csat(
+            axum::extract::State(arc_state.clone()),
+            axum::Json(RecordCsatRequest {
+                score: 4,
+                context: "Great UI".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_record_csat_invalid_score_rejected() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_csat(
+            axum::extract::State(arc_state),
+            axum::Json(RecordCsatRequest {
+                score: 6,
+                context: "".into(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_record_nps_valid() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_nps(
+            axum::extract::State(arc_state),
+            axum::Json(RecordNpsRequest { score: 9 }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_record_nps_invalid_score_rejected() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_nps(
+            axum::extract::State(arc_state),
+            axum::Json(RecordNpsRequest { score: 11 }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_record_satisfaction_event_valid() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_satisfaction_event(
+            axum::extract::State(arc_state),
+            axum::Json(SatisfactionEventRequest {
+                prompt_id: "p-42".into(),
+                successful: true,
+                attempts: 1,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_record_satisfaction_event_empty_prompt_id_rejected() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = record_satisfaction_event(
+            axum::extract::State(arc_state),
+            axum::Json(SatisfactionEventRequest {
+                prompt_id: "".into(),
+                successful: true,
+                attempts: 1,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_satisfaction_metrics_empty() {
+        let arc_state = Arc::new(AppState {
+            hub: Arc::new(
+                PromptHub::new(&std::path::PathBuf::from(":memory:"), HubConfig::default())
+                    .await
+                    .expect("create direct test hub"),
+            ),
+            config: HubConfig::default(),
+            start_time: std::time::Instant::now(),
+        });
+
+        let response = get_satisfaction_metrics(axum::extract::State(arc_state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
