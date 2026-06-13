@@ -25,5 +25,6 @@
     "path_scope_hash": "blake3:90bf7a86aa0211449fa375d1da825c9cf3cb0ba36410f646ce9de20d388952b3",
     "acceptance_hash": "blake3:1d68edcec9999ce8d2f094192657fb532d0bdf6e9b38ba0d05108ce9c9855284"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
 }

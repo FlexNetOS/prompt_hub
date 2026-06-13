@@ -11,3 +11,7 @@ prompthub.db
 *.rs.bk
 .DS_Store
 .worktrees/
+
+# .handoff ledger residency (ADR-0004 §3: ledger is local; fleet/witnessed state is the kernel's)
+.handoff/ledger.db
+.handoff/*.db

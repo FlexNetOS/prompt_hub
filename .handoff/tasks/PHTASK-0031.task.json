@@ -1,7 +1,7 @@
 {
   "schema": "handoff.task.v1",
   "id": "PHTASK-0031",
-  "title": "Complete or remove `multimodal_input.rs`",
+  "title": "Complete `multimodal_input.rs` \u2014 file-upload InputType handling (wired)",
   "status": "done",
   "priority": "P1",
   "objective": "multimodal_input.rs (345 lines): process() has empty match arms for all InputType variants; zero references. Complete the file-upload handling (extends multimodal PR #53) or remove the pub mod.",
@@ -29,5 +29,6 @@
   },
   "source": "migrated from _workspace/backlog.md (2026-06-13)",
   "drift_note": "CARD PREMISE WAS STALE (Rust-native invariant: code wins over prose). The objective claimed 'process() has empty match arms for all InputType variants' \u2014 FALSE: the module is fully implemented (all 6 InputType arms construct proper Intents + infer_domain/task_type/complexity heuristics) with 11 passing tests. The real gap was 'zero references' = the complete module was UNWIRED.",
-  "resolution": "Decision = COMPLETE-by-wiring (not remove \u2014 it's good, tested code). Verified the module is complete (11 tests pass). Added PromptHub::process_input(UserInput)->Intent (hub.rs, always-on, delegates to MultiModalInput::process), making the staged feature reachable from the fa\u00e7ade (and thence CLI/server). Added hub test test_process_input_text_and_screenshot. Gates green: all-features check/clippy(-D warnings)/fmt; default-features build OK; new + 11 module tests pass."
+  "resolution": "Decision = COMPLETE-by-wiring (not remove \u2014 it's good, tested code). Verified the module is complete (11 tests pass). Added PromptHub::process_input(UserInput)->Intent (hub.rs, always-on, delegates to MultiModalInput::process), making the staged feature reachable from the fa\u00e7ade (and thence CLI/server). Added hub test test_process_input_text_and_screenshot. Gates green: all-features check/clippy(-D warnings)/fmt; default-features build OK; new + 11 module tests pass.",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
 }
