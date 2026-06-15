@@ -58,7 +58,7 @@ argon2 = { version = "0.5.3" }
 # re-exports, so `OsRng` resolves in isolated default-feature builds too (not only
 # under --all-features). NOTE: the version MUST match argon2's (0.5.x) — a 0.6.x
 # dep is a different crate and never unifies (that was the latent default-build bug).
-password-hash = { version = "0.5", features = ["getrandom"] }
+password-hash = { version = "0.6", features = ["getrandom"] }
 rustls = { version = "0.23.26" }
 tokio-rustls = { version = "0.26.2" }
 ratatui = { version = "0.30" }
