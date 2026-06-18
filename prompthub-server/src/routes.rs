@@ -756,7 +756,7 @@ pub struct LoadConfigRequest {
 
 // ── Load balancer request / response DTOs ────────────────────────────────
 
-/// Request body for adding a provider.
+/// Request body for adding a provider to the load balancer pool.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AddProviderRequest {
     /// Unique name for the provider.
@@ -1476,7 +1476,847 @@ pub async fn render_prompt_route(
     }
 }
 
-// ── Satisfaction handler functions (above) ────────────────────────────────
+// ── Provider health handler functions (feature: multi-provider, always-on) ─
+// ── Routes for provider health monitoring and management ───────────────────
+
+/// Request body for registering a provider.
+#[derive(Debug, Deserialize)]
+pub struct RegisterProviderRequest {
+    pub name: String,
+    pub url: String,
+}
+
+/// Request body for recording a success event.
+#[derive(Debug, Deserialize)]
+pub struct RecordSuccessRequest {
+    pub provider_name: String,
+    #[serde(default)]
+    pub latency_ms: u64,
+}
+
+/// Request body for recording a failure event.
+#[derive(Debug, Deserialize)]
+pub struct RecordFailureRequest {
+    pub provider_name: String,
+}
+
+/// Request body for checking health.
+#[derive(Debug, Deserialize)]
+pub struct HealthCheckRequest {
+    pub provider_name: String,
+}
+
+/// Provider health status response.
+#[derive(Debug, Serialize)]
+pub struct HealthStatusResponse {
+    pub provider_name: String,
+    pub healthy: bool,
+}
+
+/// Full health summary response.
+#[derive(Debug, Serialize)]
+pub struct HealthSummaryResponse {
+    pub providers: Vec<ProviderHealthRecord>,
+    pub healthy_count: usize,
+    pub degraded_count: usize,
+    pub unhealthy_count: usize,
+    #[serde(rename = "overall")]
+    pub overall_status: String,
+}
+
+/// Provider health record (exposed in summary).
+#[derive(Debug, Serialize)]
+pub struct ProviderHealthRecord {
+    pub name: String,
+    pub url: String,
+    #[serde(rename = "status")]
+    pub health_status: String,
+    pub last_latency_ms: u64,
+    pub error_count: u32,
+    pub success_count: u32,
+}
+
+impl From<prompt_hub::provider_health::ProviderHealthRecord> for ProviderHealthRecord {
+    fn from(record: prompt_hub::provider_health::ProviderHealthRecord) -> Self {
+        let status_str = match record.status {
+            prompt_hub::provider_health::HealthStatus::Healthy => "healthy",
+            prompt_hub::provider_health::HealthStatus::Degraded => "degraded",
+            prompt_hub::provider_health::HealthStatus::Unhealthy => "unhealthy",
+            prompt_hub::provider_health::HealthStatus::Unknown => "unknown",
+        };
+        Self {
+            name: record.name,
+            url: record.url,
+            health_status: status_str.to_string(),
+            last_latency_ms: record.last_latency_ms,
+            error_count: record.error_count,
+            success_count: record.success_count,
+        }
+    }
+}
+
+impl From<prompt_hub::provider_health::HealthSummary> for HealthSummaryResponse {
+    fn from(summary: prompt_hub::provider_health::HealthSummary) -> Self {
+        let overall_str = match summary.overall {
+            prompt_hub::provider_health::HealthStatus::Healthy => "healthy",
+            prompt_hub::provider_health::HealthStatus::Degraded => "degraded",
+            prompt_hub::provider_health::HealthStatus::Unhealthy => "unhealthy",
+            prompt_hub::provider_health::HealthStatus::Unknown => "unknown",
+        };
+        Self {
+            providers: summary.providers.into_iter().map(ProviderHealthRecord::from).collect(),
+            healthy_count: summary.healthy_count,
+            degraded_count: summary.degraded_count,
+            unhealthy_count: summary.unhealthy_count,
+            overall_status: overall_str.to_string(),
+        }
+    }
+}
+
+/// Register a new provider for health monitoring.
+#[instrument(skip(state))]
+pub async fn register_provider_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RegisterProviderRequest>,
+) -> Response {
+    if payload.name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider name cannot be empty").into_response();
+    }
+    if payload.url.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider url cannot be empty").into_response();
+    }
+
+    state.hub.register_provider(&payload.name, &payload.url);
+    info!(
+        provider = %payload.name,
+        url = %payload.url,
+        "Registered provider via HTTP"
+    );
+    success(json!({
+        "name": payload.name,
+        "url": payload.url,
+        "status": "registered"
+    }))
+    .into_response()
+}
+
+/// Record a successful call for a provider.
+#[instrument(skip(state))]
+pub async fn record_success_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordSuccessRequest>,
+) -> Response {
+    if payload.provider_name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider_name cannot be empty").into_response();
+    }
+
+    state
+        .hub
+        .record_success(&payload.provider_name, payload.latency_ms);
+    info!(
+        provider = %payload.provider_name,
+        latency_ms = payload.latency_ms,
+        "Recorded provider success via HTTP"
+    );
+    success(json!({
+        "provider_name": payload.provider_name,
+        "latency_ms": payload.latency_ms,
+        "status": "success_recorded"
+    }))
+    .into_response()
+}
+
+/// Record a failed call for a provider.
+#[instrument(skip(state))]
+pub async fn record_failure_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordFailureRequest>,
+) -> Response {
+    if payload.provider_name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider_name cannot be empty").into_response();
+    }
+
+    state.hub.record_failure(&payload.provider_name);
+    warn!(provider = %payload.provider_name, "Recorded provider failure via HTTP");
+    success(json!({
+        "provider_name": payload.provider_name,
+        "status": "failure_recorded"
+    }))
+    .into_response()
+}
+
+/// Check if a provider is healthy.
+#[instrument(skip(state))]
+pub async fn is_healthy_route(
+    State(state): State<Arc<AppState>>,
+    Query(payload): Query<HealthCheckRequest>,
+) -> Response {
+    if payload.provider_name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider_name cannot be empty").into_response();
+    }
+
+    let healthy = state.hub.is_healthy(&payload.provider_name);
+    info!(
+        provider = %payload.provider_name,
+        healthy = healthy,
+        "Health check via HTTP"
+    );
+    success(json!(HealthStatusResponse {
+        provider_name: payload.provider_name,
+        healthy
+    }))
+    .into_response()
+}
+
+/// Get full health summary for all providers.
+#[instrument(skip(state))]
+pub async fn get_health_summary_route(
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    match state.hub.get_health_summary() {
+        Ok(summary) => {
+            info!("Retrieved health summary via HTTP");
+            success(HealthSummaryResponse::from(summary))
+                .into_response()
+        }
+        Err(e) => {
+            warn!("Failed to get health summary: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}"))
+                .into_response()
+        }
+    }
+}
+
+// ── Multi-provider routing handler functions (feature: multi-provider) ─────
+
+#[cfg(feature = "multi-provider")]
+/// Request body for adding a provider to the multi-provider routing pool.
+#[derive(Debug, Deserialize)]
+pub struct AddMultiProviderRequest {
+    pub name: String,
+    pub vendor: String,
+    pub endpoint: String,
+    #[serde(default)]
+    pub priority: u32,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+}
+
+#[cfg(feature = "multi-provider")]
+fn default_max_retries() -> u32 {
+    3
+}
+
+#[cfg(feature = "multi-provider")]
+impl TryFrom<AddMultiProviderRequest> for prompt_hub::multi_provider::ProviderConfig {
+    type Error = String;
+
+    fn try_from(req: AddMultiProviderRequest) -> Result<Self, Self::Error> {
+        let vendor = match req.vendor.to_lowercase().as_str() {
+            "openai" => prompt_hub::multi_provider::Vendor::OpenAi,
+            "anthropic" => prompt_hub::multi_provider::Vendor::Anthropic,
+            "google" => prompt_hub::multi_provider::Vendor::Google,
+            other => prompt_hub::multi_provider::Vendor::Custom(other.to_string()),
+        };
+        Ok(prompt_hub::multi_provider::ProviderConfig {
+            name: req.name,
+            vendor,
+            endpoint: req.endpoint,
+            priority: req.priority,
+            max_retries: req.max_retries,
+        })
+    }
+}
+
+/// Provider selection routing decision.
+#[derive(Debug, Serialize)]
+pub struct RoutingDecisionResponse {
+    pub provider_name: String,
+    pub vendor: String,
+    pub endpoint: String,
+}
+
+/// Get pool stats for multi-provider routing.
+#[derive(Debug, Serialize)]
+pub struct PoolStatsResponse {
+    pub total_providers: usize,
+    pub healthy: usize,
+    pub degraded: usize,
+    pub unhealthy: usize,
+}
+
+impl From<prompt_hub::multi_provider::PoolStats> for PoolStatsResponse {
+    fn from(stats: prompt_hub::multi_provider::PoolStats) -> Self {
+        Self {
+            total_providers: stats.total_providers,
+            healthy: stats.healthy,
+            degraded: stats.degraded,
+            unhealthy: stats.unhealthy,
+        }
+    }
+}
+
+/// Add a provider to the multi-provider routing pool.
+#[instrument(skip(state))]
+pub async fn add_provider_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AddProviderRequest>,
+) -> Response {
+    if payload.name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "name cannot be empty").into_response();
+    }
+    if payload.endpoint.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "endpoint cannot be empty").into_response();
+    }
+
+    match prompt_hub::multi_provider::ProviderConfig::try_from(payload.clone()) {
+        Ok(config) => {
+            state.hub.add_provider(config);
+            info!(
+                provider = %payload.name,
+                vendor = %payload.vendor,
+                endpoint = %payload.endpoint,
+                priority = payload.priority,
+                "Added provider to routing pool via HTTP"
+            );
+            success(json!({
+                "name": payload.name,
+                "vendor": payload.vendor,
+                "endpoint": payload.endpoint,
+                "status": "added"
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            error(StatusCode::BAD_REQUEST, e).into_response()
+        }
+    }
+}
+
+/// Route a request to the best available provider.
+#[instrument(skip(state))]
+pub async fn route_to_vendor_route(
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    match state.hub.route_to_vendor(None) {
+        Some(decision) => {
+            let vendor_str = match decision.vendor {
+                prompt_hub::multi_provider::Vendor::OpenAi => "openai",
+                prompt_hub::multi_provider::Vendor::Anthropic => "anthropic",
+                prompt_hub::multi_provider::Vendor::Google => "google",
+                prompt_hub::multi_provider::Vendor::Custom(name) => name.as_str(),
+            };
+            info!(
+                provider = %decision.provider_name,
+                vendor = vendor_str,
+                "Routed request to provider via HTTP"
+            );
+            success(json!(RoutingDecisionResponse {
+                provider_name: decision.provider_name.clone(),
+                vendor: vendor_str.to_string(),
+                endpoint: decision.endpoint.clone(),
+            }))
+            .into_response()
+        }
+        None => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no healthy providers available"
+        )
+        .into_response(),
+    }
+}
+
+/// Record a successful request for the multi-provider routing pool.
+#[instrument(skip(state))]
+pub async fn record_provider_success_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordSuccessRequest>,
+) -> Response {
+    if payload.provider_name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider_name cannot be empty").into_response();
+    }
+
+    state.hub.record_provider_success(&payload.provider_name);
+    info!(
+        provider = %payload.provider_name,
+        latency_ms = payload.latency_ms,
+        "Recorded provider success in routing pool via HTTP"
+    );
+    success(json!({
+        "provider_name": payload.provider_name,
+        "status": "success_recorded"
+    }))
+    .into_response()
+}
+
+/// Record a failed request for the multi-provider routing pool.
+#[instrument(skip(state))]
+pub async fn record_provider_failure_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordFailureRequest>,
+) -> Response {
+    if payload.provider_name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "provider_name cannot be empty").into_response();
+    }
+
+    state.hub.record_provider_failure(&payload.provider_name);
+    warn!(provider = %payload.provider_name, "Recorded provider failure via HTTP");
+    success(json!({
+        "provider_name": payload.provider_name,
+        "status": "failure_recorded"
+    }))
+    .into_response()
+}
+
+/// Get health statistics for all providers in the routing pool.
+#[instrument(skip(state))]
+pub async fn get_provider_pool_stats_route(
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    match state.hub.provider_pool_stats() {
+        Ok(stats) => {
+            info!("Retrieved provider pool stats via HTTP");
+            success(PoolStatsResponse::from(stats)).into_response()
+        }
+        Err(e) => {
+            warn!("Failed to get provider pool stats: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+// ── Rollout handler functions (feature: gradual-rollout) ───────────────────
+
+/// Request body for check_rollout.
+#[derive(Debug, Deserialize)]
+pub struct CheckRolloutRequest {
+    pub feature: String,
+    #[serde(default)]
+    pub user_id: Option<String>,
+}
+
+/// Request body for find_rollout_inclusion.
+#[derive(Debug, Deserialize)]
+pub struct FindRolloutInclusionRequest {
+    pub rollout_id: String,
+    pub feature: String,
+    pub user_id: Option<String>,
+}
+
+/// Rollout inclusion check response.
+#[derive(Debug, Serialize)]
+pub struct RolloutInclusionResponse {
+    pub rollout_id: String,
+    pub included: bool,
+}
+
+/// Request body for evaluate_auto_rollback.
+#[derive(Debug, Deserialize)]
+pub struct EvaluateRollbackRequest {
+    pub rollout_id: String,
+    pub error_rate: f64,
+    #[serde(default)]
+    pub latency_p99_ms: u64,
+}
+
+/// Rollout auto-rollback evaluation response.
+#[derive(Debug, Serialize)]
+pub struct RollbackEvaluationResponse {
+    pub rollout_id: String,
+    pub should_rollback: bool,
+}
+
+/// Request body for advance_segment.
+#[derive(Debug, Deserialize)]
+pub struct AdvanceSegmentRequest {
+    pub rollout_id: String,
+    #[serde(default)]
+    pub segment_idx: usize,
+}
+
+/// Segment advancement response.
+#[derive(Debug, Serialize)]
+pub struct AdvanceSegmentResponse {
+    pub rollout_id: String,
+    pub segment_idx: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_stage: Option<String>,
+}
+
+impl From<prompt_hub::RolloutStage> for String {
+    fn from(stage: prompt_hub::RolloutStage) -> Self {
+        match stage {
+            prompt_hub::RolloutStage::Internal => "internal".to_string(),
+            prompt_hub::RolloutStage::Alpha(p) => format!("alpha_{}", p),
+            prompt_hub::RolloutStage::Beta50(_) => "beta50".to_string(),
+            prompt_hub::RolloutStage::Beta90(_) => "beta90".to_string(),
+            prompt_hub::RolloutStage::Production => "production".to_string(),
+        }
+    }
+}
+
+/// Request body for register_rollout.
+#[derive(Debug, Deserialize)]
+pub struct RegisterRolloutRequest {
+    pub rollout_id: String,
+    pub feature: String,
+    pub segments: Vec<RolloutSegmentRequest>,
+    #[serde(default = "default_auto_rollback_threshold")]
+    pub auto_rollback_threshold: f64,
+    #[serde(default)]
+    pub active: bool,
+}
+
+fn default_auto_rollback_threshold() -> f64 {
+    0.05
+}
+
+/// Request body for register_rollout segment.
+#[derive(Debug, Deserialize)]
+pub struct RolloutSegmentRequest {
+    pub name: String,
+    #[serde(default = "default_percentage")]
+    pub percentage: u8,
+    #[serde(default)]
+    pub target_users: Vec<String>,
+}
+
+fn default_percentage() -> u8 {
+    10
+}
+
+impl TryFrom<RolloutSegmentRequest> for prompt_hub::RolloutSegment {
+    type Error = String;
+
+    fn try_from(req: RolloutSegmentRequest) -> Result<Self, Self::Error> {
+        let target_users: Vec<uuid::Uuid> = req
+            .target_users
+            .iter()
+            .map(|s| uuid::Uuid::parse_str(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("invalid UUID in target_users: {}", e))?;
+        Ok(prompt_hub::RolloutSegment {
+            name: req.name,
+            percentage: req.percentage,
+            target_users,
+            rollout_stage: prompt_hub::RolloutStage::Internal,
+            created_at: chrono::Utc::now(),
+        })
+    }
+}
+
+impl TryFrom<RegisterRolloutRequest> for prompt_hub::GraduatedRolloutConfig {
+    type Error = String;
+
+    fn try_from(req: RegisterRolloutRequest) -> Result<Self, Self::Error> {
+        let segments: Vec<prompt_hub::RolloutSegment> = req
+            .segments
+            .iter()
+            .map(prompt_hub::RolloutSegment::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(prompt_hub::GraduatedRolloutConfig {
+            rollout_id: req.rollout_id,
+            feature: req.feature,
+            segments,
+            auto_rollback: prompt_hub::AutoRollbackPolicy::OnErrorRate {
+                threshold: req.auto_rollback_threshold,
+            },
+            active: req.active,
+        })
+    }
+}
+
+/// Check if a user should see the new feature under an active rollout.
+#[instrument(skip(state))]
+pub async fn check_rollout_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckRolloutRequest>,
+) -> Response {
+    if payload.feature.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "feature cannot be empty").into_response();
+    }
+
+    let user_id = match &payload.user_id {
+        Some(s) => match uuid::Uuid::parse_str(s) {
+            Ok(u) => u,
+            Err(_) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid UUID: {}", s),
+                )
+                .into_response();
+            }
+        },
+        None => uuid::Uuid::new_v4(),
+    };
+
+    let canary = prompt_hub::CanaryDeployment {
+        feature: payload.feature.clone(),
+        canary_percentage: 50.0,
+        target_users: vec![],
+        rollback_threshold: 0.05,
+    };
+    let included = state.hub.check_rollout(&canary, user_id);
+    info!(
+        feature = %payload.feature,
+        user_id = %user_id,
+        included = included,
+        "Checked rollout via HTTP"
+    );
+    success(json!({
+        "feature": payload.feature,
+        "user_id": user_id.to_string(),
+        "included": included
+    }))
+    .into_response()
+}
+
+/// Register a new rollout configuration.
+#[instrument(skip(state))]
+pub async fn register_rollout_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RegisterRolloutRequest>,
+) -> Response {
+    match prompt_hub::GraduatedRolloutConfig::try_from(payload.clone()) {
+        Ok(config) => {
+            state.hub.register_rollout(config);
+            info!(
+                rollout_id = %payload.rollout_id,
+                feature = %payload.feature,
+                "Registered rollout via HTTP"
+            );
+            success(json!({
+                "rollout_id": payload.rollout_id,
+                "feature": payload.feature,
+                "status": "registered"
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            error(StatusCode::BAD_REQUEST, e).into_response()
+        }
+    }
+}
+
+/// Check whether a rollout includes a user.
+#[instrument(skip(state))]
+pub async fn find_rollout_inclusion_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<FindRolloutInclusionRequest>,
+) -> Response {
+    if payload.rollout_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "rollout_id cannot be empty").into_response();
+    }
+    if payload.feature.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "feature cannot be empty").into_response();
+    }
+
+    let user_id = match &payload.user_id {
+        Some(s) => match uuid::Uuid::parse_str(s) {
+            Ok(u) => u,
+            Err(_) => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!("invalid UUID: {}", s),
+                )
+                .into_response();
+            }
+        },
+        None => uuid::Uuid::new_v4(),
+    };
+
+    let included = state.hub.find_rollout_inclusion(&payload.rollout_id, &payload.feature, user_id);
+    info!(
+        rollout_id = %payload.rollout_id,
+        feature = %payload.feature,
+        user_id = %user_id,
+        included = ?included,
+        "Checked rollout inclusion via HTTP"
+    );
+    success(json!(RolloutInclusionResponse {
+        rollout_id: payload.rollout_id,
+        included: included.unwrap_or(false),
+    }))
+    .into_response()
+}
+
+/// Evaluate auto-rollback for a rollout.
+#[instrument(skip(state))]
+pub async fn evaluate_auto_rollback_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<EvaluateRollbackRequest>,
+) -> Response {
+    if payload.rollout_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "rollout_id cannot be empty").into_response();
+    }
+
+    let should_rollback = state.hub.evaluate_auto_rollback(
+        &payload.rollout_id,
+        payload.error_rate,
+        payload.latency_p99_ms,
+    );
+    info!(
+        rollout_id = %payload.rollout_id,
+        error_rate = payload.error_rate,
+        latency_p99_ms = payload.latency_p99_ms,
+        should_rollback = ?should_rollback,
+        "Evaluated auto-rollback via HTTP"
+    );
+    success(json!(RollbackEvaluationResponse {
+        rollout_id: payload.rollout_id,
+        should_rollback: should_rollback.unwrap_or(false),
+    }))
+    .into_response()
+}
+
+/// Advance a rollout segment to the next stage.
+#[instrument(skip(state))]
+pub async fn advance_segment_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AdvanceSegmentRequest>,
+) -> Response {
+    if payload.rollout_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "rollout_id cannot be empty").into_response();
+    }
+
+    let new_stage = state.hub.advance_segment(&payload.rollout_id, payload.segment_idx);
+    info!(
+        rollout_id = %payload.rollout_id,
+        segment_idx = payload.segment_idx,
+        new_stage = ?new_stage,
+        "Advanced rollout segment via HTTP"
+    );
+    success(json!(AdvanceSegmentResponse {
+        rollout_id: payload.rollout_id,
+        segment_idx: payload.segment_idx,
+        new_stage: new_stage.map(String::from),
+    }))
+    .into_response()
+}
+
+// ── Rollback handler functions (feature: rollback) ───────────────────────
+
+/// Request body for deploy_with_rollback.
+/// Note: This endpoint requires a fully-formed Artifact JSON payload
+/// since there's no artifact lookup by ID. Use this when you have the
+/// artifact data available in the request.
+#[derive(Debug, Deserialize)]
+pub struct DeployWithRollbackRequest {
+    pub artifact: prompt_hub::Artifact,
+    #[serde(default)]
+    pub rollback_enabled: bool,
+}
+
+/// Response for deploy_with_rollback.
+#[derive(Debug, Serialize)]
+pub struct DeployResultResponse {
+    pub success: bool,
+    pub rollback_available: bool,
+}
+
+/// Request body for restore_snapshot.
+#[derive(Debug, Deserialize)]
+pub struct RestoreSnapshotRequest {
+    pub snapshot_id: String,
+}
+
+/// Response for restore_snapshot.
+#[derive(Debug, Serialize)]
+pub struct RestoreResultResponse {
+    pub success: bool,
+    pub snapshot_id: String,
+}
+
+/// Deploy a prompt with automatic rollback capability.
+#[cfg(feature = "rollback")]
+#[instrument(skip(state))]
+pub async fn deploy_with_rollback_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DeployWithRollbackRequest>,
+) -> Response {
+    match state
+        .hub
+        .deploy_with_rollback(&payload.artifact, payload.rollback_enabled)
+        .await
+    {
+        Ok(result) => {
+            info!(
+                artifact_type = ?payload.artifact,
+                rollback_enabled = payload.rollback_enabled,
+                "Deployed with rollback via HTTP"
+            );
+            success(json!(DeployResultResponse {
+                success: true,
+                rollback_available: result.rollback_available,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            warn!("Failed to deploy artifact: {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Restore a prompt to a previously saved snapshot.
+#[cfg(feature = "rollback")]
+#[instrument(skip(state))]
+pub async fn restore_snapshot_route(
+    State(state): State<Arc<AppState>>,
+    Path(snapshot_id): Path<String>,
+) -> Response {
+    if snapshot_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "snapshot_id cannot be empty").into_response();
+    }
+
+    match state.hub.restore_snapshot(&snapshot_id).await {
+        Ok(_) => {
+            info!(snapshot = %snapshot_id, "Restored snapshot via HTTP");
+            success(json!(RestoreResultResponse {
+                success: true,
+                snapshot_id
+            }))
+            .into_response()
+        }
+        Err(HubError::NotFound(_)) => {
+            error(StatusCode::NOT_FOUND, format!("Snapshot '{}' not found", snapshot_id))
+                .into_response()
+        }
+        Err(e) => {
+            warn!("Failed to restore snapshot {}: {}", snapshot_id, e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Check if a specific rollback snapshot is available.
+#[cfg(feature = "rollback")]
+#[instrument(skip(state))]
+pub async fn is_rollback_available_route(
+    State(state): State<Arc<AppState>>,
+    Query(payload): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let snapshot_id = match payload.get("snapshot_id") {
+        Some(id) => id.as_str(),
+        None => {
+            return error(StatusCode::BAD_REQUEST, "snapshot_id query parameter required")
+                .into_response();
+        }
+    };
+
+    let available = state.hub.is_rollback_available(snapshot_id);
+    info!(
+        snapshot = %snapshot_id,
+        available = available,
+        "Checked rollback availability via HTTP"
+    );
+    success(json!({
+        "snapshot_id": snapshot_id,
+        "available": available
+    }))
+    .into_response()
+}
+
 // ── Test module below ─────────────────────────────────────────────────────
 
 #[cfg(test)]

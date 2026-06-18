@@ -111,6 +111,57 @@ pub fn create_router(state: AppState) -> Router {
             get(routes::get_satisfaction_metrics),
         );
 
+    // Provider health routes (always-on)
+    let router = router
+        .route("/api/v1/providers/register", post(routes::register_provider_route))
+        .route("/api/v1/providers/success", post(routes::record_success_route))
+        .route("/api/v1/providers/failure", post(routes::record_failure_route))
+        .route("/api/v1/providers/healthy", get(routes::is_healthy_route))
+        .route("/api/v1/providers/summary", get(routes::get_health_summary_route));
+
+    // Multi-provider routing routes (feature: multi-provider)
+    #[cfg(feature = "multi-provider")]
+    let router = router
+        .route("/api/v1/multi-provider/add", post(routes::add_provider_route))
+        .route("/api/v1/multi-provider/route", post(routes::route_to_vendor_route))
+        .route(
+            "/api/v1/multi-provider/success",
+            post(routes::record_provider_success_route),
+        )
+        .route(
+            "/api/v1/multi-provider/failure",
+            post(routes::record_provider_failure_route),
+        )
+        .route("/api/v1/multi-provider/stats", get(routes::get_provider_pool_stats_route));
+
+    // Rollout routes (feature: gradual-rollout)
+    #[cfg(feature = "gradual-rollout")]
+    let router = router
+        .route("/api/v1/rollouts/check", post(routes::check_rollout_route))
+        .route("/api/v1/rollouts/register", post(routes::register_rollout_route))
+        .route(
+            "/api/v1/rollouts/inclusion",
+            post(routes::find_rollout_inclusion_route),
+        )
+        .route(
+            "/api/v1/rollouts/rollback/check",
+            post(routes::evaluate_auto_rollback_route),
+        )
+        .route(
+            "/api/v1/rollouts/segment/advance",
+            post(routes::advance_segment_route),
+        );
+
+    // Rollback routes (feature: rollback)
+    #[cfg(feature = "rollback")]
+    let router = router
+        .route("/api/v1/rollback/deploy", post(routes::deploy_with_rollback_route))
+        .route("/api/v1/rollback/restore/{id}", post(routes::restore_snapshot_route))
+        .route(
+            "/api/v1/rollback/snapshot/check",
+            get(routes::is_rollback_available_route),
+        );
+
     // Apply State BEFORE middleware — required for handlers using `State<T>` extractors.
     router
         .with_state(state_arc)
