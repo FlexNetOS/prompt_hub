@@ -1,0 +1,38 @@
+{
+  "acceptance_criteria": [
+    "each capability has a route + handler + DTO + test",
+    "GC routes expose the real (non-stub) garbage collector",
+    "RBAC + evolve_prompt-style error map applied"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [
+    "PHTASK-0047",
+    "PHTASK-0049"
+  ],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0061",
+  "intent_lock": {
+    "acceptance_hash": "blake3:8065735e930e27f722eb030334a920e3f22e0bacef9fa10a5f26b41893a64534",
+    "objective_hash": "blake3:ad3bbee5e626cfc7b52cc265a13e70b28ac09798a7b983753e192461b6b20520",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135"
+  },
+  "objective": "Expose audit/diff: compute_audit_hash, verify_audit_integrity, soc2_evidence_summary, validate_soc2_schema, anonymize_audit_entry, compute_diff, summarize_diff, is_identical, format_unified_diff; retention/GC: set_retention_period, get_retention_period, is_data_expired, run_retention_cleanup, run_garbage_collection, purge_soft_deleted, gc_stats, set_gc_enabled, gc_enabled; auto-purge: purge_now, get_purge_stats, update_purge_config, start_purge_daemon, stop_purge_daemon. Handlers + DTOs + RBAC + error map + tests. GC routes must expose the COMPLETED impl (see blocked_by).",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Routes: audit/SOC2/diff + retention/GC + auto-purge (23)"
+}

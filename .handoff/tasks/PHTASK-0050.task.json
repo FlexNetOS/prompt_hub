@@ -1,0 +1,36 @@
+{
+  "acceptance_criteria": [
+    "heal() performs its intended remediation and returns Ok with a result describing the action taken",
+    "a test exercises a heal scenario end to end",
+    "no 'not yet implemented' error path remains in SelfHealer"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0050",
+  "intent_lock": {
+    "acceptance_hash": "blake3:99d5184709d4b84a4f6efd4a517d9a39a7ae02e6a3ec38143485cd66d68d001a",
+    "objective_hash": "blake3:d1ab7428b10fb5b2dac88db7421efc3095aa8ffab17d31167d9492973dddad37",
+    "path_scope_hash": "blake3:78a442af4ec8da9792939b6faa80eb5a8f65c10d233a9a5e837f84134e9d68c4"
+  },
+  "objective": "vibe.rs SelfHealer::heal (:486) returns Err(\"Self-healing not yet implemented\") — a default-feature stub. Implement the remediation the SelfHealer is designed to perform (re-run/repair the failing vibe step per its design). No-downgrade: complete it rather than leaving the error path.",
+  "path_scope": [
+    "prompt-hub/src/vibe.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete vibe SelfHealer::heal"
+}
