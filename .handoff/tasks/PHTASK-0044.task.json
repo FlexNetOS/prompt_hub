@@ -1,0 +1,37 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0044",
+  "title": "seed_defaults must authorize Write up front (not lazily via register)",
+  "status": "done",
+  "priority": "P2",
+  "objective": "Hardening from PHTASK-0029 /verify (runtime finding): PromptHub::seed_defaults -> defaults::seed_database authorized Write only LAZILY \u2014 the check lived in register(), which is reached only for not-yet-present templates. On an already-seeded store an anonymous/capability-less caller skipped every register and silently got Ok(0) instead of Unauthorized (list() has no RBAC). Fix (NO-DOWNGRADE, upgrade only): call RbacAuthManager::authorize_action(identity, Action::Write)? at the TOP of seed_database so the Write gate holds unconditionally, regardless of store state. Add a regression test that an anonymous caller is denied on an ALREADY-seeded store.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "seed_database authorizes Write before the existence probe",
+    "anonymous/capability-less caller is denied even when the store is already fully seeded",
+    "existing seeding behavior (idempotent insert for authorized callers) unchanged"
+  ],
+  "test_commands": [
+    "cargo test -p prompt-hub --all-features defaults",
+    "cargo clippy -p prompt-hub --all-features --all-targets -- -D warnings",
+    "cargo fmt -p prompt-hub -- --check"
+  ],
+  "dependencies": [
+    "PHTASK-0029"
+  ],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:f5139ef05ac6511fe9bf1b1d453c4a826dbc570c3b16488190abdc342c855040",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:656f63ba22391bf72326106f838880d8d46cb6c903f202fd8bde852bea921e35"
+  },
+  "source": "discovered during /verify runtime observation of PHTASK-0029 (cycle 92)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. Strengthen the authorization boundary; never weaken a gate.",
+  "resolution": "Added RbacAuthManager::authorize_action(identity, Action::Write)? as the first statement of defaults::seed_database (imports crate::auth::{Action, RbacAuthManager}); seeding now rejects unauthorized callers unconditionally, before the list() existence probe. Added regression test seed_database_requires_write_even_when_already_seeded (seed 6 as operator, then anonymous -> Unauthorized). Authorized idempotent behavior unchanged (6 then 0). Gates green: cargo test -p prompt-hub --all-features defaults; clippy --all-features --all-targets -D warnings; default build; fmt --check. Done via worktree loop/phtask-0044-seed-auth."
+}

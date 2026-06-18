@@ -1,0 +1,36 @@
+{
+  "acceptance_criteria": [
+    "JunieCommand::Task drives the hub Junie path (no unused _hub) and produces real output, not a canned string",
+    "the '// Real logic would go here' placeholder is removed",
+    "a test or CLI smoke exercises the wired Task path"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0067",
+  "intent_lock": {
+    "acceptance_hash": "blake3:04ce1cd12f2879e1d149b4acf58b1fb93647690a54ab85976db69048e351954c",
+    "objective_hash": "blake3:319dacb70d67a8e32dea278005b9fe14c3de53ba9f01be1f549f632ba739ba2d",
+    "path_scope_hash": "blake3:d7217d6f2f581f6e2d9b7f3c5dbecb0bf341915af51795201808393898c90066"
+  },
+  "objective": "prompthub/src/commands/junie.rs:24 JunieCommand::Task is print-only — the `_hub` arg is unused and the body is `// Real logic would go here`, emitting a canned 'Task analyzed' string. The engine-side Junie (field + hooks, PHTASK-0034/0036/0038, DONE) exists but this CLI verb never drives it. Complete: route Task { request } through the hub Junie path (analyze + act on the request via PromptHub) and print real results. No-downgrade.",
+  "path_scope": [
+    "prompthub/src/commands/junie.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit handoff 2026-06-18 (completeness reconcile: untracked stubs + hollow features + route gap)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete CLI JunieCommand::Task execution (print-only stub)"
+}
