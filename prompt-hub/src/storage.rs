@@ -1277,7 +1277,7 @@ impl Storage {
     /// sentinel and `ip_address` is set to `NULL`. The tamper-evident hash chain
     /// is preserved because `diff_hash` covers `(before_json, after_json,
     /// timestamp)` — never `agent_id` or `ip_address` — so the rewritten rows
-    /// still verify against [`SqliteAuditLogger::verify_entry_integrity`].
+    /// still verify against [`crate::audit::SqliteAuditLogger::verify_entry_integrity`].
     ///
     /// Rows already carrying the sentinel id are not re-counted: the
     /// `WHERE agent_id = ?` predicate excludes the sentinel itself, so calling
