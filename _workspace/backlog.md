@@ -1,115 +1,16 @@
-# prompt-loop backlog — prompt_hub construction crew
+# _workspace/backlog.md — DEPRECATED
 
-The **single source of truth** for what the crew builds next. Legend:
-`- [ ]` todo · `- [x]` done+verified · `- [!] blocked: <reason>`.
-Each item = one cohesive, shippable unit sized to one cycle. Every item cites its source.
-
-> Curated by `backlog-curator` at DISCOVER on 2026-06-05 from **real repository state**
-> (verified via `cargo check/doc/tree`, `git log origin/main`, `gh pr list`, qodana SARIF,
-> `prompt-hub/Cargo.toml` feature matrix). Seed placeholders replaced; `[x]`/`[!]` history preserved.
-> `gh` was authenticated; no offline gaps. Rust-native invariant (`prompt_hub/CLAUDE.md`) applies to
-> every item: wire features behind their flag with tests; foreign/non-Cargo guidance is drift to fix.
-
----
-
-## ✅ P0 — Build RED → GREEN (fixed in cycle 1)
-
-- [x] **Fix `audit.rs:75` sha2 0.11 `LowerHex` breakage — restore a green `--all-features` build.**
-      _Cycle 1 (2026-06-05). Fixed Rust-native: hand hex-encode the `hybrid_array::Array` digest via
-      `write!(.., "{byte:02x}")` (no new dep), keeping output byte-identical so the hash chain still
-      verifies. Gates re-run green across the boundary: `cargo check --workspace --all-features` (0),
-      `cargo clippy --workspace --all-features -- -D warnings` (0), `cargo fmt --all -- --check` (clean),
-      `cargo test --workspace --all-features` (577+ pass / 0 fail). Landed via the cycle-1 PR._
-      The workspace dep was bumped to `sha2 = "0.11.0"` (dependabot PR #11, merged 2026-06-05
-      16:38, *after* the last green 652-test build). In sha2 0.11 `Sha256::finalize()` returns
-      `hybrid_array::Array<u8, …>`, which does **not** implement `LowerHex`, so
-      `format!("{:x}", hasher.finalize())` at `prompt-hub/src/audit.rs:75` fails to compile.
-      `cargo check -p prompt-hub` (even default features) and `cargo check --workspace --all-features`
-      are both RED on this one site. Fix Rust-native: hex-encode the finalized bytes explicitly
-      (e.g. `use base16ct`/manual `write!` over the byte slice, or `hex::encode`) — `canary.rs`
-      indexes `digest()[0]` and is unaffected, so this is the *sole* breakage.
-      _Source: `cargo check --workspace --all-features` (error E0277 at audit.rs:75); `cargo tree -i sha2`
-      shows direct `sha2@0.11.0`; `Cargo.toml:80 sha2 = "0.11.0"`. Smallest possible cycle; unblocks all gates._
-
-## Core library (prompt-hub)
-
-- [ ] **Triage the live qodana code-quality findings (24 items) — clippy-clean cleanup.**
-      The SARIF (generated 2026-06-04 00:11) reports 87 results, but the 39 `CargoUnusedDependency`
-      and 21 `NewCrateVersionAvailable` findings are **stale** — PR #27 (merged 2026-06-04 21:16)
-      already removed 32 unused deps, and dependabot owns version bumps. The genuinely actionable,
-      shippable-in-one-cycle subset is the Rust code smells: **22 `RsUnnecessaryQualifications`,
-      2 `RsLift`, 1 `RsUnwrap`, 1 `RsAssertEqual`, 1 `RsUnreachablePattern`**. Apply the fixes
-      and confirm `just lint` stays green. (Do this AFTER the P0 build fix so clippy can actually run.)
-      _Source: `docs/audits/qodana.sarif.json` (87 results: 40 warning / 47 note; rule histogram
-      via the SARIF). TODO.md "Audits" line. Verify each against current tree — many may already be fixed._
-
-- [ ] **Architect-scoped epic: wire `smart` embedding search end-to-end** (later — multi-cycle).
-      `SmartEngine`/`HybridEngine` in `search.rs` are built but call `mock_embed` (a deterministic
-      text-hash, `search.rs:343`); the `smart` flag only gates an otherwise-unused `ndarray`.
-      The architect should scope the smallest shippable slice: a pluggable embedder trait + a
-      CI-testable fixture backend behind `smart`, deferring real ONNX/model handling.
-      _Source: `search.rs` SmartEngine + `mock_embed`; `Cargo.toml smart = ["dep:ndarray"]`.
-      Keep at the bottom — too big for an early single cycle; needs an inference-runtime decision._
-
-## CLI / server (prompthub, prompthub-server)
-
-- [ ] **Add a `prompthub metrics` CLI subcommand that prints the Prometheus exposition.**
-      The server already exposes `/metrics` (`prompthub-server/src/routes.rs:559 prometheus_metrics`
-      → `render_metrics` → `metrics.prometheus_text()`), but the CLI has **no** way to read metrics
-      (`grep metric prompthub/src` finds only `PromptMetrics::default()`). Add a thin `Metrics`
-      subcommand in `cli.rs` that calls `hub.metrics().prometheus_text()` (gate behind `otel`,
-      matching the server). Small, user-facing, Rust-native, exercises the just-landed otel path.
-      _Source: `routes.rs:554-588`; `cli.rs` enum `Commands` has no metrics variant; otel landed via PR #28._
-
-## Docs / infra
-
-- [ ] **P4 — verify `cargo doc --workspace --all-features` is warning-clean (after the P0 fix).**
-      `cargo doc -p prompt-hub --no-deps` (default features) currently emits **0 warnings**, but the
-      full `--all-features` doc build can't complete because it hits the same P0 `audit.rs` compile
-      error. Once P0 lands, re-run and drive any feature-gated doc-link/missing-docs warnings to zero.
-      _Source: `cargo doc --workspace --all-features --no-deps` (blocked by E0277); TODO.md P2/P4.
-      Verify: `cargo doc --workspace --all-features --no-deps 2>&1 | grep -c warning:` → 0._
-
-- [ ] **P5 — verify the Docker build and add `.cliff.toml` for Conventional-Commit changelogs.**
-      `docker/Dockerfile` exists; confirm `docker build -f docker/Dockerfile -t prompthub:test .`
-      succeeds. No `.cliff.toml` exists at repo root — add one so the changelog generates from the
-      Conventional-Commit history, enabling docs-scribe's automated changelog path. `justfile` has a
-      `docker` recipe but no changelog recipe.
-      _Source: `ls .cliff.toml` → absent; `ls docker/Dockerfile` → present; TODO.md P5._
-
----
-
-## ✅ Done (verified against current tree — evidence inline)
-
-- [x] **Wire `otel` Prometheus text exposition** — landed on `origin/main` via **PR #28**
-      (commit `987f858`, merged `76bcb78`). `otel = ["dep:prometheus"]` (no protobuf / no
-      discontinued OTEL exporter); `metrics.rs:328 prometheus_text()` renders v0.0.4 exposition;
-      server route `prometheus_metrics` + test `test_prometheus_text_is_valid_exposition`.
-      _Verified: `git log origin/main`, `grep prometheus prompt-hub/src/metrics.rs`, `gh pr list`._
-- [x] **P3 — sanitization edge-case tests** (zero-width ZWSP/ZWNJ/ZWJ/BOM/word-joiner, RTL/LTR
-      overrides, homoglyph vs mixed-script Latin+Cyrillic, negative cases) — landed via **PR #27**
-      area, commit `72de246`. `sanitize.rs` carries `test_all_zero_width_variants_blocked`,
-      `test_ltr_and_rtl_overrides_blocked`, `test_multiple_zero_width_all_reported`,
-      `test_fullwidth_homoglyph_is_suspicious_not_blocked`, `test_pure_cyrillic_is_warning_only`.
-      _Verified: `git show 72de246`, `grep "fn test" prompt-hub/src/sanitize.rs`._
-- [x] **P3 — LockManager concurrency tests** — commit `72de246`. `lock.rs` carries
-      `test_concurrent_create_lock_same_prompt_unique_tokens` (32 racing agents → unique tokens),
-      `test_concurrent_verify_only_holder_succeeds`, `test_concurrent_heartbeat_clamps_to_max`
-      (via `std::thread::scope`).
-      _Verified: `git show 72de246`, `grep "fn test.*concurrent" prompt-hub/src/lock.rs`._
-- [x] **Qodana triage round 1: remove 32 unused deps + fix default-feature build** — **PR #27**,
-      commit `fad25a1` (merged 2026-06-04 21:16). This is why the SARIF's 39 `CargoUnusedDependency`
-      findings are now stale. _Verified: `git log origin/main`, `gh pr list`._
-
----
-
-## Pre-existing TODO.md history (superseded / context — see TODO.md for full list)
-
-> TODO.md P0 marks most Wave-9 compilation fixes `[x]` and claims "All known blockers fixed; next
-> agent should run `cargo check`." **DISCOVER ran it: a NEW blocker appeared post-merge** (the sha2
-> 0.11 bump above), so the P0 item at the top of this backlog supersedes that stale "verify" line.
-> Honesty over optimism: the build is currently red, not green.
-
-- [x] P0 Wave-9: 13 known compilation-blocker fixes (models/routes/canary/hub/error/auth) — per TODO.md.
-- [x] P1: hub.list / storage.list_prompts / audit-log wiring / wave-6 module decls — per TODO.md.
-- [x] P2: `#![forbid(unsafe_code)]` on 49/49 library modules — per TODO.md.
+> ⛔ **DEPRECATED — migrated to `.handoff/` (2026-06-13).**
+>
+> The prompt-loop construction crew no longer keeps state here. The single source of
+> truth is now the Continuity Ledger Kernel layer at `prompt_hub/.handoff/`:
+>
+> | Old (`_workspace/`) | New (`.handoff/`) |
+> |---|---|
+> | `backlog.md` | `tasks/PHTASK-NNNN.task.json` (40 cards) |
+> | `HANDOFF.md` | `packets/latest.md` (derived: `hf fleet render prompt_hub`) |
+> | `loop_state.md` | `active.md` + the FLEET ledger (`meta/.handoff`) |
+> | `DONE`/`STOP` sentinels | card `status` + `hf` verbs |
+>
+> Full original content is archived verbatim under `.handoff/history/_workspace-archive/`.
+> Cold-start: read `.handoff/context/capsule.json`, then run `hf resume`.

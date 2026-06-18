@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0006",
+  "title": "Recover feature: `chaos-automation`",
+  "status": "done",
+  "priority": "P2",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Scheduled chaos tests with trend detection: tokio Interval scheduler, linear-regression trend, alert actions, bounded history. 10 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`chaos-automation` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:58147e66b99beb4e420082977a184d58715b933aabdae4c92d0baca48507f1b0",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:70b734be046cd0dc667b635a72f47bf3bd14f5aa443882416d3e48f452cb7bb2"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "472578f",
+  "cycle": 69
+}

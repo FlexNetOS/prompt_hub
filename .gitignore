@@ -10,3 +10,9 @@ prompthub.db
 # Editor / OS
 *.rs.bk
 .DS_Store
+.worktrees/
+
+# .handoff per-repo ledger is COMMITTED and feeds the central meta/handoff ledger
+# (ADR-0004 §3 revised 2026-06-13: federated per-repo ledger). WAL/shm sidecars stay
+# ignored via *.db-shm / *.db-wal above; only the ledger db itself is tracked.
+!.handoff/ledger.db

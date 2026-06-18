@@ -1,0 +1,43 @@
+{
+  "acceptance_criteria": [
+    "every user-facing hub capability has a documented HTTP route with tests, OR is explicitly listed as deliberately-internal with rationale",
+    "sub-cards PHTASK-0057 through PHTASK-0063 are all done",
+    "the OpenAPI 3.0.3 spec is regenerated to include the new routes"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [
+    "PHTASK-0057",
+    "PHTASK-0058",
+    "PHTASK-0059",
+    "PHTASK-0060",
+    "PHTASK-0061",
+    "PHTASK-0062",
+    "PHTASK-0063"
+  ],
+  "id": "PHTASK-0056",
+  "intent_lock": {
+    "acceptance_hash": "blake3:0d3d22bcfe43c6c840d61487ddc85ca0fc1ec5184b7ee3ea2fcf90bfe0c1ac45",
+    "objective_hash": "blake3:ae548dc5ad6a57d62f4411cb2bb3a62e31b9af59dbe33ab557403047eed1686a",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135"
+  },
+  "objective": "Only ~31 of ~156 user-facing PromptHub capabilities have an HTTP route (prompthub-server/src/server.rs:36-112); ~125 are unreachable. PHTASK-0022..0026/0035 each did one batch and were marked done, leaving the bulk unexposed. This EPIC tracks full REST coverage of the hub surface, batched by subsystem in sub-cards PHTASK-0057..0063. Each route: thin handler + request DTO, RBAC via the hub method, error map mirroring evolve_prompt (bad uuid 400, NotFound 404, Unauthorized 403, ValidationError 422), direct-handler tests. Regenerate the OpenAPI spec.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "priority": "P1",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "EPIC — expose remaining ~125 hub capabilities over HTTP"
+}

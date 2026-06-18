@@ -111,7 +111,7 @@ pub async fn run(cmd: BudgetCommand) -> Result<()> {
     Ok(())
 }
 
-async fn load_budget_config(hub: &prompt_hub::hub::PromptHub) -> Result<BudgetConfig> {
+async fn load_budget_config(hub: &PromptHub) -> Result<BudgetConfig> {
     match hub.storage().get_config(BUDGET_CONFIG_KEY).await? {
         Some(json) => {
             let config: BudgetConfig = serde_json::from_str(&json)?;

@@ -1,0 +1,7 @@
+{
+  "sentence-transformers/all-MiniLM-L6-v2": {
+    "url": "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "dim": 384
+  }
+}
