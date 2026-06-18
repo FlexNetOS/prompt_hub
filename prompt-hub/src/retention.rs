@@ -32,7 +32,7 @@ pub enum DataType {
 }
 
 /// Result of a retention cleanup run.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupResult {
     pub data_type: DataType,
     pub items_scanned: u64,

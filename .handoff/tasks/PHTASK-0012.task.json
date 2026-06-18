@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0012",
+  "title": "Recover feature: `multi-provider`",
+  "status": "done",
+  "priority": "P1",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Multi-model provider routing: cross-vendor A/B, health-based fallback chains, cost-aware routing. Extends load_balancer to heterogeneous providers.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`multi-provider` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:2ab3d56eb4be63013a8766bfd2f2f03e822971766ed94cb7c456a903581a1722",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:aa551dc1e4875d870d4dc55111ad915896b49f4df4a4b97092b315781874c2e3"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "6b78a63"
+}

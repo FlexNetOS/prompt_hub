@@ -18,7 +18,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
       - name: Checkout PR branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -90,7 +90,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' && contains(github.event.pull_request.labels.*.name, 'feature') }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Get SPEC.md
         id: spec
