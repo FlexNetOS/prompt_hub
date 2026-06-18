@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// OpenAPI tag constants for grouping endpoints in the generated spec.
 #[cfg(feature = "utoipa")]
@@ -76,11 +76,12 @@ pub fn build_openapi_spec() -> Value {
 
 /// Shared fallback / base OpenAPI 3.0.3 specification.
 fn fallback_spec() -> Value {
-    json!({
+    const FALLBACK_SPEC_JSON: &str = r##"""
+{
         "openapi": "3.0.3",
         "info": {
             "title": "PromptHub API",
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": "{VERSION}",
             "description": "Production-ready prompt management for LLM agent swarms"
         },
         "servers": [
@@ -316,6 +317,146 @@ fn fallback_spec() -> Value {
                     }
                 }
             },
+            "/api/v1/context/gather": {
+                "post": {
+                    "summary": "Gather full project context",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/GatherContextRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Project context" },
+                        "400": { "description": "Bad request" },
+                        "500": { "description": "Gather failed" }
+                    }
+                }
+            },
+            "/api/v1/context/gather/smart": {
+                "post": {
+                    "summary": "Gather smart project context with relevance and patterns",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/GatherContextSmartRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Smart project context" },
+                        "400": { "description": "Bad request" },
+                        "500": { "description": "Gather failed" }
+                    }
+                }
+            },
+            "/api/v1/context/files": {
+                "post": {
+                    "summary": "Collect relevance-ranked files",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CollectRelevantFilesRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Ranked file list" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/context/patterns": {
+                "post": {
+                    "summary": "Extract structural code patterns",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ExtractPatternsRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Extracted patterns" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/lineage/ancestry/{version_id}": {
+                "get": {
+                    "summary": "Get lineage ancestry for a version",
+                    "parameters": [
+                        { "name": "version_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Ancestry path" },
+                        "404": { "description": "Version not found" }
+                    }
+                }
+            },
+            "/api/v1/lineage/forks": {
+                "get": {
+                    "summary": "Detect all lineage forks",
+                    "responses": {
+                        "200": { "description": "Fork list" }
+                    }
+                }
+            },
+            "/api/v1/lineage/descendants/{version_id}": {
+                "get": {
+                    "summary": "Get descendants of a version",
+                    "parameters": [
+                        { "name": "version_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Descendant version IDs" }
+                    }
+                }
+            },
+            "/api/v1/lineage/tree/{version_id}": {
+                "get": {
+                    "summary": "Build lineage tree from a root version",
+                    "parameters": [
+                        { "name": "version_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Lineage tree" },
+                        "404": { "description": "Version not found" }
+                    }
+                }
+            },
+            "/api/v1/lineage/count": {
+                "get": {
+                    "summary": "Count lineage nodes",
+                    "responses": {
+                        "200": { "description": "Node count" }
+                    }
+                }
+            },
+            "/api/v1/lineage/roots": {
+                "get": {
+                    "summary": "List root versions",
+                    "responses": {
+                        "200": { "description": "Root version IDs" }
+                    }
+                }
+            },
+            "/api/v1/lineage/has/{version_id}": {
+                "get": {
+                    "summary": "Check whether a version is tracked",
+                    "parameters": [
+                        { "name": "version_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Has-version flag" }
+                    }
+                }
+            },
             "/api/v1/prompts/search": {
                 "get": {
                     "summary": "Search prompts",
@@ -501,10 +642,42 @@ fn fallback_spec() -> Value {
                         "template": { "type": "string" }
                     },
                     "required": ["template"]
+                },
+                "GatherContextRequest": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": { "type": "string" }
+                    },
+                    "required": ["project_path"]
+                },
+                "GatherContextSmartRequest": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": { "type": "string" }
+                    },
+                    "required": ["project_path"]
+                },
+                "CollectRelevantFilesRequest": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": { "type": "string" }
+                    },
+                    "required": ["project_path"]
+                },
+                "ExtractPatternsRequest": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": { "type": "string" }
+                    },
+                    "required": ["project_path"]
                 }
             }
         }
     })
+"""##;
+
+    let json = FALLBACK_SPEC_JSON.replace("{VERSION}", env!("CARGO_PKG_VERSION"));
+    serde_json::from_str(&json).expect("fallback spec JSON must be valid")
 }
 
 /// Static OpenAPI JSON string embedded at compile time.
