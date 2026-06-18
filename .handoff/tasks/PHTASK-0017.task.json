@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0017",
+  "title": "Recover feature: `accessibility`",
+  "status": "done",
+  "priority": "P2",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). WCAG output formatting: PlainText/StructuredJson/DyslexiaFriendly/HighContrastBraille, multi-sensory mode. 8 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`accessibility` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:004366ae990936c8c0355f4d0fe02c9b683bf3e008f832553c67d7902564a325",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:17001e2a47b38dbbab3ae5d99ccb44e27cb4773cb0422c464913a5031dfb007d"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "ed3b06a",
+  "cycle": 70
+}

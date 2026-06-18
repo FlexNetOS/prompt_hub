@@ -137,11 +137,49 @@ pub struct AgentIdentity {
 }
 
 impl Default for AgentIdentity {
+    /// The default identity carries [`Capability::Read`] + [`Capability::Write`]
+    /// (mirroring the HTTP server's `default_agent()`), so a programmatic
+    /// `PromptHub::new()` caller can read and create prompts out of the box
+    /// without first constructing an explicit identity. This is a deliberate
+    /// RBAC posture (owner decision, 2026-06-13): convenience for embedders,
+    /// while delete/admin/transfer still require an explicit privileged identity
+    /// such as [`AgentIdentity::local_operator`] (which also grants `Admin`).
+    ///
+    /// For an intentionally **un**privileged identity (e.g. to exercise an RBAC
+    /// denial path), construct one with an empty `capabilities` vec rather than
+    /// relying on `default()`.
     fn default() -> Self {
         Self {
             id: Uuid::new_v4(),
             name: "anonymous".to_string(),
-            capabilities: Vec::new(),
+            capabilities: vec![Capability::Read, Capability::Write],
+            token_hash: String::new(),
+            specialization_score: 0.0,
+        }
+    }
+}
+
+impl AgentIdentity {
+    /// Identity for a **trusted local operator** — the single user who owns the
+    /// local prompt store (e.g. the `prompthub` CLI acting on its on-disk DB).
+    ///
+    /// Unlike [`AgentIdentity::default`] (the capability-less `anonymous`
+    /// identity), this grants the full set of capabilities a local owner needs
+    /// to use every command out of the box: [`Capability::Read`],
+    /// [`Capability::Write`], and [`Capability::Admin`] (which together cover
+    /// every [`Action`](crate::auth::Action) — read, write/lock/evolve, and
+    /// delete/admin/transfer).
+    ///
+    /// This does **not** weaken RBAC: [`RbacAuthManager`](crate::auth::RbacAuthManager)
+    /// is still the enforcement point and still rejects capability-less or
+    /// remote/swarm identities. This constructor merely packages the grant a
+    /// local DB owner legitimately holds; swarm/automation/remote callers must
+    /// continue to present their own explicitly-granted capabilities.
+    pub fn local_operator(name: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            capabilities: vec![Capability::Read, Capability::Write, Capability::Admin],
             token_hash: String::new(),
             specialization_score: 0.0,
         }
@@ -832,6 +870,95 @@ pub struct LLMProvider {
     pub timeout_seconds: u32,
 }
 
+/// Local inference providers we can target.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LocalProviderKind {
+    Ollama,
+    Llamafile,
+    WhisperCPP,
+}
+
+impl std::fmt::Display for LocalProviderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LocalProviderKind::Ollama => write!(f, "ollama"),
+            LocalProviderKind::Llamafile => write!(f, "llamafile"),
+            LocalProviderKind::WhisperCPP => write!(f, "whisper-cpp"),
+        }
+    }
+}
+
+/// Configuration for a single local model endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalModelConfig {
+    /// Provider type (determines API protocol).
+    pub provider: LocalProviderKind,
+    /// Base URL of the local inference server
+    /// (e.g. "http://localhost:11434", "http://localhost:8081/v1").
+    pub base_url: String,
+    /// Model identifier as understood by the provider
+    /// (e.g. "llama3.2", "mistral-nemo:latest").
+    pub model_name: String,
+    /// Sampling temperature [0.0, 2.0].
+    pub temperature: f32,
+    /// Top-p sampling threshold.
+    pub top_p: f32,
+    /// Maximum number of tokens in the response.
+    pub max_tokens: u32,
+}
+
+impl LocalModelConfig {
+    pub fn new(provider: LocalProviderKind, base_url: &str, model_name: &str) -> Self {
+        Self {
+            provider,
+            base_url: base_url.to_string(),
+            model_name: model_name.to_string(),
+            temperature: 0.7,
+            top_p: 0.9,
+            max_tokens: 2048,
+        }
+    }
+
+    pub fn with_temperature(mut self, temperature: f32) -> Self {
+        self.temperature = temperature;
+        self
+    }
+
+    pub fn with_top_p(mut self, top_p: f32) -> Self {
+        self.top_p = top_p;
+        self
+    }
+
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+}
+
+/// Health status of a local model instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LocalModelHealth {
+    Healthy,
+    Degraded,
+    Unavailable,
+}
+
+impl LocalModelHealth {
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, LocalModelHealth::Healthy)
+    }
+}
+
+/// Information about a model available on a local endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub name: String,
+    pub format: String,
+    pub size_bytes: u64,
+    pub status: LocalModelHealth,
+    pub downloaded_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 /// Canary deployment configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanaryDeployment {
@@ -840,6 +967,55 @@ pub struct CanaryDeployment {
     pub target_users: Vec<Uuid>,
     pub rollback_threshold: f64,
 }
+
+/// Staged rollout stages for gradual deployment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RolloutStage {
+    Internal,   // no external users
+    Alpha(u8),  // up to p% of total traffic
+    Beta50(u8), // up to 50% + p% variance
+    Beta90(u8), // up to 90% + p% variance
+    Production, // full production
+}
+
+/// A rollout segment (A/B/n variant) in a graduated rollout.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RolloutSegment {
+    pub name: String,
+    pub percentage: u8,
+    pub target_users: Vec<Uuid>,
+    pub rollout_stage: RolloutStage,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Auto-rollback policy for canary deployments.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum AutoRollbackPolicy {
+    OnErrorRate {
+        threshold: f64,
+    },
+    OnLatencyP99 {
+        sla_ms: u64,
+    },
+    OnBoth {
+        error_rate: f64,
+        latency_p99_ms: u64,
+    },
+}
+
+/// A canary/graduated rollout configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraduatedRolloutConfig {
+    pub rollout_id: String,
+    pub feature: String,
+    pub segments: Vec<RolloutSegment>,
+    pub auto_rollback: AutoRollbackPolicy,
+    pub active: bool,
+}
+
+/// Alias for backward compat.
+#[deprecated(note = "Use GraduatedRolloutConfig; CanaryDeployment is kept for canary_deploy() API")]
+pub type CanaryConfig = GraduatedRolloutConfig;
 
 /// User profile for personalization and progressive disclosure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -908,6 +1084,277 @@ pub struct PromptPatch {
     pub locale: Option<String>,
 }
 
+/// Sandbox mode: what level of restriction applies to this prompt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SandboxMode {
+    /// No sandboxing — full access.
+    Unrestricted,
+    /// Resource-bounded execution with configurable limits.
+    Bounded(SandboxConfig),
+    /// Full isolation: deny all network, strict token/cost caps.
+    Isolated(SandboxConfig),
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for SandboxMode {
+    fn default() -> Self {
+        Self::Unrestricted
+    }
+}
+
+/// Resource limits enforced by the sandbox engine.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SandboxConfig {
+    pub max_tokens: u32,
+    pub max_cost_usd: f64,
+    pub timeout_secs: u64,
+    pub max_memory_bytes: u64,
+    pub rate_limit_per_min: u32,
+    pub deny_network: bool,
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            max_tokens: 8192,
+            max_cost_usd: 10.0,
+            timeout_secs: 60,
+            max_memory_bytes: 268_435_456, // 256 MB
+            rate_limit_per_min: 60,
+            deny_network: true,
+        }
+    }
+}
+
+/// A named sandbox instance bound to a prompt or user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sandbox {
+    pub id: Uuid,
+    pub name: String,
+    pub mode: SandboxMode,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Default for Sandbox {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: "default".to_string(),
+            mode: SandboxMode::default(),
+            enabled: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+}
+
+/// Result of a sandbox enforcement check.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SandboxCheckResult {
+    Allowed,
+    RateLimited { retry_after_secs: u64 },
+    BudgetExceeded { spent_usd: f64, limit_usd: f64 },
+    TokenLimitExceeded { used: u32, max: u32 },
+    Timeout { elapsed_secs: u64 },
+    NetworkDenied,
+}
+
+// ── Voice types ────────────────────────────────────────────────────────────────
+
+/// Voice output format for TTS playback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VoiceOutputFormat {
+    #[default]
+    Wav,
+    Mp3,
+    Ogg,
+    Raw,
+}
+
+/// Configuration for the OpenAI-compatible STT backend (Whisper).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenAiSttConfig {
+    /// API key used in the `Authorization: Bearer` header.
+    pub api_key: String,
+    /// Base URL for the OpenAI-compatible API.
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+    /// Model name, e.g. `whisper-1`.
+    #[serde(default = "default_whisper_model")]
+    pub model: String,
+}
+
+impl std::fmt::Debug for OpenAiSttConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiSttConfig")
+            .field("api_key", &"***")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .finish()
+    }
+}
+
+impl Default for OpenAiSttConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: default_openai_base_url(),
+            model: default_whisper_model(),
+        }
+    }
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_whisper_model() -> String {
+    "whisper-1".to_string()
+}
+
+/// STT backend selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "provider")]
+pub enum VoiceSttBackend {
+    /// Local passthrough / deterministic backend for tests and offline use.
+    #[default]
+    Mock,
+    /// OpenAI-compatible transcription endpoint.
+    OpenAi(OpenAiSttConfig),
+}
+
+/// Configuration for the OpenAI-compatible TTS backend.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenAiTtsConfig {
+    /// API key used in the `Authorization: Bearer` header.
+    pub api_key: String,
+    /// Base URL for the OpenAI-compatible API.
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+    /// Model name, e.g. `tts-1`.
+    #[serde(default = "default_tts_model")]
+    pub model: String,
+    /// Voice identifier, e.g. `alloy`.
+    #[serde(default = "default_tts_voice")]
+    pub voice: String,
+}
+
+impl std::fmt::Debug for OpenAiTtsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiTtsConfig")
+            .field("api_key", &"***")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("voice", &self.voice)
+            .finish()
+    }
+}
+
+impl Default for OpenAiTtsConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: default_openai_base_url(),
+            model: default_tts_model(),
+            voice: default_tts_voice(),
+        }
+    }
+}
+
+fn default_tts_model() -> String {
+    "tts-1".to_string()
+}
+
+fn default_tts_voice() -> String {
+    "alloy".to_string()
+}
+
+/// TTS backend selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "provider")]
+pub enum VoiceTtsBackend {
+    /// Local passthrough / deterministic backend for tests and offline use.
+    #[default]
+    Mock,
+    /// OpenAI-compatible speech endpoint.
+    OpenAi(OpenAiTtsConfig),
+}
+
+/// Voice pipeline configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VoicePipelineConfig {
+    /// Maximum recording duration before auto-stop.
+    pub max_duration_secs: u64,
+    /// Audio sample rate in Hz (8000, 16000, 24000, 44100, 48000).
+    pub sample_rate: u32,
+    /// BCP-47 language tag for STT.
+    pub language: String,
+    /// Enable text-to-speech output.
+    pub tts_enabled: bool,
+    /// Enable speech-to-text input.
+    pub stt_enabled: bool,
+    /// Output audio format.
+    pub output_format: VoiceOutputFormat,
+    /// STT backend provider.
+    #[serde(default)]
+    pub stt_backend: VoiceSttBackend,
+    /// TTS backend provider.
+    #[serde(default)]
+    pub tts_backend: VoiceTtsBackend,
+}
+
+impl Default for VoicePipelineConfig {
+    fn default() -> Self {
+        Self {
+            max_duration_secs: 60,
+            sample_rate: 16000,
+            language: "en".to_string(),
+            tts_enabled: true,
+            stt_enabled: true,
+            output_format: VoiceOutputFormat::Wav,
+            stt_backend: VoiceSttBackend::default(),
+            tts_backend: VoiceTtsBackend::default(),
+        }
+    }
+}
+
+/// Playback state for a voice interaction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum VoicePlaybackStatus {
+    Idle,
+    Recording,
+    Processing,
+    Playing,
+    #[default]
+    Complete,
+}
+
+/// A single turn in a voice conversation (one input → one output).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceInteraction {
+    pub id: Uuid,
+    /// STT-transcribed text that initiated this turn.
+    pub stt_input: Option<String>,
+    /// TTS-delivered response text.
+    pub tts_output: Option<String>,
+    /// Whether TTS is currently playing (applied after receiving the response).
+    pub playback_status: VoicePlaybackStatus,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// State of the voice pipeline FSM.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum VoicePipelineState {
+    #[default]
+    Idle,
+    Recording,
+    SttComplete,
+    Processing,
+    TtsComplete,
+}
+
 #[cfg(test)]
 mod model_tests {
     use super::*;
@@ -923,7 +1370,21 @@ mod model_tests {
     fn test_agent_identity_default() {
         let a = AgentIdentity::default();
         assert_eq!(a.name, "anonymous");
-        assert!(a.capabilities.is_empty());
+        // PHTASK-0040 (owner decision): default now carries Read+Write, not Admin.
+        assert!(a.capabilities.contains(&Capability::Read));
+        assert!(a.capabilities.contains(&Capability::Write));
+        assert!(!a.capabilities.contains(&Capability::Admin));
+    }
+
+    #[test]
+    fn test_agent_identity_local_operator_has_owner_capabilities() {
+        let a = AgentIdentity::local_operator("local-operator");
+        assert_eq!(a.name, "local-operator");
+        // Read + Write + Admin together cover every Action (read, write/lock/
+        // evolve, delete/admin/transfer) so the local CLI works out of the box.
+        for cap in [Capability::Read, Capability::Write, Capability::Admin] {
+            assert!(a.capabilities.contains(&cap), "missing {cap:?}");
+        }
     }
 
     #[test]
@@ -1054,5 +1515,71 @@ mod model_tests {
     fn test_prompt_patch_default() {
         let patch = PromptPatch::default();
         assert!(patch.name.is_none());
+    }
+
+    #[test]
+    fn test_graduated_rollout_config() {
+        let cfg = GraduatedRolloutConfig {
+            rollout_id: "test".into(),
+            feature: "new-search".into(),
+            segments: vec![],
+            auto_rollback: AutoRollbackPolicy::OnErrorRate { threshold: 0.05 },
+            active: true,
+        };
+        assert!(cfg.active);
+    }
+
+    // ── Sandbox model tests (cycle-65) ───────────────────────────────
+
+    #[test]
+    fn test_sandbox_mode_default() {
+        let mode = SandboxMode::default();
+        assert!(matches!(mode, SandboxMode::Unrestricted));
+    }
+
+    #[test]
+    fn test_sandbox_config_default() {
+        let cfg = SandboxConfig::default();
+        assert_eq!(cfg.max_tokens, 8192);
+        assert!((cfg.max_cost_usd - 10.0).abs() < f64::EPSILON);
+        assert_eq!(cfg.timeout_secs, 60);
+        assert_eq!(cfg.max_memory_bytes, 268_435_456);
+        assert_eq!(cfg.rate_limit_per_min, 60);
+        assert!(cfg.deny_network);
+    }
+
+    #[test]
+    fn test_sandbox_check_result_variants() {
+        let allowed = SandboxCheckResult::Allowed;
+        assert!(matches!(allowed, SandboxCheckResult::Allowed));
+
+        let rate_limited = SandboxCheckResult::RateLimited {
+            retry_after_secs: 30,
+        };
+        assert!(matches!(
+            rate_limited,
+            SandboxCheckResult::RateLimited { .. }
+        ));
+
+        let budget = SandboxCheckResult::BudgetExceeded {
+            spent_usd: 12.5,
+            limit_usd: 10.0,
+        };
+        assert!(matches!(budget, SandboxCheckResult::BudgetExceeded { .. }));
+
+        let token = SandboxCheckResult::TokenLimitExceeded {
+            used: 9000,
+            max: 8192,
+        };
+        assert!(matches!(
+            token,
+            SandboxCheckResult::TokenLimitExceeded { .. }
+        ));
+
+        let timeout = SandboxCheckResult::Timeout { elapsed_secs: 61 };
+        assert!(matches!(timeout, SandboxCheckResult::Timeout { .. }));
+
+        let network = SandboxCheckResult::NetworkDenied;
+        assert!(matches!(network, SandboxCheckResult::NetworkDenied));
     }
 }

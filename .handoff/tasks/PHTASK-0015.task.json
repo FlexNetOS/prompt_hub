@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0015",
+  "title": "Recover feature: `local-llm`",
+  "status": "done",
+  "priority": "P1",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Local inference integration within #![forbid(unsafe_code)]: LocalModelConfig builder, health enum, Ollama/llamafile client, config CRUD + health checks. No new deps. 13 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`local-llm` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:ab90a6c9fc686b367d372f0d0cba955ef8d0bb17eb21dbae6a286b28bfb6a757",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:9b137ea821b0ed7956dddb069b86ea47146b672727babd94fe25d11bfa166763"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "ff05895"
+}

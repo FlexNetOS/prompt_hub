@@ -1,0 +1,37 @@
+{
+  "acceptance_criteria": [
+    "ConflictEntry includes both server and local timestamps",
+    "LastWriteWins returns the newer side (server-newer vs local-newer both handled)",
+    "Merge merges non-conflicting fields and flags genuine conflicts",
+    "tests cover local-newer, server-newer, and field-merge cases"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0052",
+  "intent_lock": {
+    "acceptance_hash": "blake3:7ee0c3af7fb87828d0eeba4426dcd0775bddd13946f55da1084d63b24f3bbba7",
+    "objective_hash": "blake3:5bfd1f98a3b1f1d0623b86905d59cc1ad152e5caffcb5f16b353aaf92aee66f2",
+    "path_scope_hash": "blake3:7f229c58e88651b42d23d3fce09d8fef7f690918cf8a857c7565f7ab2d3b660f"
+  },
+  "objective": "offline.rs LastWriteWins (:385) unconditionally returns None (keeps local) because ConflictEntry carries no server timestamp; Merge (:409) only filters the pull queue, never merges fields. CRUD/change-tracking are real. Complete: ConflictEntry carries both server+local timestamps; LastWriteWins compares and resolves to the newer side; Merge performs real field-level merge.",
+  "path_scope": [
+    "prompt-hub/src/offline.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete offline conflict-resolution (LastWriteWins + Merge)"
+}

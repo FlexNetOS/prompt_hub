@@ -1,0 +1,34 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0027",
+  "title": "Wire dead `tokens.rs` into PromptHub fa\u00e7ade",
+  "status": "done",
+  "priority": "P1",
+  "objective": "Brought the zero-caller tokens module live: count_prompt_tokens + estimate_prompt_cost, RBAC Read via get_by_id reuse, None->NotFound. Logic stays in tokens.rs. 4 hub tests incl. unauthorized.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "count_prompt_tokens + estimate_prompt_cost on PromptHub; 4 tests; gates green; PR merged"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:eec331eaa8ef16b62c56c9babe69d7d4eac74b49f3987e16ee220f3ed2824876",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:b2760d9c60332c7c14c2e2dd2b95cafcb2c411e026b8b752330a20dabbdf57e3"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "7f6db50",
+  "cycle": 83,
+  "pr": 81
+}

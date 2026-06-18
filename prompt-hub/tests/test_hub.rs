@@ -1,5 +1,6 @@
 use prompt_hub::config::HubConfig;
 use prompt_hub::hub::PromptHub;
+use prompt_hub::models::{AgentIdentity, Capability, Domain, Prompt, SearchMode};
 use std::path::Path;
 
 #[tokio::test]
@@ -84,4 +85,40 @@ async fn test_hub_config_load_fallback() {
     let config = HubConfig::load().unwrap_or_default();
     assert_eq!(config.max_pool_size, 10);
     assert_eq!(config.default_page_size, 20);
+}
+
+/// Slice 3: end-to-end via PromptHub — default config → insert → search finds it.
+#[tokio::test]
+async fn test_hub_default_config_embed_search() {
+    let config = HubConfig::default();
+    assert_eq!(config.embedding_dimension, 384);
+
+    let hub = PromptHub::new(Path::new(":memory:"), config).await.unwrap();
+
+    // Register a prompt through the hub (triggers SmartEngine::index → embed + persist).
+    let mut prompt = Prompt::new("e2e-test", "System prompt for testing search.");
+    prompt.domain = Domain::Coding;
+    let identity = AgentIdentity {
+        id: uuid::Uuid::new_v4(),
+        name: "test-operator".to_string(),
+        capabilities: vec![Capability::Read, Capability::Write, Capability::Admin],
+        token_hash: String::new(),
+        specialization_score: 0.0,
+    };
+    hub.register(prompt, &identity).await.unwrap();
+
+    // Search must find it via embedding similarity.
+    let results = hub
+        .search(
+            "testing",
+            SearchMode::Smart,
+            Default::default(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        results.items.iter().any(|s| s.prompt.name == "e2e-test"),
+        "Hub search should find inserted prompt via embedding"
+    );
 }

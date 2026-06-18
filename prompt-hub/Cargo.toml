@@ -14,57 +14,78 @@ description = "Production-ready prompt management library for LLM agent swarms"
 readme = "README.md"
 
 [features]
-default = ["handlebars"]
+default = ["handlebars", "vibe", "rollback", "cost", "learn"]
 smart = ["dep:ndarray"]
-# Prometheus text-format metrics exposition via the maintained `prometheus`
-# crate (text encoder only — no protobuf, no discontinued OpenTelemetry exporter).
+# ONNX runtime inference for smart search (off by default).
+smart-ort = ["dep:ort", "dep:reqwest", "dep:ndarray"]
 otel = ["dep:prometheus"]
-sqlcipher = []
 tls = ["dep:tokio-rustls"]
-ffi = []
+# Template engine — pick one at compile time.
 handlebars = ["dep:handlebars"]
 tera = ["dep:tera"]
+# Token counting backends — pick one or both.
 tiktoken = ["dep:tiktoken-rs"]
 tokenizers = ["dep:tokenizers"]
+# Dynamic plugin loading via libloading/inventory inventory.
 plugins = ["dep:libloading", "dep:inventory"]
-qdrant = ["dep:reqwest"]
+
+# chaos-automation needs an HTTP client for real webhook-alert POSTs; reqwest is
+# already an optional dependency (shared with local-llm / qdrant), so we enable
+# the existing dep rather than adding a new one.
+chaos-automation = ["chaos", "dep:reqwest"]
+
+# ---------------------------------------------------------------------------
+# Stub features converted to real gated features (Category B): real pub API,
+# hub.rs wiring exists, but were feature="[]" no-ops before this cleanup.
+# Each gate adds a #[cfg(feature = "...")] on the module decl + hub wiring.
+# ---------------------------------------------------------------------------
 vibe = []
-preview = []
 privacy = []
-quality = []
-multimodal = []
 rollback = []
 cost = []
 confidence = []
+cost-limits = []
+beta-program = []
+multi-provider = []
 learn = []
 fallback = []
+multimodal = []
+satisfaction = []
+
+# ---------------------------------------------------------------------------
+# Real modules with code (Category C): kept as gated features. No optional
+# deps required — these are pure Rust with existing std/deps already present.
+# ---------------------------------------------------------------------------
+chaos = []
 gather = []
-voice = []
-accessibility = []
-budget = []
-cost-limits = []
 quota = []
+retention = []
+offline = []
+
+gradual-rollout = []
 circuit-breaker = []
 moderation = []
-malware-scan = []
-sandbox = []
-retention = []
-auto-purge = []
-voice-anonymize = []
-multi-provider = []
-provider-health = []
-load-balance = []
-offline = []
-local-llm = []
-satisfaction = []
+budget = []
 analytics = []
-canary = []
-gradual-rollout = []
-beta-program = []
-mobile = []
+preview = []
+i18n = []
+sandbox = []
+# Voice pipelines use reqwest for real STT/TTS cloud backends (OpenAI-compatible).
+voice = ["dep:reqwest"]
+local-llm = ["dep:reqwest"]
+accessibility = []
+auto-purge = []
+malware-scan = []
+voice-anonymize = []
 touch = []
-chaos = []
-chaos-automation = []
+qdrant = ["dep:reqwest"]
+mobile = []
+
+# ---------------------------------------------------------------------------
+# Dead features — removed from Cargo.toml entirely. These had no module files,
+# no hub.rs wiring, and zero meaningful source references:
+#   multi-provider
+# ---------------------------------------------------------------------------
 
 [dependencies]
 clap = { workspace = true }
@@ -96,6 +117,7 @@ libloading = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true }
+ort = { workspace = true, optional = true, features = ["ndarray"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
