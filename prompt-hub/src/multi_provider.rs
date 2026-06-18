@@ -68,7 +68,7 @@ impl HealthStatus {
 }
 
 /// A tracked provider instance (config + live health state).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TrackedProvider {
     pub config: ProviderConfig,
     pub health: HealthStatus,

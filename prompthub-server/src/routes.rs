@@ -22,6 +22,9 @@ use prompt_hub::budget::{BudgetAlert, BudgetConfig};
 #[cfg(feature = "multi-provider")]
 use prompt_hub::multi_provider::{ProviderConfig, Vendor};
 
+// Provider health imports (always available)
+use prompt_hub::provider_health::HealthStatus;
+
 #[cfg(feature = "retention")]
 use prompt_hub::retention::DataType;
 
@@ -3162,7 +3165,46 @@ pub async fn is_healthy_route(
 /// Get a summary of all monitored providers.
 #[instrument(skip(state))]
 pub async fn get_health_summary_route(State(state): State<Arc<AppState>>) -> Response {
-    success(json!(state.hub.get_health_summary())).into_response()
+    let summary = state.hub.get_health_summary();
+
+    // Build response records (without non-serializable Instant field)
+    let records: Vec<Value> = summary
+        .providers
+        .iter()
+        .map(|record| {
+            let status_str = match record.status {
+                HealthStatus::Healthy => "healthy",
+                HealthStatus::Degraded => "degraded",
+                HealthStatus::Unhealthy => "unhealthy",
+                HealthStatus::Unknown => "unknown",
+            };
+            json!({
+                "name": record.name,
+                "url": record.url,
+                "status": status_str,
+                "last_latency_ms": record.last_latency_ms,
+                "error_count": record.error_count,
+                "success_count": record.success_count
+            })
+        })
+        .collect();
+
+    let overall_str = match summary.overall {
+        HealthStatus::Healthy => "healthy",
+        HealthStatus::Degraded => "degraded",
+        HealthStatus::Unhealthy => "unhealthy",
+        HealthStatus::Unknown => "unknown",
+    };
+
+    success(json!({
+        "raw": summary,
+        "providers": records,
+        "healthy_count": summary.healthy_count,
+        "degraded_count": summary.degraded_count,
+        "unhealthy_count": summary.unhealthy_count,
+        "overall_status": overall_str
+    }))
+    .into_response()
 }
 
 // ── Multi-provider routing routes ─────────────────────────────────────────
