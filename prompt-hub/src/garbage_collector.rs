@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::retention::{DataType, RetentionPolicy};
 use crate::storage::Storage;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{info, instrument};
 
@@ -13,7 +14,7 @@ use tracing::{info, instrument};
 /// cleans orphaned embeddings, and vacuums the database for storage efficiency.
 #[derive(Debug)]
 pub struct GarbageCollector {
-    retention_policy: RetentionPolicy,
+    retention_policy: std::sync::RwLock<RetentionPolicy>,
     prompts_purged: AtomicU64,
     embeddings_cleaned: AtomicU64,
     vacuums_run: AtomicU64,
@@ -22,7 +23,7 @@ pub struct GarbageCollector {
 }
 
 /// Report from a garbage collection run.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GcReport {
     pub prompts_purged: u64,
     pub embeddings_cleaned: u64,
@@ -45,7 +46,7 @@ impl GarbageCollector {
     /// Create a new garbage collector.
     pub fn new(retention_policy: RetentionPolicy) -> Self {
         Self {
-            retention_policy,
+            retention_policy: std::sync::RwLock::new(retention_policy),
             prompts_purged: AtomicU64::new(0),
             embeddings_cleaned: AtomicU64::new(0),
             vacuums_run: AtomicU64::new(0),
@@ -83,7 +84,7 @@ impl GarbageCollector {
         let cleaned = self.clean_orphaned_embeddings(storage).await?;
 
         // Phase 3: Vacuum if the retention policy requests it.
-        let vacuumed = if self.retention_policy.auto_purge_enabled() {
+        let vacuumed = if self.retention_policy.read().unwrap().auto_purge_enabled() {
             self.vacuum(storage).await?;
             true
         } else {
@@ -115,6 +116,8 @@ impl GarbageCollector {
     pub async fn purge_soft_deleted(&self, storage: &Storage) -> Result<u64> {
         let retention_days = self
             .retention_policy
+            .read()
+            .unwrap()
             .get_period(&DataType::SoftDeletedPrompt);
         let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
         info!(
@@ -168,6 +171,15 @@ impl GarbageCollector {
         self.enabled.load(Ordering::SeqCst)
     }
 
+    /// Set the retention period for a data type so the GC and hub policy stay
+    /// in sync (notably for `SoftDeletedPrompt`).
+    pub fn set_retention_period(&self, data_type: DataType, days: u32) {
+        self.retention_policy
+            .write()
+            .unwrap()
+            .set_period(data_type, days);
+    }
+
     /// Load configuration.
     pub fn configure(&self, config: &GcConfig) {
         self.set_enabled(config.enabled);
@@ -179,7 +191,7 @@ impl GarbageCollector {
 }
 
 /// Cumulative GC statistics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GcStats {
     pub prompts_purged_total: u64,
     pub embeddings_cleaned_total: u64,

@@ -9,14 +9,10 @@ A non-technical user makes any request; prompt_hub transforms, communicates, and
 Git > FLEET ledger (meta/.handoff/ledger.db) > tasks/*.task.json > this packet.
 
 ## 3. Progress
-Done: 53/71.  FLEET tamper-evident events verified: 732.
+Done: 57/71.  FLEET tamper-evident events verified: 845.
 
 ## 4. Remaining
-- [P2] **PHTASK-0048** — Complete search ONNX embedder real inference + model fetch/verify
-- [P2] **PHTASK-0055** — Complete voice STT/TTS backends behind the FSM
 - [P1] **PHTASK-0056** — EPIC — expose remaining ~125 hub capabilities over HTTP
-- [P1] **PHTASK-0057** — Routes: prompt lifecycle (11 capabilities)
-- [P2] **PHTASK-0058** — Routes: context gathering + lineage (11 capabilities)
 - [P1] **PHTASK-0059** — Routes: provider health/multi-provider + rollout/deploy/rollback (18)
 - [P2] **PHTASK-0060** — Routes: cost-limits + beta + quota + moderation (14)
 - [P2] **PHTASK-0061** — Routes: audit/SOC2/diff + retention/GC + auto-purge (23)

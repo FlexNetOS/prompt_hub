@@ -78,6 +78,8 @@ use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(feature = "retention")]
+use std::sync::RwLock;
 #[cfg(feature = "budget")]
 use tracing::debug;
 use tracing::{info, instrument, warn};
@@ -291,7 +293,7 @@ pub struct PromptHub {
     diff_engine: PromptDiff,
     health_aggregator: HealthAggregator,
     #[cfg(feature = "retention")]
-    retention_policy: RetentionPolicy,
+    retention_policy: Arc<RwLock<RetentionPolicy>>,
     #[cfg(feature = "retention")]
     garbage_collector: GarbageCollector,
     #[cfg(feature = "rollback")]
@@ -301,9 +303,8 @@ pub struct PromptHub {
     #[cfg(feature = "offline")]
     offlined: std::sync::Arc<std::sync::RwLock<Option<OfflineState>>>,
     #[cfg(feature = "auto-purge")]
-    auto_purge_engine: std::sync::Arc<
-        std::sync::Mutex<Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>>>,
-    >,
+    auto_purge_engine:
+        std::sync::Arc<std::sync::Mutex<Option<Arc<crate::auto_purge::AutoPurgeEngine>>>>,
     #[cfg(feature = "mobile")]
     mobile_engine: std::sync::Arc<std::sync::RwLock<Option<Arc<std::sync::Mutex<MobileEngine>>>>>,
     #[cfg(feature = "gather")]
@@ -419,9 +420,9 @@ impl PromptHub {
             diff_engine: PromptDiff::new(),
             health_aggregator: HealthAggregator::new(),
             #[cfg(feature = "retention")]
-            retention_policy: RetentionPolicy::default(),
+            retention_policy: Arc::new(RwLock::new(RetentionPolicy::default())),
             #[cfg(feature = "retention")]
-            garbage_collector: GarbageCollector::new(crate::retention::RetentionPolicy::default()),
+            garbage_collector: GarbageCollector::new(RetentionPolicy::default()),
             safe_deployer: SafeDeployer::new(),
             #[cfg(feature = "malware-scan")]
             malware_scan_config: Arc::new(std::sync::Mutex::new(MalwareScanConfig::default())),
@@ -441,7 +442,7 @@ impl PromptHub {
         {
             let retention = crate::retention::RetentionPolicy::default();
             hub.garbage_collector = GarbageCollector::new(retention.clone());
-            hub.retention_policy = retention;
+            hub.retention_policy = Arc::new(RwLock::new(retention));
         }
 
         // Register default hooks
@@ -691,34 +692,33 @@ impl PromptHub {
 
     /// Return a handle to the auto-purge engine, if enabled.
     #[cfg(feature = "auto-purge")]
-    pub fn auto_purge_engine(
-        &self,
-    ) -> Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>> {
+    pub fn auto_purge_engine(&self) -> Option<Arc<crate::auto_purge::AutoPurgeEngine>> {
         let outer = self.auto_purge_engine.lock().unwrap();
         outer.clone()
     }
 
     /// Run a single purge cycle synchronously (blocking on storage).
     #[cfg(feature = "auto-purge")]
-    #[allow(clippy::await_holding_lock)]
     pub async fn purge_now(&self) -> Result<crate::auto_purge::PurgeStats> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
-        let guard = engine.lock().unwrap();
-        guard.run_purge(self).await
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        engine.run_purge(self).await
     }
 
     /// Get a snapshot of current purge statistics.
     #[cfg(feature = "auto-purge")]
     pub fn get_purge_stats(&self) -> Result<crate::auto_purge::PurgeStats> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
-        let guard = engine.lock().unwrap();
-        Ok(guard.stats())
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        Ok(engine.stats())
     }
 
     /// Update the auto-purge configuration.
@@ -727,37 +727,34 @@ impl PromptHub {
         &self,
         updater: impl FnOnce(&mut crate::auto_purge::AutoPurgeConfig),
     ) -> Result<()> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
-        let guard = engine.lock().unwrap();
-        guard.update_config(updater);
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        engine.update_config(updater);
         Ok(())
     }
 
     /// Start the auto-purge daemon with the given *config*.
     #[cfg(feature = "auto-purge")]
-    #[allow(clippy::await_holding_lock)]
     pub async fn start_purge_daemon(
         &self,
         config: crate::auto_purge::AutoPurgeConfig,
     ) -> Result<Option<tokio::task::JoinHandle<()>>> {
-        let mut outer = self.auto_purge_engine.lock().unwrap();
-        if outer.is_none() {
-            *outer = Some(Arc::new(std::sync::Mutex::new(
-                crate::auto_purge::AutoPurgeEngine::new(config),
-            )));
-        }
-
-        let engine = outer.clone().unwrap();
-        let handle = {
-            let inner_guard = engine.lock().unwrap();
-            inner_guard.update_config(|c| {
-                c.enabled = true;
-            });
-            inner_guard.spawn_daemon_task().await?
+        let engine = {
+            let mut outer = self.auto_purge_engine.lock().unwrap();
+            if outer.is_none() {
+                *outer = Some(Arc::new(crate::auto_purge::AutoPurgeEngine::new(config)));
+            }
+            outer.clone().unwrap()
         };
+
+        engine.update_config(|c| {
+            c.enabled = true;
+        });
+        let handle = engine.spawn_daemon_task().await?;
 
         Ok(Some(handle))
     }
@@ -765,13 +762,14 @@ impl PromptHub {
     /// Stop the auto-purge daemon (sends shutdown signal to the loop).
     #[cfg(feature = "auto-purge")]
     pub fn stop_purge_daemon(&self) -> Result<()> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
 
-        let guard = engine.lock().unwrap();
-        guard.shutdown();
+        engine.shutdown();
         Ok(())
     }
 
@@ -2430,7 +2428,14 @@ impl PromptHub {
 
     /// Get all tracked entities and their limit statuses.
     #[cfg(feature = "cost-limits")]
-    pub fn cost_limit_status(&self) -> Vec<(String, f64, crate::cost_limits::OveragePolicy)> {
+    pub fn cost_limit_status(
+        &self,
+    ) -> Vec<(
+        String,
+        crate::cost_limits::Resource,
+        f64,
+        crate::cost_limits::OveragePolicy,
+    )> {
         self.cost_limiter
             .entity_ids()
             .into_iter()
@@ -2438,7 +2443,7 @@ impl PromptHub {
                 self.cost_limiter
                     .entity_status(&id)
                     .into_iter()
-                    .map(move |(_res, util, pol)| (id.clone(), util, pol))
+                    .map(move |(res, util, pol)| (id.clone(), res, util, pol))
             })
             .collect()
     }
@@ -3021,26 +3026,32 @@ impl PromptHub {
 
     /// Set a retention period for a data type.
     #[cfg(feature = "retention")]
-    pub fn set_retention_period(&mut self, data_type: DataType, days: u32) {
-        self.retention_policy.set_period(data_type, days);
+    pub fn set_retention_period(&self, data_type: DataType, days: u32) {
+        let mut policy = self.retention_policy.write().unwrap();
+        policy.set_period(data_type.clone(), days);
+        drop(policy);
+        self.garbage_collector.set_retention_period(data_type, days);
     }
 
     /// Get the retention period (in days) for a data type.
     #[cfg(feature = "retention")]
     pub fn get_retention_period(&self, data_type: &DataType) -> u32 {
-        self.retention_policy.get_period(data_type)
+        let policy = self.retention_policy.read().unwrap();
+        policy.get_period(data_type)
     }
 
     /// Check if data of a given type has expired based on its retention policy.
     #[cfg(feature = "retention")]
     pub fn is_data_expired(&self, data_type: &DataType, age_days: u32) -> bool {
-        self.retention_policy.is_expired(data_type, age_days)
+        let policy = self.retention_policy.read().unwrap();
+        policy.is_expired(data_type, age_days)
     }
 
     /// Run scheduled cleanup and return results for expired items.
     #[cfg(feature = "retention")]
     pub fn run_retention_cleanup(&self) -> Vec<crate::retention::CleanupResult> {
-        self.retention_policy.run_cleanup()
+        let policy = self.retention_policy.read().unwrap();
+        policy.run_cleanup()
     }
 
     /// Execute garbage collection across all configured types.
@@ -4563,7 +4574,7 @@ mod tests {
     #[tokio::test]
     async fn test_retention_gc_accessible() {
         let dir = tempfile::tempdir().unwrap();
-        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
             .await
             .unwrap();
 

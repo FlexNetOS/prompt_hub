@@ -3,3 +3,5 @@ ralph-run-*.log
 *.log
 # Local-only terminal sentinels
 STOP
+# Local Python virtual environments used for generating test fixtures
+onnx_venv/
