@@ -22,6 +22,12 @@ use prompt_hub::budget::{BudgetAlert, BudgetConfig};
 #[cfg(feature = "multi-provider")]
 use prompt_hub::multi_provider::{ProviderConfig, Vendor};
 
+#[cfg(feature = "retention")]
+use prompt_hub::retention::DataType;
+
+#[cfg(feature = "auto-purge")]
+use prompt_hub::auto_purge::AutoPurgeConfig;
+
 use crate::responses::{error, success};
 
 // ── Satisfaction request DTOs ─────────────────────────────────────────────
@@ -520,6 +526,343 @@ pub async fn audit_trail(State(state): State<Arc<AppState>>, Path(id): Path<Stri
             warn!("Failed to fetch audit trail for {}: {}", id, e);
             error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
+    }
+}
+
+// ── Extended audit / SOC2 / diff handlers ───────────────────────────────
+
+/// Request body for computing an audit diff hash.
+#[derive(Debug, Deserialize)]
+pub struct AuditHashRequest {
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub timestamp: String,
+}
+
+/// Request body wrapping an audit entry.
+#[derive(Debug, Deserialize)]
+pub struct AuditEntryRequest {
+    pub entry: AuditEntry,
+}
+
+/// Request body for computing a diff between two texts.
+#[derive(Debug, Deserialize)]
+pub struct DiffComputeRequest {
+    pub old: String,
+    pub new: String,
+}
+
+/// Request body carrying a pre-computed diff result.
+#[derive(Debug, Deserialize)]
+pub struct DiffResultRequest {
+    pub diff: prompt_hub::diff::DiffResult,
+}
+
+/// Compute the tamper-evident diff hash for an audit entry.
+#[instrument(skip(payload))]
+pub async fn compute_audit_hash_route(Json(payload): Json<AuditHashRequest>) -> Response {
+    let hash = prompt_hub::PromptHub::compute_audit_hash(
+        &payload.before,
+        &payload.after,
+        &payload.timestamp,
+    );
+    success(json!({ "hash": hash })).into_response()
+}
+
+/// Verify the integrity hash of an audit entry.
+#[instrument(skip(state, payload))]
+pub async fn verify_audit_integrity_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    let valid = state.hub.verify_audit_integrity(&payload.entry);
+    success(json!({ "valid": valid })).into_response()
+}
+
+/// Generate a SOC2 evidence summary for an audit entry.
+#[instrument(skip(state, payload))]
+pub async fn soc2_evidence_summary_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    let summary = state.hub.soc2_evidence_summary(&payload.entry);
+    success(json!({ "summary": summary })).into_response()
+}
+
+/// Validate that an audit entry conforms to the SOC2 schema.
+#[instrument(skip(state, payload))]
+pub async fn validate_soc2_schema_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    match state.hub.validate_soc2_schema(&payload.entry) {
+        Ok(()) => success(json!({ "valid": true })).into_response(),
+        Err(e) => map_hub_error("SOC2 schema validation", e),
+    }
+}
+
+/// Anonymize an audit entry for GDPR right-to-erasure.
+#[instrument(skip(state, payload))]
+pub async fn anonymize_audit_entry_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    let mut entry = payload.entry;
+    state.hub.anonymize_audit_entry(&mut entry);
+    success(json!({ "entry": entry })).into_response()
+}
+
+/// Compute a unified diff between two text documents.
+#[instrument(skip(state, payload))]
+pub async fn compute_diff_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffComputeRequest>,
+) -> Response {
+    let diff = state.hub.compute_diff(&payload.old, &payload.new);
+    success(json!({ "diff": diff })).into_response()
+}
+
+/// Summarize a diff with line counts and changed sections.
+#[instrument(skip(state, payload))]
+pub async fn summarize_diff_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffResultRequest>,
+) -> Response {
+    let summary = state.hub.summarize_diff(&payload.diff);
+    success(json!({ "summary": summary })).into_response()
+}
+
+/// Check whether two documents are identical.
+#[instrument(skip(state, payload))]
+pub async fn is_identical_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffComputeRequest>,
+) -> Response {
+    let identical = state.hub.is_identical(&payload.old, &payload.new);
+    success(json!({ "identical": identical })).into_response()
+}
+
+/// Format a diff as unified diff text.
+#[instrument(skip(state, payload))]
+pub async fn format_unified_diff_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffResultRequest>,
+) -> Response {
+    let text = state.hub.format_unified_diff(&payload.diff);
+    success(json!({ "unified_diff": text })).into_response()
+}
+
+// ── Retention / Garbage Collection handlers ─────────────────────────────
+
+#[cfg(feature = "retention")]
+#[derive(Debug, Deserialize)]
+pub struct SetRetentionRequest {
+    pub data_type: String,
+    pub days: u32,
+}
+
+#[cfg(feature = "retention")]
+#[derive(Debug, Deserialize)]
+pub struct IsExpiredQuery {
+    pub data_type: String,
+    pub age_days: u32,
+}
+
+#[cfg(feature = "retention")]
+#[derive(Debug, Deserialize)]
+pub struct SetGcEnabledRequest {
+    pub enabled: bool,
+}
+
+/// Parse a retention data type from its snake_case or PascalCase name.
+#[cfg(feature = "retention")]
+fn parse_data_type(s: &str) -> Option<DataType> {
+    match s.to_lowercase().as_str() {
+        "audit_log" | "auditlog" => Some(DataType::AuditLog),
+        "soft_deleted_prompt" | "softdeletedprompt" => Some(DataType::SoftDeletedPrompt),
+        "expired_lock" | "expiredlock" => Some(DataType::ExpiredLock),
+        "embedding_vector" | "embeddingvector" => Some(DataType::EmbeddingVector),
+        "session_cache" | "sessioncache" => Some(DataType::SessionCache),
+        "failed_attempt_log" | "failedattemptlog" => Some(DataType::FailedAttemptLog),
+        "analytics_event" | "analyticsevent" => Some(DataType::AnalyticsEvent),
+        _ => None,
+    }
+}
+
+/// Set the retention period (in days) for a data type.
+#[cfg(feature = "retention")]
+#[instrument(skip(state, payload))]
+pub async fn set_retention_period_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SetRetentionRequest>,
+) -> Response {
+    let data_type = match parse_data_type(&payload.data_type) {
+        Some(dt) => dt,
+        None => {
+            return error(StatusCode::BAD_REQUEST, "Invalid data_type").into_response();
+        }
+    };
+
+    state.hub.set_retention_period(data_type, payload.days);
+    success(json!({ "data_type": payload.data_type, "days": payload.days })).into_response()
+}
+
+/// Get the retention period (in days) for a data type.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn get_retention_period_route(
+    State(state): State<Arc<AppState>>,
+    Path(data_type): Path<String>,
+) -> Response {
+    let dt = match parse_data_type(&data_type) {
+        Some(dt) => dt,
+        None => return error(StatusCode::BAD_REQUEST, "Invalid data_type").into_response(),
+    };
+
+    let days = state.hub.get_retention_period(&dt);
+    success(json!({ "data_type": data_type, "days": days })).into_response()
+}
+
+/// Check whether data of a given type has expired based on its retention policy.
+#[cfg(feature = "retention")]
+#[instrument(skip(state, query))]
+pub async fn is_data_expired_route(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<IsExpiredQuery>,
+) -> Response {
+    let dt = match parse_data_type(&query.data_type) {
+        Some(dt) => dt,
+        None => return error(StatusCode::BAD_REQUEST, "Invalid data_type").into_response(),
+    };
+
+    let expired = state.hub.is_data_expired(&dt, query.age_days);
+    success(json!({
+        "data_type": query.data_type,
+        "age_days": query.age_days,
+        "expired": expired
+    }))
+    .into_response()
+}
+
+/// Run retention cleanup for all configured data types.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn run_retention_cleanup_route(State(state): State<Arc<AppState>>) -> Response {
+    let results = state.hub.run_retention_cleanup();
+    success(json!({ "results": results })).into_response()
+}
+
+/// Run a full garbage collection cycle.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn run_garbage_collection_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.run_garbage_collection().await {
+        Ok(report) => success(json!({ "report": report })).into_response(),
+        Err(e) => map_hub_error("garbage collection", e),
+    }
+}
+
+/// Purge soft-deleted prompts and return the number of rows removed.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn purge_soft_deleted_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.purge_soft_deleted().await {
+        Ok(count) => success(json!({ "purged": count })).into_response(),
+        Err(e) => map_hub_error("purge soft deleted", e),
+    }
+}
+
+/// Get cumulative garbage collection statistics.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn gc_stats_route(State(state): State<Arc<AppState>>) -> Response {
+    let stats = state.hub.gc_stats();
+    success(json!({ "stats": stats })).into_response()
+}
+
+/// Enable or disable automatic garbage collection.
+#[cfg(feature = "retention")]
+#[instrument(skip(state, payload))]
+pub async fn set_gc_enabled_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SetGcEnabledRequest>,
+) -> Response {
+    state.hub.set_gc_enabled(payload.enabled);
+    success(json!({ "enabled": payload.enabled })).into_response()
+}
+
+/// Check whether automatic garbage collection is enabled.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn gc_enabled_route(State(state): State<Arc<AppState>>) -> Response {
+    let enabled = state.hub.gc_enabled();
+    success(json!({ "enabled": enabled })).into_response()
+}
+
+// ── Auto-purge handlers ─────────────────────────────────────────────────
+
+#[cfg(feature = "auto-purge")]
+#[derive(Debug, Deserialize)]
+pub struct PurgeConfigRequest {
+    pub config: AutoPurgeConfig,
+}
+
+/// Run a single auto-purge cycle immediately.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state))]
+pub async fn purge_now_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.purge_now().await {
+        Ok(stats) => success(json!({ "stats": stats })).into_response(),
+        Err(e) => map_hub_error("purge now", e),
+    }
+}
+
+/// Get the current auto-purge statistics snapshot.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state))]
+pub async fn get_purge_stats_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.get_purge_stats() {
+        Ok(stats) => success(json!({ "stats": stats })).into_response(),
+        Err(e) => map_hub_error("purge stats", e),
+    }
+}
+
+/// Replace the auto-purge configuration.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state, payload))]
+pub async fn update_purge_config_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PurgeConfigRequest>,
+) -> Response {
+    match state.hub.update_purge_config(|c| *c = payload.config) {
+        Ok(()) => success(json!({ "updated": true })).into_response(),
+        Err(e) => map_hub_error("update purge config", e),
+    }
+}
+
+/// Start the auto-purge daemon with the given configuration.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state, payload))]
+pub async fn start_purge_daemon_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PurgeConfigRequest>,
+) -> Response {
+    match state.hub.start_purge_daemon(payload.config).await {
+        Ok(Some(_handle)) => success(json!({ "started": true })).into_response(),
+        Ok(None) => {
+            success(json!({ "started": false, "reason": "already running" })).into_response()
+        }
+        Err(e) => map_hub_error("start purge daemon", e),
+    }
+}
+
+/// Stop the auto-purge daemon.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state))]
+pub async fn stop_purge_daemon_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.stop_purge_daemon() {
+        Ok(()) => success(json!({ "stopped": true })).into_response(),
+        Err(e) => map_hub_error("stop purge daemon", e),
     }
 }
 
@@ -5178,6 +5521,370 @@ axum = "0.8"
 
         // The underlying rollback layer treats a missing snapshot as a no-op,
         // so the route returns 200 with restored=true.
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Audit / SOC2 / diff route tests ─────────────────────────────────────
+
+    fn sample_audit_entry() -> AuditEntry {
+        let before = Some(r#"{"name":"old"}"#.to_string());
+        let after = Some(r#"{"name":"new"}"#.to_string());
+        let ts = chrono::Utc::now();
+        let ts_str = ts.to_rfc3339();
+        let hash = prompt_hub::PromptHub::compute_audit_hash(&before, &after, &ts_str);
+        AuditEntry {
+            id: 1,
+            timestamp: ts,
+            agent_id: uuid::Uuid::new_v4(),
+            action: "updated".to_string(),
+            prompt_id: Some(uuid::Uuid::new_v4()),
+            diff_hash: hash,
+            before_json: before,
+            after_json: after,
+            ip_address: Some("127.0.0.1".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compute_audit_hash_route() {
+        let response = compute_audit_hash_route(axum::Json(AuditHashRequest {
+            before: Some("before".to_string()),
+            after: Some("after".to_string()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }))
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_verify_audit_integrity_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = verify_audit_integrity_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_soc2_evidence_summary_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = soc2_evidence_summary_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_validate_soc2_schema_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = validate_soc2_schema_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_anonymize_audit_entry_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = anonymize_audit_entry_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_compute_diff_route() {
+        let state = evolve_test_state().await;
+
+        let response = compute_diff_route(
+            axum::extract::State(state),
+            axum::Json(DiffComputeRequest {
+                old: "A\nB".to_string(),
+                new: "A\nC".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_summarize_diff_route() {
+        let state = evolve_test_state().await;
+        let diff = state.hub.compute_diff("A\nB", "A\nC");
+
+        let response = summarize_diff_route(
+            axum::extract::State(state),
+            axum::Json(DiffResultRequest { diff }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_is_identical_route() {
+        let state = evolve_test_state().await;
+
+        let response = is_identical_route(
+            axum::extract::State(state),
+            axum::Json(DiffComputeRequest {
+                old: "same".to_string(),
+                new: "same".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_format_unified_diff_route() {
+        let state = evolve_test_state().await;
+        let diff = state.hub.compute_diff("A\nB", "A\nC");
+
+        let response = format_unified_diff_route(
+            axum::extract::State(state),
+            axum::Json(DiffResultRequest { diff }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Retention / GC route tests ──────────────────────────────────────────
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_set_retention_period_route() {
+        let state = evolve_test_state().await;
+
+        let response = set_retention_period_route(
+            axum::extract::State(state),
+            axum::Json(SetRetentionRequest {
+                data_type: "audit_log".to_string(),
+                days: 42,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_get_retention_period_route() {
+        let state = evolve_test_state().await;
+
+        let response = get_retention_period_route(
+            axum::extract::State(state),
+            axum::extract::Path("audit_log".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_is_data_expired_route() {
+        let state = evolve_test_state().await;
+
+        let response = is_data_expired_route(
+            axum::extract::State(state),
+            axum::extract::Query(IsExpiredQuery {
+                data_type: "audit_log".to_string(),
+                age_days: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_run_retention_cleanup_route() {
+        let state = evolve_test_state().await;
+
+        let response = run_retention_cleanup_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_run_garbage_collection_route() {
+        let state = evolve_test_state().await;
+
+        let response = run_garbage_collection_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_purge_soft_deleted_route() {
+        let state = evolve_test_state().await;
+
+        let response = purge_soft_deleted_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_gc_stats_route() {
+        let state = evolve_test_state().await;
+
+        let response = gc_stats_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_set_gc_enabled_route() {
+        let state = evolve_test_state().await;
+
+        let response = set_gc_enabled_route(
+            axum::extract::State(state),
+            axum::Json(SetGcEnabledRequest { enabled: false }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_gc_enabled_route() {
+        let state = evolve_test_state().await;
+
+        let response = gc_enabled_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Auto-purge route tests ──────────────────────────────────────────────
+
+    #[cfg(feature = "auto-purge")]
+    fn empty_purge_config() -> prompt_hub::auto_purge::AutoPurgeConfig {
+        prompt_hub::auto_purge::AutoPurgeConfig {
+            interval: std::time::Duration::from_secs(60),
+            policies: Vec::new(),
+            enabled: false,
+        }
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_purge_now_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = purge_now_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_get_purge_stats_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = get_purge_stats_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_update_purge_config_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = update_purge_config_route(
+            axum::extract::State(state),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_start_purge_daemon_route() {
+        let state = evolve_test_state().await;
+
+        let response = start_purge_daemon_route(
+            axum::extract::State(state),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_stop_purge_daemon_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = stop_purge_daemon_route(axum::extract::State(state)).await;
+
         assert_eq!(response.status(), StatusCode::OK);
     }
 }
