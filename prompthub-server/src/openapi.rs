@@ -125,6 +125,195 @@ fn fallback_spec() -> Value {
                         "200": { "description": "Prompt found" },
                         "404": { "description": "Not found" }
                     }
+                },
+                "patch": {
+                    "summary": "Partially update a prompt",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/UpdatePromptRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Prompt updated" },
+                        "400": { "description": "Bad request" },
+                        "403": { "description": "Forbidden" },
+                        "404": { "description": "Not found" },
+                        "422": { "description": "Validation error" }
+                    }
+                }
+            },
+            "/api/v1/prompts/get": {
+                "get": {
+                    "summary": "Get best matching prompt by role and intent",
+                    "parameters": [
+                        { "name": "role", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "intent", "in": "query", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Prompt found" },
+                        "400": { "description": "Bad request" },
+                        "404": { "description": "No matching prompt" }
+                    }
+                }
+            },
+            "/api/v1/prompts/{id}/rollback": {
+                "post": {
+                    "summary": "Roll back a prompt to a previous version",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/RollbackRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Prompt rolled back" },
+                        "400": { "description": "Bad request" },
+                        "403": { "description": "Forbidden" },
+                        "404": { "description": "Not found" }
+                    }
+                }
+            },
+            "/api/v1/prompts/{id}/transfer": {
+                "post": {
+                    "summary": "Transfer prompt ownership",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/TransferOwnershipRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Ownership transferred" },
+                        "400": { "description": "Bad request" },
+                        "403": { "description": "Forbidden" },
+                        "404": { "description": "Not found" }
+                    }
+                }
+            },
+            "/api/v1/seed": {
+                "post": {
+                    "summary": "Seed default prompt templates",
+                    "responses": {
+                        "200": { "description": "Templates seeded" }
+                    }
+                }
+            },
+            "/api/v1/template/lint": {
+                "post": {
+                    "summary": "Lint a raw template string",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/LintTemplateRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Lint results" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost/estimate": {
+                "post": {
+                    "summary": "Estimate cost for an intent",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/EstimateCostRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Cost estimate" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/learn": {
+                "post": {
+                    "summary": "Record feedback for learning",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/LearnFeedbackRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Feedback recorded" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/confidence": {
+                "post": {
+                    "summary": "Score confidence for an intent",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ScoreConfidenceRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Confidence score" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/privacy/scan": {
+                "post": {
+                    "summary": "Scan text for privacy violations",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ScanPrivacyRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Privacy report" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/fallback": {
+                "post": {
+                    "summary": "Execute fallback chain for an intent",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/FallbackChainRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Fallback artifact" },
+                        "400": { "description": "Bad request" }
+                    }
                 }
             },
             "/api/v1/prompts/search": {
@@ -238,6 +427,80 @@ fn fallback_spec() -> Value {
                         "code": { "type": "integer" }
                     },
                     "required": ["success", "error", "code"]
+                },
+                "UpdatePromptRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "system_prompt": { "type": "string" },
+                        "user_template": { "type": "string" },
+                        "required_vars": { "type": "array", "items": { "type": "string" } },
+                        "domain": { "type": "string" },
+                        "tags": { "type": "array", "items": { "type": "string" } },
+                        "target_roles": { "type": "array", "items": { "type": "string" } },
+                        "status": { "type": "string" }
+                    }
+                },
+                "RollbackRequest": {
+                    "type": "object",
+                    "properties": {
+                        "to_version": { "type": "string" }
+                    },
+                    "required": ["to_version"]
+                },
+                "TransferOwnershipRequest": {
+                    "type": "object",
+                    "properties": {
+                        "to_agent_id": { "type": "string", "format": "uuid" }
+                    },
+                    "required": ["to_agent_id"]
+                },
+                "FallbackChainRequest": {
+                    "type": "object",
+                    "properties": {
+                        "intent_text": { "type": "string" },
+                        "project_path": { "type": "string" }
+                    },
+                    "required": ["intent_text"]
+                },
+                "LearnFeedbackRequest": {
+                    "type": "object",
+                    "properties": {
+                        "correction": { "type": "string" },
+                        "intent_text": { "type": "string" },
+                        "agent_id": { "type": "string", "format": "uuid" }
+                    },
+                    "required": ["correction", "intent_text", "agent_id"]
+                },
+                "ScoreConfidenceRequest": {
+                    "type": "object",
+                    "properties": {
+                        "intent_text": { "type": "string" },
+                        "project_path": { "type": "string" }
+                    },
+                    "required": ["intent_text"]
+                },
+                "ScanPrivacyRequest": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string" }
+                    },
+                    "required": ["text"]
+                },
+                "EstimateCostRequest": {
+                    "type": "object",
+                    "properties": {
+                        "intent_text": { "type": "string" },
+                        "project_path": { "type": "string" }
+                    },
+                    "required": ["intent_text"]
+                },
+                "LintTemplateRequest": {
+                    "type": "object",
+                    "properties": {
+                        "template": { "type": "string" }
+                    },
+                    "required": ["template"]
                 }
             }
         }

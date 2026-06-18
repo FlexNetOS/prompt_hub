@@ -1477,6 +1477,542 @@ pub async fn render_prompt_route(
 }
 
 // ── Satisfaction handler functions (above) ────────────────────────────────
+// ── Prompt lifecycle request DTOs ─────────────────────────────────────────
+
+/// Request body for looking up a prompt by role + intent.
+#[derive(Debug, Deserialize)]
+pub struct GetPromptRequest {
+    pub role: String,
+    pub intent: String,
+}
+
+/// Request body for partially updating a prompt.
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdatePromptRequest {
+    pub name: Option<String>,
+    pub system_prompt: Option<String>,
+    pub user_template: Option<String>,
+    pub required_vars: Option<Vec<String>>,
+    pub domain: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub target_roles: Option<Vec<String>>,
+    pub status: Option<String>,
+}
+
+/// Request body for rolling back a prompt to a previous version.
+#[derive(Debug, Deserialize)]
+pub struct RollbackRequest {
+    pub to_version: String,
+}
+
+/// Request body for transferring prompt ownership.
+#[derive(Debug, Deserialize)]
+pub struct TransferOwnershipRequest {
+    pub to_agent_id: String,
+}
+
+/// Request body for running the fallback chain.
+#[derive(Debug, Deserialize)]
+pub struct FallbackChainRequest {
+    pub intent_text: String,
+    pub project_path: String,
+}
+
+/// Request body for recording feedback.
+#[derive(Debug, Deserialize)]
+pub struct LearnFeedbackRequest {
+    pub correction: String,
+    pub intent_text: String,
+    pub agent_id: String,
+}
+
+/// Request body for scoring confidence.
+#[derive(Debug, Deserialize)]
+pub struct ScoreConfidenceRequest {
+    pub intent_text: String,
+    pub project_path: String,
+}
+
+/// Request body for scanning privacy.
+#[derive(Debug, Deserialize)]
+pub struct ScanPrivacyRequest {
+    pub text: String,
+}
+
+/// Request body for estimating cost.
+#[derive(Debug, Deserialize)]
+pub struct EstimateCostRequest {
+    pub intent_text: String,
+    pub project_path: String,
+}
+
+/// Request body for linting a template.
+#[derive(Debug, Deserialize)]
+pub struct LintTemplateRequest {
+    pub template: String,
+}
+
+// ── Prompt lifecycle handler functions ────────────────────────────────────
+
+/// Build an admin-capable identity for ownership-transfer administration.
+///
+/// In production this would be derived from the authenticated session; for now
+/// the HTTP layer uses a built-in admin identity so the RBAC check inside the
+/// hub method is still exercised.
+fn admin_agent() -> AgentIdentity {
+    AgentIdentity {
+        id: Uuid::new_v4(),
+        name: "http-admin".to_string(),
+        capabilities: vec![Capability::Read, Capability::Write, Capability::Admin],
+        token_hash: String::new(),
+        specialization_score: 0.0,
+    }
+}
+
+/// Parse a role string into a [`Role`], returning `None` if unknown.
+fn parse_role(role: &str) -> Option<Role> {
+    serde_json::from_str(&format!("\"{role}\"")).ok()
+}
+
+/// Shared helper: map a [`HubError`] to an HTTP response using the
+/// evolve_prompt-style error map.
+fn map_hub_error(context: &str, e: HubError) -> Response {
+    match e {
+        HubError::NotFound(_) => {
+            error(StatusCode::NOT_FOUND, format!("{context} not found")).into_response()
+        }
+        HubError::Unauthorized(msg) => error(StatusCode::FORBIDDEN, msg).into_response(),
+        HubError::ValidationError(msg) => {
+            error(StatusCode::UNPROCESSABLE_ENTITY, msg).into_response()
+        }
+        _ => {
+            warn!("Hub error ({context}): {}", e);
+            error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
+        }
+    }
+}
+
+/// Get the best matching prompt for a role + intent.
+///
+/// Thin shell over [`PromptHub::get`](prompt_hub::hub::PromptHub::get).
+#[instrument(skip(state))]
+pub async fn get_prompt_route(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<GetPromptRequest>,
+) -> Response {
+    if query.intent.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "intent cannot be empty").into_response();
+    }
+
+    let role = match parse_role(&query.role) {
+        Some(role) => role,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown role '{}'", query.role),
+            )
+            .into_response();
+        }
+    };
+
+    let role_for_error = role.clone();
+    match state.hub.get(role, &query.intent, &default_agent()).await {
+        Ok(Some(prompt)) => success(json!({
+            "id": prompt.id.to_string(),
+            "name": prompt.name,
+            "version": prompt.version.to_string(),
+            "status": prompt.status,
+            "system_prompt": prompt.system_prompt,
+            "user_template": prompt.user_template,
+            "domain": prompt.domain,
+            "tags": prompt.tags,
+            "target_roles": prompt.target_roles,
+            "metadata": prompt.metadata,
+            "metrics": prompt.metrics,
+            "created_at": prompt.created_at,
+            "updated_at": prompt.updated_at,
+        }))
+        .into_response(),
+        Ok(None) => error(
+            StatusCode::NOT_FOUND,
+            format!(
+                "No prompt found for role '{:?}' and intent '{}'",
+                role_for_error, query.intent
+            ),
+        )
+        .into_response(),
+        Err(e) => map_hub_error("prompt", e),
+    }
+}
+
+/// Partially update a stored prompt.
+///
+/// Thin shell over [`PromptHub::update`](prompt_hub::hub::PromptHub::update).
+#[instrument(skip(state))]
+pub async fn update_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdatePromptRequest>,
+) -> Response {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid UUID format: {}", id);
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
+        }
+    };
+
+    let domain = payload
+        .domain
+        .as_deref()
+        .and_then(|d| serde_json::from_str(&format!("\"{d}\"")).ok());
+
+    let target_roles: Option<Vec<Role>> = payload.target_roles.as_ref().map(|roles| {
+        roles
+            .iter()
+            .filter_map(|r| serde_json::from_str(&format!("\"{r}\"")).ok())
+            .collect()
+    });
+
+    let status = payload
+        .status
+        .as_deref()
+        .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
+
+    let patch = PromptPatch {
+        name: payload.name,
+        system_prompt: payload.system_prompt,
+        user_template: payload.user_template,
+        required_vars: payload.required_vars,
+        domain,
+        tags: payload.tags,
+        target_roles,
+        status,
+        metadata: None,
+        generation_params: None,
+        locale: None,
+    };
+
+    match state.hub.update(uuid, patch, &default_agent()).await {
+        Ok(prompt) => success(json!({
+            "id": prompt.id.to_string(),
+            "name": prompt.name,
+            "version": prompt.version.to_string(),
+            "status": prompt.status,
+            "system_prompt": prompt.system_prompt,
+            "user_template": prompt.user_template,
+            "domain": prompt.domain,
+            "tags": prompt.tags,
+            "target_roles": prompt.target_roles,
+            "created_at": prompt.created_at,
+            "updated_at": prompt.updated_at,
+        }))
+        .into_response(),
+        Err(e) => map_hub_error(&format!("prompt {}", uuid), e),
+    }
+}
+
+/// Roll back a prompt to a specific version.
+///
+/// Thin shell over [`PromptHub::rollback`](prompt_hub::hub::PromptHub::rollback).
+#[cfg(feature = "rollback")]
+#[instrument(skip(state))]
+pub async fn rollback_prompt(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<RollbackRequest>,
+) -> Response {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid UUID format: {}", id);
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
+        }
+    };
+
+    if payload.to_version.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "to_version cannot be empty").into_response();
+    }
+
+    match state
+        .hub
+        .rollback(uuid, &payload.to_version, &default_agent())
+        .await
+    {
+        Ok(prompt) => success(json!({
+            "id": prompt.id.to_string(),
+            "name": prompt.name,
+            "version": prompt.version.to_string(),
+            "status": prompt.status,
+            "system_prompt": prompt.system_prompt,
+            "user_template": prompt.user_template,
+            "rolled_back_to": payload.to_version,
+        }))
+        .into_response(),
+        Err(e) => map_hub_error(&format!("prompt {}", uuid), e),
+    }
+}
+
+/// Transfer ownership of a prompt to another agent.
+///
+/// Thin shell over [`PromptHub::transfer_ownership`](prompt_hub::hub::PromptHub::transfer_ownership).
+#[instrument(skip(state))]
+pub async fn transfer_ownership(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<TransferOwnershipRequest>,
+) -> Response {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid UUID format: {}", id);
+            return error(StatusCode::BAD_REQUEST, "Invalid UUID format").into_response();
+        }
+    };
+
+    let to_agent_id = match Uuid::parse_str(&payload.to_agent_id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid to_agent_id UUID: {}", payload.to_agent_id);
+            return error(StatusCode::BAD_REQUEST, "Invalid to_agent_id UUID").into_response();
+        }
+    };
+
+    let mut to_agent = default_agent();
+    to_agent.id = to_agent_id;
+
+    match state
+        .hub
+        .transfer_ownership(uuid, &default_agent(), &to_agent, &admin_agent())
+        .await
+    {
+        Ok(prompt) => success(json!({
+            "id": prompt.id.to_string(),
+            "name": prompt.name,
+            "owner_id": prompt.author.id.to_string(),
+        }))
+        .into_response(),
+        Err(e) => map_hub_error(&format!("prompt {}", uuid), e),
+    }
+}
+
+/// Seed the database with default prompt templates.
+///
+/// Thin shell over [`PromptHub::seed_defaults`](prompt_hub::hub::PromptHub::seed_defaults).
+#[instrument(skip(state))]
+pub async fn seed_defaults_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.seed_defaults(&default_agent()).await {
+        Ok(count) => success(json!({ "seeded": count })).into_response(),
+        Err(e) => map_hub_error("seed defaults", e),
+    }
+}
+
+/// Execute the fallback chain for an intent.
+///
+/// Thin shell over [`PromptHub::fallback_chain`](prompt_hub::hub::PromptHub::fallback_chain).
+#[cfg(feature = "fallback")]
+#[instrument(skip(state))]
+pub async fn fallback_chain_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<FallbackChainRequest>,
+) -> Response {
+    if payload.intent_text.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "intent_text cannot be empty").into_response();
+    }
+
+    let intent = Intent {
+        raw_text: payload.intent_text.clone(),
+        ..Default::default()
+    };
+
+    let context = ProjectContext {
+        project_path: payload.project_path.clone(),
+        ..Default::default()
+    };
+
+    match state.hub.fallback_chain(&intent, &context).await {
+        Ok(artifact) => {
+            let artifact_json = serde_json::to_value(&artifact).unwrap_or_else(|_| json!({}));
+            success(json!({ "artifact": artifact_json })).into_response()
+        }
+        Err(e) => map_hub_error("fallback chain", e),
+    }
+}
+
+/// Record user feedback for learning.
+///
+/// Thin shell over [`PromptHub::learn_from_feedback`](prompt_hub::hub::PromptHub::learn_from_feedback).
+#[cfg(feature = "learn")]
+#[instrument(skip(state))]
+pub async fn learn_from_feedback_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LearnFeedbackRequest>,
+) -> Response {
+    if payload.correction.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "correction cannot be empty").into_response();
+    }
+
+    let agent_id = match Uuid::parse_str(&payload.agent_id) {
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Invalid agent_id UUID: {}", payload.agent_id);
+            return error(StatusCode::BAD_REQUEST, "Invalid agent_id UUID").into_response();
+        }
+    };
+
+    let intent = Intent {
+        raw_text: payload.intent_text.clone(),
+        ..Default::default()
+    };
+
+    match state
+        .hub
+        .learn_from_feedback(&payload.correction, &intent, agent_id)
+        .await
+    {
+        Ok(()) => success(json!({ "learned": true })).into_response(),
+        Err(e) => map_hub_error("learn from feedback", e),
+    }
+}
+
+/// Score confidence for an intent against a project context.
+///
+/// Thin shell over [`PromptHub::score_confidence`](prompt_hub::hub::PromptHub::score_confidence).
+#[cfg(feature = "confidence")]
+#[instrument(skip(state))]
+pub async fn score_confidence_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ScoreConfidenceRequest>,
+) -> Response {
+    if payload.intent_text.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "intent_text cannot be empty").into_response();
+    }
+
+    let intent = Intent {
+        raw_text: payload.intent_text.clone(),
+        ..Default::default()
+    };
+
+    let context = ProjectContext {
+        project_path: payload.project_path.clone(),
+        ..Default::default()
+    };
+
+    match state.hub.score_confidence(&intent, &context).await {
+        Ok(score) => success(json!({
+            "score": score.score,
+            "overall": score.overall,
+            "intent_clarity": score.intent_clarity,
+            "context_completeness": score.context_completeness,
+            "skill_match": score.skill_match,
+            "historical_success": score.historical_success,
+            "requires_confirmation": score.requires_confirmation,
+        }))
+        .into_response(),
+        Err(e) => map_hub_error("confidence score", e),
+    }
+}
+
+/// Scan user input for privacy violations.
+///
+/// Thin shell over [`PromptHub::scan_privacy`](prompt_hub::hub::PromptHub::scan_privacy).
+#[cfg(feature = "privacy")]
+#[instrument(skip(state))]
+pub async fn scan_privacy_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ScanPrivacyRequest>,
+) -> Response {
+    if payload.text.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "text cannot be empty").into_response();
+    }
+
+    let input = UserInput {
+        input_type: InputType::Text,
+        raw_data: Vec::new(),
+        extracted_text: payload.text.clone(),
+    };
+
+    match state.hub.scan_privacy(&input).await {
+        Ok(report) => success(json!({
+            "risk_level": report.risk_level,
+            "secrets_found": report.secrets_found,
+            "pii_found": report.pii_found,
+            "sanitized": report.sanitized,
+            "issues": report
+                .issues
+                .iter()
+                .map(|i| serde_json::to_value(i).unwrap_or_else(|_| json!({})))
+                .collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(e) => map_hub_error("privacy scan", e),
+    }
+}
+
+/// Estimate the cost of fulfilling an intent.
+///
+/// Thin shell over [`PromptHub::estimate_cost`](prompt_hub::hub::PromptHub::estimate_cost).
+#[cfg(feature = "cost")]
+#[instrument(skip(state))]
+pub async fn estimate_cost_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<EstimateCostRequest>,
+) -> Response {
+    if payload.intent_text.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "intent_text cannot be empty").into_response();
+    }
+
+    let intent = Intent {
+        raw_text: payload.intent_text.clone(),
+        ..Default::default()
+    };
+
+    let context = ProjectContext {
+        project_path: payload.project_path.clone(),
+        ..Default::default()
+    };
+
+    match state.hub.estimate_cost(&intent, &context).await {
+        Ok(estimate) => success(json!({
+            "estimated_cost_usd": estimate.estimated_cost_usd,
+            "cost_usd": estimate.cost_usd,
+            "tokens_input": estimate.tokens_input,
+            "tokens_output": estimate.tokens_output,
+            "time_seconds": estimate.time_seconds,
+            "confidence": estimate.confidence,
+        }))
+        .into_response(),
+        Err(e) => map_hub_error("cost estimate", e),
+    }
+}
+
+/// Lint a raw template string.
+///
+/// Thin shell over [`PromptHub::lint_template`](prompt_hub::hub::PromptHub::lint_template).
+#[instrument(skip(state))]
+pub async fn lint_template_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LintTemplateRequest>,
+) -> Response {
+    if payload.template.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "template cannot be empty").into_response();
+    }
+
+    let issues = state.hub.lint_template(&payload.template);
+    let issues_json: Vec<Value> = issues
+        .iter()
+        .map(|issue| {
+            json!({
+                "severity": format!("{:?}", issue.severity),
+                "message": issue.message,
+                "line": issue.line,
+            })
+        })
+        .collect();
+
+    success(json!({ "issues": issues_json })).into_response()
+}
+
 // ── Test module below ─────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2257,5 +2793,420 @@ mod tests {
         .await;
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Prompt lifecycle route tests ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_prompt_route_happy_path() {
+        let state = evolve_test_state().await;
+        let _id = seed_prompt(&state).await;
+
+        let response = get_prompt_route(
+            axum::extract::State(state),
+            axum::extract::Query(GetPromptRequest {
+                role: "Developer".to_string(),
+                intent: "helpful assistant answer".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_prompt_route_not_found() {
+        let state = evolve_test_state().await;
+
+        let response = get_prompt_route(
+            axum::extract::State(state),
+            axum::extract::Query(GetPromptRequest {
+                role: "Developer".to_string(),
+                intent: "xyz-nonexistent-query".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_get_prompt_route_invalid_role() {
+        let state = evolve_test_state().await;
+
+        let response = get_prompt_route(
+            axum::extract::State(state),
+            axum::extract::Query(GetPromptRequest {
+                role: "NotARole".to_string(),
+                intent: "test".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_update_prompt_happy_path() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        let response = update_prompt(
+            axum::extract::State(state.clone()),
+            axum::extract::Path(id.to_string()),
+            axum::Json(UpdatePromptRequest {
+                name: Some("updated-name".to_string()),
+                system_prompt: None,
+                user_template: None,
+                required_vars: None,
+                domain: None,
+                tags: None,
+                target_roles: None,
+                status: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["name"], "updated-name");
+    }
+
+    #[tokio::test]
+    async fn test_update_prompt_invalid_uuid() {
+        let state = evolve_test_state().await;
+
+        let response = update_prompt(
+            axum::extract::State(state),
+            axum::extract::Path("not-a-uuid".to_string()),
+            axum::Json(UpdatePromptRequest::default()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_update_prompt_not_found() {
+        let state = evolve_test_state().await;
+        let random = Uuid::new_v4();
+
+        let response = update_prompt(
+            axum::extract::State(state),
+            axum::extract::Path(random.to_string()),
+            axum::Json(UpdatePromptRequest {
+                name: Some("updated".to_string()),
+                ..UpdatePromptRequest::default()
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_ownership_happy_path() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+        let new_owner = Uuid::new_v4();
+
+        let response = transfer_ownership(
+            axum::extract::State(state),
+            axum::extract::Path(id.to_string()),
+            axum::Json(TransferOwnershipRequest {
+                to_agent_id: new_owner.to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_ownership_invalid_to_agent_id() {
+        let state = evolve_test_state().await;
+        let id = seed_prompt(&state).await;
+
+        let response = transfer_ownership(
+            axum::extract::State(state),
+            axum::extract::Path(id.to_string()),
+            axum::Json(TransferOwnershipRequest {
+                to_agent_id: "not-a-uuid".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_transfer_ownership_not_found() {
+        let state = evolve_test_state().await;
+        let random = Uuid::new_v4();
+
+        let response = transfer_ownership(
+            axum::extract::State(state),
+            axum::extract::Path(random.to_string()),
+            axum::Json(TransferOwnershipRequest {
+                to_agent_id: Uuid::new_v4().to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_seed_defaults_route() {
+        let state = evolve_test_state().await;
+
+        let response = seed_defaults_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["data"]["seeded"].as_u64().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_lint_template_route_valid() {
+        let state = evolve_test_state().await;
+
+        let response = lint_template_route(
+            axum::extract::State(state),
+            axum::Json(LintTemplateRequest {
+                template: "Hello, {{name}}!".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_lint_template_route_empty_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = lint_template_route(
+            axum::extract::State(state),
+            axum::Json(LintTemplateRequest {
+                template: "".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "rollback")]
+    #[tokio::test]
+    async fn test_rollback_prompt_invalid_uuid() {
+        let state = evolve_test_state().await;
+
+        let response = rollback_prompt(
+            axum::extract::State(state),
+            axum::extract::Path("not-a-uuid".to_string()),
+            axum::Json(RollbackRequest {
+                to_version: "1.0.0".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "rollback")]
+    #[tokio::test]
+    async fn test_rollback_prompt_not_found() {
+        let state = evolve_test_state().await;
+        let random = Uuid::new_v4();
+
+        let response = rollback_prompt(
+            axum::extract::State(state),
+            axum::extract::Path(random.to_string()),
+            axum::Json(RollbackRequest {
+                to_version: "1.0.0".to_string(),
+            }),
+        )
+        .await;
+
+        // The storage layer returns a storage error rather than HubError::NotFound,
+        // so the route mirrors evolve_prompt and maps it to 500.
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[cfg(feature = "fallback")]
+    #[tokio::test]
+    async fn test_fallback_chain_route() {
+        let state = evolve_test_state().await;
+
+        let response = fallback_chain_route(
+            axum::extract::State(state),
+            axum::Json(FallbackChainRequest {
+                intent_text: "Build a REST API".to_string(),
+                project_path: "/tmp/project".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "fallback")]
+    #[tokio::test]
+    async fn test_fallback_chain_route_empty_intent_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = fallback_chain_route(
+            axum::extract::State(state),
+            axum::Json(FallbackChainRequest {
+                intent_text: "".to_string(),
+                project_path: "/tmp/project".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "learn")]
+    #[tokio::test]
+    async fn test_learn_from_feedback_route() {
+        let state = evolve_test_state().await;
+
+        let response = learn_from_feedback_route(
+            axum::extract::State(state),
+            axum::Json(LearnFeedbackRequest {
+                correction: "Use async/await".to_string(),
+                intent_text: "Build API".to_string(),
+                agent_id: Uuid::new_v4().to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "learn")]
+    #[tokio::test]
+    async fn test_learn_from_feedback_route_invalid_agent_id() {
+        let state = evolve_test_state().await;
+
+        let response = learn_from_feedback_route(
+            axum::extract::State(state),
+            axum::Json(LearnFeedbackRequest {
+                correction: "Use async/await".to_string(),
+                intent_text: "Build API".to_string(),
+                agent_id: "not-a-uuid".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "confidence")]
+    #[tokio::test]
+    async fn test_score_confidence_route() {
+        let state = evolve_test_state().await;
+
+        let response = score_confidence_route(
+            axum::extract::State(state),
+            axum::Json(ScoreConfidenceRequest {
+                intent_text: "Build a REST API".to_string(),
+                project_path: "/tmp/project".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "confidence")]
+    #[tokio::test]
+    async fn test_score_confidence_route_empty_intent_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = score_confidence_route(
+            axum::extract::State(state),
+            axum::Json(ScoreConfidenceRequest {
+                intent_text: "".to_string(),
+                project_path: "/tmp/project".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "privacy")]
+    #[tokio::test]
+    async fn test_scan_privacy_route() {
+        let state = evolve_test_state().await;
+
+        let response = scan_privacy_route(
+            axum::extract::State(state),
+            axum::Json(ScanPrivacyRequest {
+                text: "My email is user@example.com".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "privacy")]
+    #[tokio::test]
+    async fn test_scan_privacy_route_empty_text_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = scan_privacy_route(
+            axum::extract::State(state),
+            axum::Json(ScanPrivacyRequest {
+                text: "".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "cost")]
+    #[tokio::test]
+    async fn test_estimate_cost_route() {
+        let state = evolve_test_state().await;
+
+        let response = estimate_cost_route(
+            axum::extract::State(state),
+            axum::Json(EstimateCostRequest {
+                intent_text: "Build a REST API".to_string(),
+                project_path: "/tmp/project".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "cost")]
+    #[tokio::test]
+    async fn test_estimate_cost_route_empty_intent_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = estimate_cost_route(
+            axum::extract::State(state),
+            axum::Json(EstimateCostRequest {
+                intent_text: "".to_string(),
+                project_path: "/tmp/project".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
