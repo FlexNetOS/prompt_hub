@@ -457,6 +457,256 @@ fn fallback_spec() -> Value {
                     }
                 }
             },
+            "/api/v1/providers/register": {
+                "post": {
+                    "summary": "Register a provider for health monitoring",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/RegisterProviderRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Provider registered" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/providers/{name}/success": {
+                "post": {
+                    "summary": "Record a successful provider probe",
+                    "parameters": [
+                        { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/RecordProviderSuccessRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Success recorded" }
+                    }
+                }
+            },
+            "/api/v1/providers/{name}/failure": {
+                "post": {
+                    "summary": "Record a failed provider probe",
+                    "parameters": [
+                        { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Failure recorded" }
+                    }
+                }
+            },
+            "/api/v1/providers/{name}/healthy": {
+                "get": {
+                    "summary": "Check whether a provider is healthy",
+                    "parameters": [
+                        { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Health flag" }
+                    }
+                }
+            },
+            "/api/v1/providers/health": {
+                "get": {
+                    "summary": "Get provider health summary",
+                    "responses": {
+                        "200": { "description": "Health summary" }
+                    }
+                }
+            },
+            "/api/v1/multi-provider/providers": {
+                "post": {
+                    "summary": "Add a provider to the multi-provider routing pool",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AddMultiProviderRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Provider added" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/multi-provider/route": {
+                "get": {
+                    "summary": "Select the best provider for routing",
+                    "parameters": [
+                        { "name": "vendor", "in": "query", "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Routing decision" },
+                        "503": { "description": "No healthy provider" }
+                    }
+                }
+            },
+            "/api/v1/multi-provider/providers/{name}/success": {
+                "post": {
+                    "summary": "Record a successful multi-provider request",
+                    "parameters": [
+                        { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Success recorded" }
+                    }
+                }
+            },
+            "/api/v1/multi-provider/providers/{name}/failure": {
+                "post": {
+                    "summary": "Record a failed multi-provider request",
+                    "parameters": [
+                        { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Failure recorded" }
+                    }
+                }
+            },
+            "/api/v1/multi-provider/stats": {
+                "get": {
+                    "summary": "Get multi-provider pool statistics",
+                    "responses": {
+                        "200": { "description": "Pool statistics" }
+                    }
+                }
+            },
+            "/api/v1/rollouts/check": {
+                "post": {
+                    "summary": "Check whether a user is included in a canary rollout",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckRolloutRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Inclusion flag" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/rollouts": {
+                "post": {
+                    "summary": "Register a graduated rollout configuration",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/RegisterRolloutRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Rollout registered" }
+                    }
+                }
+            },
+            "/api/v1/rollouts/inclusion": {
+                "post": {
+                    "summary": "Find rollout inclusion for a user",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/FindRolloutInclusionRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Inclusion result" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/rollouts/evaluate-rollback": {
+                "post": {
+                    "summary": "Evaluate auto-rollback for a rollout",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/EvaluateAutoRollbackRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Rollback evaluation" },
+                        "404": { "description": "Rollout not found" }
+                    }
+                }
+            },
+            "/api/v1/rollouts/advance": {
+                "post": {
+                    "summary": "Advance a rollout segment to the next stage",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AdvanceSegmentRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Advanced stage" },
+                        "404": { "description": "Rollout or segment not found" }
+                    }
+                }
+            },
+            "/api/v1/deploy": {
+                "post": {
+                    "summary": "Deploy an artifact with optional rollback",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DeployWithRollbackRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Deployment result" },
+                        "500": { "description": "Deployment failed" }
+                    }
+                }
+            },
+            "/api/v1/rollback/{id}/restore": {
+                "post": {
+                    "summary": "Restore a snapshot by ID",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Snapshot restored" },
+                        "404": { "description": "Snapshot not found" },
+                        "500": { "description": "Restore failed" }
+                    }
+                }
+            },
+            "/api/v1/rollback/{id}/available": {
+                "get": {
+                    "summary": "Check whether a rollback snapshot is available",
+                    "parameters": [
+                        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Availability flag" }
+                    }
+                }
+            },
             "/api/v1/prompts/search": {
                 "get": {
                     "summary": "Search prompts",
@@ -670,6 +920,81 @@ fn fallback_spec() -> Value {
                         "project_path": { "type": "string" }
                     },
                     "required": ["project_path"]
+                },
+                "RegisterProviderRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "url": { "type": "string" }
+                    },
+                    "required": ["name", "url"]
+                },
+                "RecordProviderSuccessRequest": {
+                    "type": "object",
+                    "properties": {
+                        "latency_ms": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["latency_ms"]
+                },
+                "AddMultiProviderRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "vendor": { "type": "string" },
+                        "endpoint": { "type": "string" },
+                        "priority": { "type": "integer", "minimum": 0 },
+                        "max_retries": { "type": "integer", "minimum": 0, "default": 3 }
+                    },
+                    "required": ["name", "vendor", "endpoint", "priority"]
+                },
+                "CheckRolloutRequest": {
+                    "type": "object",
+                    "properties": {
+                        "canary": { "type": "object" },
+                        "user_id": { "type": "string", "format": "uuid" }
+                    },
+                    "required": ["canary", "user_id"]
+                },
+                "RegisterRolloutRequest": {
+                    "type": "object",
+                    "properties": {
+                        "config": { "type": "object" }
+                    },
+                    "required": ["config"]
+                },
+                "FindRolloutInclusionRequest": {
+                    "type": "object",
+                    "properties": {
+                        "rollout_id": { "type": "string" },
+                        "feature": { "type": "string" },
+                        "user_id": { "type": "string", "format": "uuid" }
+                    },
+                    "required": ["rollout_id", "feature", "user_id"]
+                },
+                "EvaluateAutoRollbackRequest": {
+                    "type": "object",
+                    "properties": {
+                        "rollout_id": { "type": "string" },
+                        "error_rate": { "type": "number", "minimum": 0 },
+                        "latency_p99_ms": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["rollout_id", "error_rate", "latency_p99_ms"]
+                },
+                "AdvanceSegmentRequest": {
+                    "type": "object",
+                    "properties": {
+                        "rollout_id": { "type": "string" },
+                        "segment_idx": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["rollout_id", "segment_idx"]
+                },
+                "DeployWithRollbackRequest": {
+                    "type": "object",
+                    "properties": {
+                        "artifact": { "type": "object" },
+                        "rollback_enabled": { "type": "boolean", "default": false }
+                    },
+                    "required": ["artifact"]
                 }
             }
         }

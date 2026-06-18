@@ -133,6 +133,84 @@ pub fn create_router(state: AppState) -> Router {
             get(routes::has_lineage_version_route),
         );
 
+    // Provider health routes (always-on)
+    let router = router
+        .route(
+            "/api/v1/providers/register",
+            post(routes::register_provider_route),
+        )
+        .route(
+            "/api/v1/providers/{name}/success",
+            post(routes::record_provider_success_route),
+        )
+        .route(
+            "/api/v1/providers/{name}/failure",
+            post(routes::record_provider_failure_route),
+        )
+        .route(
+            "/api/v1/providers/{name}/healthy",
+            get(routes::is_healthy_route),
+        )
+        .route(
+            "/api/v1/providers/health",
+            get(routes::get_health_summary_route),
+        );
+
+    // Multi-provider routing (feature: multi-provider)
+    #[cfg(feature = "multi-provider")]
+    let router = router
+        .route(
+            "/api/v1/multi-provider/providers",
+            post(routes::add_multi_provider_route),
+        )
+        .route(
+            "/api/v1/multi-provider/route",
+            get(routes::route_to_vendor_route),
+        )
+        .route(
+            "/api/v1/multi-provider/providers/{name}/success",
+            post(routes::record_multi_provider_success_route),
+        )
+        .route(
+            "/api/v1/multi-provider/providers/{name}/failure",
+            post(routes::record_multi_provider_failure_route),
+        )
+        .route(
+            "/api/v1/multi-provider/stats",
+            get(routes::provider_pool_stats_route),
+        );
+
+    // Gradual rollout (feature: gradual-rollout)
+    #[cfg(feature = "gradual-rollout")]
+    let router = router
+        .route("/api/v1/rollouts/check", post(routes::check_rollout_route))
+        .route("/api/v1/rollouts", post(routes::register_rollout_route))
+        .route(
+            "/api/v1/rollouts/inclusion",
+            post(routes::find_rollout_inclusion_route),
+        )
+        .route(
+            "/api/v1/rollouts/evaluate-rollback",
+            post(routes::evaluate_auto_rollback_route),
+        )
+        .route(
+            "/api/v1/rollouts/advance",
+            post(routes::advance_segment_route),
+        );
+
+    // Safe deployment / rollback (feature: rollback)
+    #[cfg(feature = "rollback")]
+    let router = router
+        .route("/api/v1/deploy", post(routes::deploy_with_rollback_route))
+        .route(
+            "/api/v1/rollback/{id}/restore",
+            post(routes::restore_snapshot_route),
+        )
+        .route(
+            "/api/v1/rollback/{id}/available",
+            get(routes::is_rollback_available_route),
+        );
+
     // Vibe coding — natural language → deliverable (feature: vibe)
     #[cfg(feature = "vibe")]
     let router = router.route("/api/v1/vibe/code", post(routes::vibe_code));
