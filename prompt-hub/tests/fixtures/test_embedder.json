@@ -1,0 +1,7 @@
+{
+  "tiny-test-embedder": {
+    "url": "file://localhost/home/drdave/Desktop/meta/prompt_hub/.worktrees/phtask-0048/prompt-hub/tests/fixtures/test_embedder.onnx",
+    "sha256": "b27c405f5752153853e3bfe02c6bf1543f2b313c68e1824271c478c81f8cec10",
+    "dim": 8
+  }
+}

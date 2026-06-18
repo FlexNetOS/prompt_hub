@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg(feature = "offline")]
 
 //! Integration tests for offline mode feature.
 

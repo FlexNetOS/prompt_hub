@@ -19,13 +19,13 @@ tokio = { version = "1.52.3", features = ["full"] }
 tokio-util = { version = "0.7.15" }
 tokio-tungstenite = { version = "0.29.0" }
 tower = { version = "0.5.2" }
-tower-http = { version = "0.6.2", features = ["cors", "compression-full", "trace", "request-id"] }
+tower-http = { version = "0.7.0", features = ["cors", "compression-full", "trace", "request-id"] }
 tower-governor = { version = "0.7", package = "tower_governor" }
 axum = { version = "0.8.8" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.140" }
 serde_yaml = { version = "0.9.34" }
-toml = { version = "0.8.22" }
+toml = { version = "1.1.2" }
 # Local-only: storage uses `Builder::new_local`. Dropping libsql's default
 # `replication`/`remote`/`sync`/`tls` features removes its bundled hyper-rustls
 # → rustls 0.22 → rustls-webpki 0.102 chain (4 RUSTSEC advisories we don't use).
@@ -36,7 +36,7 @@ tracing = { version = "0.1.41" }
 tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
 tracing-appender = { version = "0.2.3" }
 uuid = { version = "1.18.0", features = ["v4", "v7", "serde"] }
-chrono = { version = "0.4.41", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 semver = { version = "1.0.26", features = ["serde"] }
 validator = { version = "0.19", features = ["derive"] }
 clap = { version = "4.6.1", features = ["derive", "cargo", "env"] }
@@ -45,19 +45,23 @@ handlebars = { version = "6.4.0" }
 tera = { version = "1.20.1" }
 tiktoken-rs = { version = "0.12" }
 tokenizers = { version = "0.23" }
-libloading = { version = "0.8.6" }
+libloading = { version = "0.9.0" }
 inventory = { version = "0.3.20" }
 regex = { version = "1.11.2" }
 fancy-regex = { version = "0.16.2" }
 argon2 = { version = "0.5.3" }
-# auth.rs uses `OsRng` (gated behind password-hash's `getrandom` feature, which
-# argon2 doesn't forward). Depend on password-hash directly with `getrandom` so
-# `OsRng` resolves in isolated default-feature builds (e.g. `cargo publish`
-# verify), not only via workspace feature unification.
+# auth.rs uses `argon2::password_hash::rand_core::OsRng`, gated behind the
+# password-hash `getrandom` feature, which argon2's own `rand` feature does NOT
+# forward (it only enables `password-hash/rand_core`). argon2 0.5.3 re-exports
+# `password-hash` v0.5.0, so we depend on that SAME version with `getrandom` here:
+# Cargo feature-unification then turns on `getrandom` for the v0.5.0 crate argon2
+# re-exports, so `OsRng` resolves in isolated default-feature builds too (not only
+# under --all-features). NOTE: the version MUST match argon2's (0.5.x) — a 0.6.x
+# dep is a different crate and never unifies (that was the latent default-build bug).
 password-hash = { version = "0.5", features = ["getrandom"] }
 rustls = { version = "0.23.26" }
 tokio-rustls = { version = "0.26.2" }
-ratatui = { version = "0.29" }
+ratatui = { version = "0.30" }
 dialoguer = { version = "0.12" }
 console = { version = "0.16" }
 comfy-table = { version = "7.1" }
@@ -65,7 +69,7 @@ syntect = { version = "5.2" }
 ndarray = { version = "0.17.2" }
 petgraph = { version = "0.8.3" }
 dirs = { version = "6.0.0" }
-notify = { version = "6.1.1" }
+notify = { version = "8.2.0" }
 dashmap = { version = "6.1" }
 # Prometheus text exposition only. `default-features = false` drops the
 # `protobuf` exposition format (and the unmaintained `protobuf` crate with it),
@@ -75,8 +79,8 @@ dashmap = { version = "6.1" }
 # vulnerable `protobuf` crate. See prompt-hub `otel` feature.
 prometheus = { version = "0.14.0", default-features = false }
 utoipa = { version = "5.0" }
-schemars = { version = "0.8" }
-reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls", "json"] }
+schemars = { version = "1.2" }
+reqwest = { version = "0.12.15", default-features = false, features = ["rustls-tls", "json", "multipart"] }
 sha2 = { version = "0.11.0" }
 tempfile = { version = "3.19.1" }
 

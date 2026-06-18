@@ -28,6 +28,11 @@ Use code intelligence, not grep, for code structure (`.claude/rules/code-intelli
 - Error path: `Result<_, HubError>` (the `HubError` enum in `error.rs`); no panics-as-errors.
 - Async: native `async fn in trait`; for `dyn` dispatch (e.g. `Arc<dyn SearchEngine>`) provide boxed-future variants.
 - **Feature-gate precisely.** Pick the flag; ensure the **default build still compiles** (gate new modules/commands/deps with `#[cfg(feature = "…")]` and `dep:`/`optional = true`). Don't strip staged features (`#![allow(dead_code)]` modules are intentional).
+- **⛔ NO DOWNGRADES — UPGRADE ONLY (owner directive, standing).** A stub / no-op / empty-arm /
+  `#![allow(dead_code)]` / zero-caller module is an **incomplete feature to COMPLETE**, never to
+  remove. The only valid outcome is finishing/wiring it so the capability works. **Never** delete a
+  module/trait/type, `#[cfg]`-gate something out to silence a warning, stub with `todo!()`/
+  `unimplemented!()`, or drop a branch/capability to "simplify". Unreachable ⇒ wire it, don't delete it.
 - Keep `#![forbid(unsafe_code)]`.
 
 ### 3. Schema changes

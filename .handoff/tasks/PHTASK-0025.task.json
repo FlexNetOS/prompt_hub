@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0025",
+  "title": "Server routes: satisfaction (4 endpoints)",
+  "status": "done",
+  "priority": "P2",
+  "objective": "POST /api/v1/satisfaction/{csat,nps,events} + GET /metrics; 4 DTOs, 7 tests (direct-handler pattern).",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "acceptance_criteria": [
+    "4 satisfaction endpoints wired; gates green"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:866907bc29bf0234c98ca69685c440ff4c140088664cc402bf3b9dfe05d883e5",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135",
+    "acceptance_hash": "blake3:e3bb18bf1235ef605c5d1aeab00963a25e8fbd7935806ea45892ebe0cd097697"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "0b29dce",
+  "cycle": 81
+}
