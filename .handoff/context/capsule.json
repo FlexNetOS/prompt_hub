@@ -1,0 +1,10 @@
+{
+  "schema": "handoff.context_capsule.v1",
+  "project_name": "prompt_hub",
+  "role": "Rust workspace of three crates (prompt-hub core lib, prompthub CLI, prompthub-server axum API) implementing prompt management for LLM agent swarms: libsql/SQLite storage, FTS5+ONNX hybrid search, RBAC, injection sanitization, audit logging, and a large feature-gated module matrix. Built continuously by an autonomous 'construction crew' loop (the prompt-loop skill). Its durable continuity state now lives in .handoff/ (context/capsule.json + tasks/*.task.json cards + packets/latest.md), migrated 2026-06-13 from the deprecated _workspace/ (archived under .handoff/history/).",
+  "plane": "front-door",
+  "tier": "B",
+  "northstar": "A non-technical user makes any request; prompt_hub transforms, communicates, and delivers it as intended (SwarmBundle -> handoff.task.v1).",
+  "next_command": "hf resume  (then `hf fleet render prompt_hub`; next safe card = PHTASK-0028, P0 default-features build fix). 27/40 cards done; 13 remaining.",
+  "source": "migrated from _workspace/backlog.md + HANDOFF.md; capsule census 2026-06-12, refreshed 2026-06-13"
+}

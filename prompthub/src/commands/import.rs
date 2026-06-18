@@ -41,7 +41,7 @@ pub async fn run(file: &Path, skip_validation: bool) -> Result<()> {
 
     let mut imported = 0;
     let mut failed = 0;
-    let identity = AgentIdentity::default();
+    let identity = crate::identity::cli_identity();
 
     for prompt in prompts {
         if !skip_validation && let Err(e) = validate_prompt(&prompt) {

@@ -107,7 +107,7 @@ mod tests {
             metrics: PromptMetrics::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
-            author: AgentIdentity::default(),
+            author: crate::identity::cli_identity(),
             deleted_at: None,
             generation_params: None,
             locale: None,

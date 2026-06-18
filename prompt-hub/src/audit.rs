@@ -2,10 +2,17 @@
 
 use crate::error::{HubError, Result};
 use crate::models::{AuditEntry, Paginated, Pagination};
+use crate::storage::Storage;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
+
+/// Well-known sentinel UUID written into the `agent_id` column of audit rows
+/// that have been anonymised for GDPR right-to-erasure. Using a fixed,
+/// non-nil sentinel keeps anonymised rows distinguishable from genuinely
+/// unattributed (nil) rows while still removing the subject's identity.
+pub const GDPR_ANONYMIZED_AGENT_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 // ---------------------------------------------------------------------------
 // AuditLogger trait
@@ -108,29 +115,21 @@ impl SqliteAuditLogger {
     /// GDPR **right to erasure** — anonymise all audit entries belonging to
     /// `agent_id` without breaking the hash chain.
     ///
-    /// The agent identifier is replaced with a fixed anonymisation UUID so
-    /// that `diff_hash` values remain valid (the hash is over JSON content,
-    /// not the agent_id column).
-    #[instrument]
-    pub async fn right_to_erasure(&self, agent_id: Uuid) -> Result<usize> {
-        // GDPR_ANONYMIZED_AGENT_ID is a well-known sentinel for redacted data.
-        const ANON: &str = "00000000-0000-0000-0000-000000000001";
+    /// Executes the real anonymising `UPDATE` over the `audit_log` table via
+    /// [`Storage::anonymize_audit_entries_for_agent`]: the `agent_id` column is
+    /// replaced with the [`GDPR_ANONYMIZED_AGENT_ID`] sentinel and `ip_address`
+    /// is set to `NULL`. Because the hash chain covers `(before_json,
+    /// after_json, timestamp)` — never `agent_id` or `ip_address` — every
+    /// rewritten row still passes [`Self::verify_entry_integrity`].
+    ///
+    /// Returns the actual number of audit rows that were anonymised.
+    #[instrument(skip(self, storage))]
+    pub async fn right_to_erasure(&self, storage: &Storage, agent_id: Uuid) -> Result<usize> {
         info!(
             "GDPR erasure: anonymising audit entries for agent {}",
             agent_id
         );
-
-        // In a real implementation this would execute:
-        //   UPDATE audit_log
-        //   SET agent_id = '00000000-0000-0000-0000-000000000001',
-        //       ip_address = NULL
-        //   WHERE agent_id = ?
-        //
-        // Since the hash chain covers (before_json, after_json, timestamp)
-        // but NOT agent_id or ip_address, the chain integrity is preserved.
-
-        // Return simulated count of affected rows.
-        Ok(0)
+        storage.anonymize_audit_entries_for_agent(agent_id).await
     }
 
     /// Anonymise a single audit entry's PII fields in-place, preserving
@@ -289,12 +288,162 @@ mod tests {
 
     // ── GDPR erasure ────────────────────────────────────────────────────────
 
-    #[test]
-    fn test_gdpr_right_to_erasure() {
+    // Real GDPR erasure against an in-memory libsql `audit_log` (PHTASK-0049).
+    //
+    // These tests seed audit rows for a target subject *and* unrelated
+    // subjects, run the real anonymising UPDATE, and assert that (a) only the
+    // subject's rows are redacted, (b) other subjects are untouched, and
+    // (c) the returned count equals the number of the subject's rows.
+
+    use crate::models::AuditEntry as ModelAuditEntry;
+    use crate::storage::{Storage, StorageConfig};
+
+    async fn in_memory_storage() -> Storage {
+        let config = StorageConfig {
+            db_path: ":memory:".to_string(),
+            max_connections: 2,
+            ..Default::default()
+        };
+        Storage::new(config)
+            .await
+            .expect("Failed to create in-memory storage")
+    }
+
+    /// Build and persist an audit entry for `agent_id` with a real diff hash.
+    async fn seed_entry(
+        storage: &Storage,
+        agent_id: Uuid,
+        action: &str,
+        ip: Option<&str>,
+    ) -> AuditEntry {
+        let before = Some(format!(r#"{{"action":"{action}"}}"#));
+        let after = Some(r#"{"state":"done"}"#.to_string());
+        let ts = Utc::now();
+        let diff_hash = SqliteAuditLogger::compute_diff_hash(&before, &after, &ts.to_rfc3339());
+        let entry = ModelAuditEntry {
+            id: 0,
+            timestamp: ts,
+            agent_id,
+            action: action.to_string(),
+            prompt_id: Some(Uuid::new_v4()),
+            diff_hash,
+            before_json: before,
+            after_json: after,
+            ip_address: ip.map(|s| s.to_string()),
+        };
+        storage.log_audit(&entry).await.expect("seed log_audit");
+        entry
+    }
+
+    /// Read back every audit row for a given `prompt_id` (each seeded entry has
+    /// a unique prompt_id, so this isolates a single row).
+    async fn fetch_for_prompt(storage: &Storage, prompt_id: Uuid) -> Vec<AuditEntry> {
+        storage
+            .fetch_audit_trail(prompt_id, 1, 100)
+            .await
+            .expect("fetch_audit_trail")
+            .items
+    }
+
+    #[tokio::test]
+    async fn test_right_to_erasure_anonymizes_only_subject() {
+        let storage = in_memory_storage().await;
         let logger = SqliteAuditLogger::new();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let count = rt.block_on(logger.right_to_erasure(Uuid::new_v4()));
-        assert!(count.is_ok());
+
+        let subject = Uuid::new_v4();
+        let other_a = Uuid::new_v4();
+        let other_b = Uuid::new_v4();
+
+        // Three rows for the subject (with IP PII), and one row each for two
+        // other agents that MUST be left untouched.
+        let s1 = seed_entry(&storage, subject, "UPDATE", Some("10.0.0.1")).await;
+        let s2 = seed_entry(&storage, subject, "DELETE", Some("10.0.0.2")).await;
+        let s3 = seed_entry(&storage, subject, "CREATE", None).await;
+        let oa = seed_entry(&storage, other_a, "UPDATE", Some("10.0.0.3")).await;
+        let ob = seed_entry(&storage, other_b, "READ", Some("10.0.0.4")).await;
+
+        // Real erasure returns the ACTUAL number of affected rows.
+        let count = logger
+            .right_to_erasure(&storage, subject)
+            .await
+            .expect("right_to_erasure");
+        assert_eq!(count, 3, "exactly the subject's three rows are anonymised");
+
+        let anon = Uuid::parse_str(GDPR_ANONYMIZED_AGENT_ID).unwrap();
+
+        // The subject's rows are redacted: agent_id → sentinel, ip → NULL.
+        for prompt_id in [
+            s1.prompt_id.unwrap(),
+            s2.prompt_id.unwrap(),
+            s3.prompt_id.unwrap(),
+        ] {
+            let rows = fetch_for_prompt(&storage, prompt_id).await;
+            assert_eq!(rows.len(), 1);
+            let row = &rows[0];
+            assert_eq!(row.agent_id, anon, "subject agent_id is the sentinel");
+            assert!(row.ip_address.is_none(), "subject ip_address is cleared");
+            // Hash-chain content is preserved, so integrity still verifies.
+            assert!(
+                SqliteAuditLogger::verify_entry_integrity(row),
+                "anonymised row must still pass integrity check"
+            );
+        }
+
+        // The OTHER subjects' rows are completely untouched.
+        let oa_rows = fetch_for_prompt(&storage, oa.prompt_id.unwrap()).await;
+        assert_eq!(oa_rows.len(), 1);
+        assert_eq!(oa_rows[0].agent_id, other_a, "other_a agent_id untouched");
+        assert_eq!(
+            oa_rows[0].ip_address.as_deref(),
+            Some("10.0.0.3"),
+            "other_a ip_address untouched"
+        );
+
+        let ob_rows = fetch_for_prompt(&storage, ob.prompt_id.unwrap()).await;
+        assert_eq!(ob_rows.len(), 1);
+        assert_eq!(ob_rows[0].agent_id, other_b, "other_b agent_id untouched");
+        assert_eq!(
+            ob_rows[0].ip_address.as_deref(),
+            Some("10.0.0.4"),
+            "other_b ip_address untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_right_to_erasure_no_match_returns_zero() {
+        let storage = in_memory_storage().await;
+        let logger = SqliteAuditLogger::new();
+
+        // Seed a row for some agent, then erase a DIFFERENT, absent agent.
+        let present = seed_entry(&storage, Uuid::new_v4(), "UPDATE", Some("1.2.3.4")).await;
+        let absent = Uuid::new_v4();
+
+        let count = logger
+            .right_to_erasure(&storage, absent)
+            .await
+            .expect("right_to_erasure");
+        assert_eq!(count, 0, "no rows for an absent subject");
+
+        // The unrelated row is untouched.
+        let rows = fetch_for_prompt(&storage, present.prompt_id.unwrap()).await;
+        assert_eq!(rows[0].ip_address.as_deref(), Some("1.2.3.4"));
+    }
+
+    #[tokio::test]
+    async fn test_right_to_erasure_is_idempotent() {
+        let storage = in_memory_storage().await;
+        let logger = SqliteAuditLogger::new();
+
+        let subject = Uuid::new_v4();
+        seed_entry(&storage, subject, "UPDATE", Some("9.9.9.9")).await;
+        seed_entry(&storage, subject, "DELETE", Some("9.9.9.8")).await;
+
+        let first = logger.right_to_erasure(&storage, subject).await.unwrap();
+        assert_eq!(first, 2, "first erasure anonymises both rows");
+
+        // Re-running for the same subject affects zero rows (already sentinel).
+        let second = logger.right_to_erasure(&storage, subject).await.unwrap();
+        assert_eq!(second, 0, "idempotent: already-anonymised rows excluded");
     }
 
     #[test]
