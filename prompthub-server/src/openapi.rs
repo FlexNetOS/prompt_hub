@@ -74,6 +74,346 @@ pub fn build_openapi_spec() -> Value {
     fallback_spec()
 }
 
+/// Merge PHTASK-0061 paths and schemas into the base fallback spec.
+fn merge_extra_paths_and_schemas(spec: &mut Value) {
+    let extra = serde_json::json!({
+        "paths": {
+            "/api/v1/audit/hash": {
+                "post": {
+                    "summary": "Compute an audit diff hash",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditHashRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Computed hash" } }
+                }
+            },
+            "/api/v1/audit/verify": {
+                "post": {
+                    "summary": "Verify an audit entry integrity hash",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Verification result" } }
+                }
+            },
+            "/api/v1/audit/soc2/summary": {
+                "post": {
+                    "summary": "Generate SOC2 evidence summary",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "SOC2 evidence summary" } }
+                }
+            },
+            "/api/v1/audit/soc2/validate": {
+                "post": {
+                    "summary": "Validate an audit entry against SOC2 schema",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Validation result" } }
+                }
+            },
+            "/api/v1/audit/anonymize": {
+                "post": {
+                    "summary": "Anonymize an audit entry",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Anonymized entry" } }
+                }
+            },
+            "/api/v1/diff/compute": {
+                "post": {
+                    "summary": "Compute a text diff",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffComputeRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Diff result" } }
+                }
+            },
+            "/api/v1/diff/summarize": {
+                "post": {
+                    "summary": "Summarize a diff",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffResultRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Diff summary" } }
+                }
+            },
+            "/api/v1/diff/identical": {
+                "post": {
+                    "summary": "Check whether two texts are identical",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffComputeRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Identical flag" } }
+                }
+            },
+            "/api/v1/diff/unified": {
+                "post": {
+                    "summary": "Format a diff as unified patch text",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffResultRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Unified diff text" } }
+                }
+            },
+            "/api/v1/retention/period": {
+                "post": {
+                    "summary": "Set retention period for a data type",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SetRetentionRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Retention period set" } }
+                }
+            },
+            "/api/v1/retention/period/{data_type}": {
+                "get": {
+                    "summary": "Get retention period for a data type",
+                    "parameters": [
+                        { "name": "data_type", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Retention period" } }
+                }
+            },
+            "/api/v1/retention/expired": {
+                "get": {
+                    "summary": "Check whether data of a type is expired",
+                    "parameters": [
+                        { "name": "data_type", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "age_days", "in": "query", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": { "200": { "description": "Expiration flag" } }
+                }
+            },
+            "/api/v1/retention/cleanup": {
+                "post": {
+                    "summary": "Run retention cleanup",
+                    "responses": { "200": { "description": "Cleanup results" } }
+                }
+            },
+            "/api/v1/gc/run": {
+                "post": {
+                    "summary": "Run garbage collection",
+                    "responses": { "200": { "description": "GC report" } }
+                }
+            },
+            "/api/v1/gc/purge-soft-deleted": {
+                "post": {
+                    "summary": "Purge soft-deleted prompts",
+                    "responses": { "200": { "description": "Purge count" } }
+                }
+            },
+            "/api/v1/gc/stats": {
+                "get": {
+                    "summary": "Get GC statistics",
+                    "responses": { "200": { "description": "GC stats" } }
+                }
+            },
+            "/api/v1/gc/enabled": {
+                "get": {
+                    "summary": "Check whether GC is enabled",
+                    "responses": { "200": { "description": "GC enabled flag" } }
+                },
+                "post": {
+                    "summary": "Enable or disable GC",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SetGcEnabledRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "GC enabled flag" } }
+                }
+            },
+            "/api/v1/auto-purge/purge": {
+                "post": {
+                    "summary": "Run a single auto-purge cycle",
+                    "responses": { "200": { "description": "Purge stats" } }
+                }
+            },
+            "/api/v1/auto-purge/stats": {
+                "get": {
+                    "summary": "Get auto-purge statistics",
+                    "responses": { "200": { "description": "Purge stats" } }
+                }
+            },
+            "/api/v1/auto-purge/config": {
+                "post": {
+                    "summary": "Update auto-purge configuration",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/PurgeConfigRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Config updated" } }
+                }
+            },
+            "/api/v1/auto-purge/daemon/start": {
+                "post": {
+                    "summary": "Start the auto-purge daemon",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/PurgeConfigRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Daemon started" } }
+                }
+            },
+            "/api/v1/auto-purge/daemon/stop": {
+                "post": {
+                    "summary": "Stop the auto-purge daemon",
+                    "responses": { "200": { "description": "Daemon stopped" } }
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "AuditHashRequest": {
+                    "type": "object",
+                    "properties": {
+                        "before": { "type": ["string", "null"] },
+                        "after": { "type": ["string", "null"] },
+                        "timestamp": { "type": "string" }
+                    },
+                    "required": ["timestamp"]
+                },
+                "AuditEntryRequest": {
+                    "type": "object",
+                    "properties": {
+                        "entry": { "type": "object" }
+                    },
+                    "required": ["entry"]
+                },
+                "DiffComputeRequest": {
+                    "type": "object",
+                    "properties": {
+                        "old": { "type": "string" },
+                        "new": { "type": "string" }
+                    },
+                    "required": ["old", "new"]
+                },
+                "DiffResultRequest": {
+                    "type": "object",
+                    "properties": {
+                        "diff": { "type": "object" }
+                    },
+                    "required": ["diff"]
+                },
+                "SetRetentionRequest": {
+                    "type": "object",
+                    "properties": {
+                        "data_type": { "type": "string" },
+                        "days": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["data_type", "days"]
+                },
+                "SetGcEnabledRequest": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": { "type": "boolean" }
+                    },
+                    "required": ["enabled"]
+                },
+                "PurgeConfigRequest": {
+                    "type": "object",
+                    "properties": {
+                        "config": { "type": "object" }
+                    },
+                    "required": ["config"]
+                }
+            }
+        }
+    });
+
+    let Some(spec_paths) = spec.get_mut("paths").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    if let Some(extra_paths) = extra.get("paths").and_then(|v| v.as_object()) {
+        for (k, v) in extra_paths {
+            spec_paths.insert(k.clone(), v.clone());
+        }
+    }
+
+    let Some(components) = spec.get_mut("components").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let Some(schemas) = components
+        .get_mut("schemas")
+        .and_then(|v| v.as_object_mut())
+    else {
+        return;
+    };
+    if let Some(extra_schemas) = extra
+        .get("components")
+        .and_then(|v| v.get("schemas"))
+        .and_then(|v| v.as_object())
+    {
+        for (k, v) in extra_schemas {
+            schemas.insert(k.clone(), v.clone());
+        }
+    }
+}
+
 /// Shared fallback / base OpenAPI 3.0.3 specification.
 fn fallback_spec() -> Value {
     const FALLBACK_SPEC_JSON: &str = r##"""
@@ -1275,7 +1615,9 @@ fn fallback_spec() -> Value {
 """##;
 
     let json = FALLBACK_SPEC_JSON.replace("{VERSION}", env!("CARGO_PKG_VERSION"));
-    serde_json::from_str(&json).expect("fallback spec JSON must be valid")
+    let mut spec: Value = serde_json::from_str(&json).expect("fallback spec JSON must be valid");
+    merge_extra_paths_and_schemas(&mut spec);
+    spec
 }
 
 /// Static OpenAPI JSON string embedded at compile time.
