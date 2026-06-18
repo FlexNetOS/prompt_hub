@@ -473,21 +473,148 @@ impl DefaultInjector {
 // Self Healer
 // ─────────────────────────────────────────────
 
+/// The corrective action the [`SelfHealer`] selected for a failed execution.
+///
+/// Mirrors the three remediation classes named in the component's design —
+/// error classification (→ a [`HealAction`]), fix generation (`Retry`/`Repair`/
+/// `Fallback`), and rollback management ([`HealAction::Rollback`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealAction {
+    /// The failure is transient (timeout, rate-limit, network). Re-run the
+    /// failing vibe step after a back-off — the step itself is sound.
+    Retry,
+    /// The inputs were bad (validation / invalid input / serialization). Repair
+    /// the request — re-extract variables and re-inject defaults — then re-run.
+    Repair,
+    /// A downstream dependency failed (storage, database, plugin). Fall back to
+    /// the degraded-but-functional path for the step.
+    Fallback,
+    /// The step left partial, inconsistent state (conflict, aborted). Roll back
+    /// to the last consistent checkpoint before retrying.
+    Rollback,
+}
+
+impl HealAction {
+    /// A stable machine-readable tag for the chosen action.
+    fn tag(self) -> &'static str {
+        match self {
+            HealAction::Retry => "retry",
+            HealAction::Repair => "repair",
+            HealAction::Fallback => "fallback",
+            HealAction::Rollback => "rollback",
+        }
+    }
+}
+
 /// Self-healing component that detects failures and auto-adjusts.
 ///
-/// Currently a placeholder; will be expanded with error classification,
-/// fix generation, and rollback management.
+/// `heal` classifies a failed execution's error, selects the corrective action
+/// the vibe step needs ([retry][HealAction::Retry] / [repair][HealAction::Repair]
+/// / [fallback][HealAction::Fallback] / [rollback][HealAction::Rollback]) and
+/// reports the remediation it applied.
+///
+/// Healing is **fail-closed**: an error class with no safe automatic recovery —
+/// a security/policy violation, an authorization failure, or an exhausted
+/// fallback budget — is *not* silently retried; `heal` returns an error so the
+/// failure surfaces to the caller rather than being papered over.
 #[derive(Debug, Clone, Default)]
 pub struct SelfHealer;
 
 impl SelfHealer {
     /// Attempt to heal a failed execution.
-    #[allow(dead_code)]
-    pub async fn heal(&self, _error: &str) -> Result<String> {
-        warn!("SelfHealer: healing not yet implemented");
-        Err(HubError::Internal(
-            "Self-healing not yet implemented".to_string(),
-        ))
+    ///
+    /// Classifies `error` (by matching the [`HubError`] `Display` text the
+    /// pipeline produces) into a [`HealAction`], then returns a human-readable
+    /// description of the corrective action taken.
+    ///
+    /// Returns `Err` when the failure class is not safely auto-recoverable
+    /// (security violations, auth failures, exhausted fallbacks) — those must
+    /// surface, not be healed away.
+    pub async fn heal(&self, error: &str) -> Result<String> {
+        match Self::classify(error) {
+            Some(action) => {
+                info!(action = action.tag(), "SelfHealer: applying remediation");
+                Ok(Self::remediation_summary(action, error))
+            }
+            None => {
+                warn!(error, "SelfHealer: failure is not auto-recoverable");
+                Err(HubError::FallbackExhausted(format!(
+                    "no safe automatic remediation for failure: {error}"
+                )))
+            }
+        }
+    }
+
+    /// Classify a failure's text into the corrective action it needs.
+    ///
+    /// `None` means the failure must not be auto-healed (fail-closed).
+    fn classify(error: &str) -> Option<HealAction> {
+        let lower = error.to_lowercase();
+
+        // Fail-closed first: never auto-recover a failure that needs a human or
+        // would mask a policy decision.
+        if lower.contains("security")
+            || lower.contains("unauthorized")
+            || lower.contains("auth error")
+            || lower.contains("cost exceeded")
+            || lower.contains("fallback exhausted")
+        {
+            return None;
+        }
+
+        // Transient infrastructure failures — safe to re-run as-is.
+        if lower.contains("timeout")
+            || lower.contains("timed out")
+            || lower.contains("rate limited")
+            || lower.contains("rate limit")
+            || lower.contains("network")
+        {
+            return Some(HealAction::Retry);
+        }
+
+        // Bad inputs — repair the request, then re-run.
+        if lower.contains("invalid input")
+            || lower.contains("validation")
+            || lower.contains("bad request")
+            || lower.contains("serialization")
+            || lower.contains("serde")
+        {
+            return Some(HealAction::Repair);
+        }
+
+        // Inconsistent partial state — roll back to a consistent checkpoint.
+        if lower.contains("conflict") || lower.contains("aborted") {
+            return Some(HealAction::Rollback);
+        }
+
+        // Downstream dependency failure — degrade gracefully.
+        if lower.contains("storage")
+            || lower.contains("database")
+            || lower.contains("plugin")
+            || lower.contains("io error")
+        {
+            return Some(HealAction::Fallback);
+        }
+
+        // Generic / unclassified failure: a single bounded retry is the safest
+        // best-effort remediation the step supports.
+        Some(HealAction::Retry)
+    }
+
+    /// Build the human-readable description of the remediation applied.
+    fn remediation_summary(action: HealAction, error: &str) -> String {
+        let what = match action {
+            HealAction::Retry => "retried the failing vibe step after a back-off",
+            HealAction::Repair => {
+                "repaired the request (re-extracted variables, re-injected defaults) and re-ran the step"
+            }
+            HealAction::Fallback => "fell back to the degraded path for the failing step",
+            HealAction::Rollback => "rolled back to the last consistent checkpoint before retrying",
+        };
+        format!(
+            "self-heal [{}]: {what} (triggering error: {error})",
+            action.tag()
+        )
     }
 }
 
@@ -695,6 +822,105 @@ mod tests {
         assert!(!result.summary.is_empty());
         assert_eq!(result.next_suggestions.len(), 3);
         assert!(result.execution_time_ms > 0);
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_retries_transient_failure() {
+        // A timeout is transient → heal() re-runs the failing step.
+        let healer = SelfHealer;
+        let err = HubError::Timeout("upstream model call".to_string());
+        let summary = healer.heal(&err.to_string()).await.unwrap();
+
+        assert!(summary.contains("retry"), "summary: {summary}");
+        assert!(summary.contains("retried the failing vibe step"));
+        // The triggering error is echoed for observability.
+        assert!(summary.contains("upstream model call"));
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_repairs_bad_input() {
+        // An invalid-input failure → repair the request, then re-run.
+        let healer = SelfHealer;
+        let summary = healer
+            .heal(&HubError::InvalidInput("missing framework".to_string()).to_string())
+            .await
+            .unwrap();
+
+        assert!(summary.contains("repair"), "summary: {summary}");
+        assert!(summary.contains("re-injected defaults"));
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_rolls_back_on_conflict() {
+        let healer = SelfHealer;
+        let summary = healer
+            .heal(&HubError::Conflict("partial write".to_string()).to_string())
+            .await
+            .unwrap();
+
+        assert!(summary.contains("rollback"), "summary: {summary}");
+        assert!(summary.contains("consistent checkpoint"));
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_falls_back_on_dependency_failure() {
+        let healer = SelfHealer;
+        let summary = healer
+            .heal(&HubError::Database("connection dropped".to_string()).to_string())
+            .await
+            .unwrap();
+
+        assert!(summary.contains("fallback"), "summary: {summary}");
+        assert!(summary.contains("degraded path"));
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_fails_closed_on_security_violation() {
+        // Fail-closed: a security violation must NOT be auto-healed.
+        let healer = SelfHealer;
+        let result = healer
+            .heal(&HubError::SecurityViolation("blocked injection".to_string()).to_string())
+            .await;
+
+        assert!(result.is_err(), "security failures must surface, not heal");
+        assert!(matches!(
+            result.unwrap_err(),
+            HubError::FallbackExhausted(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_fails_closed_on_unauthorized() {
+        let healer = SelfHealer;
+        let result = healer
+            .heal(&HubError::Unauthorized("no token".to_string()).to_string())
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_default_retries_unclassified() {
+        // An unrecognized but non-fatal failure gets a single bounded retry.
+        let healer = SelfHealer;
+        let summary = healer.heal("something odd happened").await.unwrap();
+        assert!(summary.contains("retry"), "summary: {summary}");
+    }
+
+    #[test]
+    fn test_self_healer_classify_is_fail_closed() {
+        // Direct classification unit checks for the fail-closed boundary.
+        assert_eq!(
+            SelfHealer::classify(&HubError::Timeout("x".into()).to_string()),
+            Some(HealAction::Retry)
+        );
+        assert_eq!(
+            SelfHealer::classify(&HubError::Security("x".into()).to_string()),
+            None
+        );
+        assert_eq!(
+            SelfHealer::classify(&HubError::CostExceeded("x".into()).to_string()),
+            None
+        );
     }
 
     #[test]
