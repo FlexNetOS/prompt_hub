@@ -616,7 +616,7 @@ impl SelfHealer {
     ///
     /// * **Re-executable** classes ([retry][HealAction::Retry],
     ///   [repair][HealAction::Repair], [rollback][HealAction::Rollback]) cause
-    ///   `operation` to be genuinely re-invoked — up to [`MAX_HEAL_RETRIES`]
+    ///   `operation` to be genuinely re-invoked — up to `MAX_HEAL_RETRIES`
     ///   times — returning the first recovered `Ok(T)`. If every attempt fails,
     ///   the last error is surfaced.
     /// * **Fallback** does not re-run the same operation (the caller is expected

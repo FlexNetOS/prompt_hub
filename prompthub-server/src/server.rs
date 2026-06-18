@@ -5,7 +5,7 @@ use axum::routing::put;
 use axum::{
     Router,
     middleware::from_fn,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,7 +38,24 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/prompts", post(routes::register_prompt))
         .route("/api/v1/prompts", get(routes::list_prompts))
         .route("/api/v1/prompts/{id}", get(routes::get_prompt))
-        .route("/api/v1/prompts/{id}/evolve", post(routes::evolve_prompt))
+        .route("/api/v1/prompts/{id}", patch(routes::update_prompt))
+        .route("/api/v1/prompts/get", get(routes::get_prompt_route))
+        .route("/api/v1/prompts/{id}/evolve", post(routes::evolve_prompt));
+
+    // Rollback is feature-gated in the handler module.
+    #[cfg(feature = "rollback")]
+    let router = router.route(
+        "/api/v1/prompts/{id}/rollback",
+        post(routes::rollback_prompt),
+    );
+
+    let router = router
+        .route(
+            "/api/v1/prompts/{id}/transfer",
+            post(routes::transfer_ownership),
+        )
+        .route("/api/v1/seed", post(routes::seed_defaults_route))
+        .route("/api/v1/template/lint", post(routes::lint_template_route))
         .route(
             "/api/v1/prompts/{id}/tokens",
             post(routes::count_prompt_tokens_route),
@@ -73,6 +90,26 @@ pub fn create_router(state: AppState) -> Router {
     // Vibe coding — natural language → deliverable (feature: vibe)
     #[cfg(feature = "vibe")]
     let router = router.route("/api/v1/vibe/code", post(routes::vibe_code));
+
+    // Cost estimation (feature: cost)
+    #[cfg(feature = "cost")]
+    let router = router.route("/api/v1/cost/estimate", post(routes::estimate_cost_route));
+
+    // Feedback learning (feature: learn)
+    #[cfg(feature = "learn")]
+    let router = router.route("/api/v1/learn", post(routes::learn_from_feedback_route));
+
+    // Confidence scoring (feature: confidence)
+    #[cfg(feature = "confidence")]
+    let router = router.route("/api/v1/confidence", post(routes::score_confidence_route));
+
+    // Privacy scanning (feature: privacy)
+    #[cfg(feature = "privacy")]
+    let router = router.route("/api/v1/privacy/scan", post(routes::scan_privacy_route));
+
+    // Fallback chain (feature: fallback)
+    #[cfg(feature = "fallback")]
+    let router = router.route("/api/v1/fallback", post(routes::fallback_chain_route));
 
     // Budget tracking (feature: budget)
     #[cfg(feature = "budget")]
