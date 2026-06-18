@@ -1,0 +1,34 @@
+{
+  "acceptance_criteria": [
+    "each capability has a route + handler + DTO + test",
+    "RBAC + evolve_prompt-style error map applied"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0058",
+  "intent_lock": {
+    "acceptance_hash": "blake3:46c9052c155c2b59640970dc6597d6c8a4ec635b72ecb5279abcf369661e8076",
+    "objective_hash": "blake3:189204135234f34a01de5060fe82bc89f9dc45f12345383c8c0227a0deebb857",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135"
+  },
+  "objective": "Expose: gather_context, gather_context_smart, collect_relevant_files, extract_patterns; lineage get_lineage_ancestry, detect_lineage_forks, get_lineage_descendants, build_lineage_tree, lineage_node_count, lineage_roots, has_lineage_version. Thin handlers + DTOs + RBAC + error map + tests.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Routes: context gathering + lineage (11 capabilities)"
+}

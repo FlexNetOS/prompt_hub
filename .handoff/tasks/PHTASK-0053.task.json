@@ -1,0 +1,37 @@
+{
+  "acceptance_criteria": [
+    "enqueue_push persists the queued push to the store and survives readback",
+    "estimated_total_bytes returns the real serialized size of the queue",
+    "can_push_all_pending compares real sizes against the network budget",
+    "tests prove persistence and real sizing"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0053",
+  "intent_lock": {
+    "acceptance_hash": "blake3:df9fc56a6113994e96f6502863b5dc8431a60c456dc7d00a31eebf0a4f036a94",
+    "objective_hash": "blake3:ecae8ffc6f082597521741c6947f5a0a5445784adf5e6d3ed1f06d261503a07e",
+    "path_scope_hash": "blake3:3294ca37b091240f00710546751c35182c45c0ccdffdaa328f985e298424a599"
+  },
+  "objective": "mobile.rs enqueue_push (:176) only logs+counts, never persists; can_push_all_pending (:190) uses simulated i*1024; estimated_total_bytes (:265) returns hardcoded 0. Network-condition logic is real. Complete: persist queued pushes in the store; compute real serialized byte sizes; can_push_all_pending uses real sizes vs the budget.",
+  "path_scope": [
+    "prompt-hub/src/mobile.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete mobile push persistence + real sizing"
+}

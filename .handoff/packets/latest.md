@@ -1,25 +1,81 @@
 # Handoff Packet (latest) — handoff.packet.v2
 
-> Compiled by `hf fleet render prompt_hub` from the FLEET ledger (meta/.handoff) + this repo's git-text capsule/cards. Not rendered from a per-repo ledger (ADR-0004 §3).
-
-## 1. North Star (prompt_hub)
+## 1. North Star
 A non-technical user makes any request; prompt_hub transforms, communicates, and delivers it as intended (SwarmBundle -> handoff.task.v1).
 
 ## 2. State Precedence
-Git > FLEET ledger (meta/.handoff/ledger.db) > tasks/*.task.json > this packet.
+Git > .handoff/ledger.db > tasks/*.task.json > active.md > this packet.
 
 ## 3. Progress
-Done: 30/40.  FLEET tamper-evident events verified: 20.
+Done: 46/46.  Tamper-evident events verified: 0.
 
-## 4. Remaining
-- [P2] **PHTASK-0029** — Complete `defaults.rs` — real database seeding
-- [P3] **PHTASK-0030** — Complete `shutdown.rs` — graceful PromptHub shutdown
-- [P2] **PHTASK-0032** — Complete `plugins.rs` — safe plugin discovery + load
-- [P3] **PHTASK-0034** — Make Junie a first-class PromptHub field
-- [P1] **PHTASK-0035** — Cover remaining hub methods with server routes
-- [P2] **PHTASK-0036** — Move inline CLI commands to dedicated files
-- [P2] **PHTASK-0037** — Write real DDL for migration 0008_generation_params
-- [P1] **PHTASK-0038** — Add tests to `hooks.rs` (orchestrator path)
-- [P1] **PHTASK-0039** — Integration test for hub.get() RBAC+intent flow
-- [P3] **PHTASK-0040** — Default identity lacks Write for non-operator callers
+## 4. Remaining (next safe first)
 
+## 5. Next Best Task
+
+## 6. Resume Commands
+```bash
+hf resume
+done
+```
+
+## 7. Machine Summary
+```json
+{
+  "done": [
+    "PHTASK-0001",
+    "PHTASK-0002",
+    "PHTASK-0003",
+    "PHTASK-0004",
+    "PHTASK-0005",
+    "PHTASK-0006",
+    "PHTASK-0007",
+    "PHTASK-0008",
+    "PHTASK-0009",
+    "PHTASK-0010",
+    "PHTASK-0011",
+    "PHTASK-0012",
+    "PHTASK-0013",
+    "PHTASK-0014",
+    "PHTASK-0015",
+    "PHTASK-0016",
+    "PHTASK-0017",
+    "PHTASK-0018",
+    "PHTASK-0019",
+    "PHTASK-0020",
+    "PHTASK-0021",
+    "PHTASK-0022",
+    "PHTASK-0023",
+    "PHTASK-0024",
+    "PHTASK-0025",
+    "PHTASK-0026",
+    "PHTASK-0027",
+    "PHTASK-0028",
+    "PHTASK-0029",
+    "PHTASK-0030",
+    "PHTASK-0031",
+    "PHTASK-0032",
+    "PHTASK-0033",
+    "PHTASK-0034",
+    "PHTASK-0035",
+    "PHTASK-0036",
+    "PHTASK-0037",
+    "PHTASK-0038",
+    "PHTASK-0039",
+    "PHTASK-0040",
+    "PHTASK-0041",
+    "PHTASK-0042",
+    "PHTASK-0043",
+    "PHTASK-0044",
+    "PHTASK-0045",
+    "PHTASK-0046"
+  ],
+  "next_command": "done",
+  "next_task_id": null,
+  "project": "handoff (Continuity Ledger Kernel)",
+  "remaining": [],
+  "schema": "handoff.packet.v2",
+  "tasks_total": 46,
+  "witnessed_events_verified": 0
+}
+```
