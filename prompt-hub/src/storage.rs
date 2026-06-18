@@ -653,6 +653,113 @@ impl Storage {
         }
     }
 
+    /// Permanently purge soft-deleted prompts whose `deleted_at` is strictly
+    /// older than `cutoff`, returning the number of rows removed.
+    ///
+    /// This is the storage-level primitive behind the retention garbage
+    /// collector. It mirrors the same `BEGIN IMMEDIATE` / `DELETE` / `COMMIT`
+    /// transactional idiom used by [`Storage::hard_delete_prompt`] so the two
+    /// destructive paths share one transactional contract. The embeddings row
+    /// for each purged prompt is removed automatically by the
+    /// `ON DELETE CASCADE` foreign key on the `embeddings` table.
+    #[cfg(feature = "retention")]
+    #[instrument(skip(self))]
+    pub async fn purge_soft_deleted(&self, cutoff: DateTime<Utc>) -> Result<u64> {
+        let conn = self.acquire().await?;
+
+        conn.execute("BEGIN IMMEDIATE;", params!())
+            .await
+            .map_err(|e| HubError::StorageError(format!("Purge soft-deleted begin: {e}")))?;
+
+        let result: Result<u64> = async {
+            let rows_affected = conn
+                .execute(
+                    "DELETE FROM prompts \
+                     WHERE deleted_at IS NOT NULL AND deleted_at < ?1;",
+                    params!(cutoff.to_rfc3339()),
+                )
+                .await
+                .map_err(|e| HubError::StorageError(format!("Purge soft-deleted: {e}")))?;
+            Ok(rows_affected)
+        }
+        .await;
+
+        match result {
+            Ok(rows_affected) => {
+                conn.execute("COMMIT;", params!()).await.map_err(|e| {
+                    HubError::StorageError(format!("Purge soft-deleted commit: {e}"))
+                })?;
+                info!("Purged {rows_affected} soft-deleted prompt(s) older than {cutoff}");
+                Ok(rows_affected)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK;", params!()).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Delete embedding rows that no longer reference an existing prompt,
+    /// returning the number of rows removed.
+    ///
+    /// With foreign keys enabled the `ON DELETE CASCADE` constraint normally
+    /// removes embeddings alongside their prompt, so this is a self-healing
+    /// sweep for rows orphaned while foreign keys were disabled (e.g. bulk
+    /// import paths) or by external writers. Uses the same transactional idiom
+    /// as the other destructive storage operations.
+    #[cfg(feature = "retention")]
+    #[instrument(skip(self))]
+    pub async fn delete_orphaned_embeddings(&self) -> Result<u64> {
+        let conn = self.acquire().await?;
+
+        conn.execute("BEGIN IMMEDIATE;", params!())
+            .await
+            .map_err(|e| HubError::StorageError(format!("Clean orphaned embeddings begin: {e}")))?;
+
+        let result: Result<u64> = async {
+            let rows_affected = conn
+                .execute(
+                    "DELETE FROM embeddings \
+                     WHERE prompt_id NOT IN (SELECT id FROM prompts);",
+                    params!(),
+                )
+                .await
+                .map_err(|e| HubError::StorageError(format!("Clean orphaned embeddings: {e}")))?;
+            Ok(rows_affected)
+        }
+        .await;
+
+        match result {
+            Ok(rows_affected) => {
+                conn.execute("COMMIT;", params!()).await.map_err(|e| {
+                    HubError::StorageError(format!("Clean orphaned embeddings commit: {e}"))
+                })?;
+                info!("Cleaned {rows_affected} orphaned embedding row(s)");
+                Ok(rows_affected)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK;", params!()).await;
+                Err(e)
+            }
+        }
+    }
+
+    /// Run `VACUUM` to reclaim storage from deleted rows and defragment the
+    /// database file.
+    ///
+    /// `VACUUM` cannot run inside a transaction, so this is issued directly.
+    /// In-memory databases accept the statement as a no-op.
+    #[cfg(feature = "retention")]
+    #[instrument(skip(self))]
+    pub async fn vacuum(&self) -> Result<()> {
+        let conn = self.acquire().await?;
+        conn.execute("VACUUM;", params!())
+            .await
+            .map_err(|e| HubError::StorageError(format!("Vacuum: {e}")))?;
+        info!("Database vacuum complete");
+        Ok(())
+    }
+
     /// List active prompts with optional filtering and pagination.
     pub async fn list_prompts(
         &self,
@@ -1160,6 +1267,62 @@ impl Storage {
             ),
         ).await.map_err(|e| HubError::StorageError(format!("Audit log: {e}")))?;
         Ok(())
+    }
+
+    /// GDPR **right to erasure** — anonymise every `audit_log` row belonging to
+    /// `agent_id` by redacting its PII columns, returning the number of rows
+    /// affected.
+    ///
+    /// The `agent_id` column is replaced with the well-known anonymisation
+    /// sentinel and `ip_address` is set to `NULL`. The tamper-evident hash chain
+    /// is preserved because `diff_hash` covers `(before_json, after_json,
+    /// timestamp)` — never `agent_id` or `ip_address` — so the rewritten rows
+    /// still verify against [`crate::audit::SqliteAuditLogger::verify_entry_integrity`].
+    ///
+    /// Rows already carrying the sentinel id are not re-counted: the
+    /// `WHERE agent_id = ?` predicate excludes the sentinel itself, so calling
+    /// this twice for the same subject is idempotent (the second call affects
+    /// zero rows).
+    #[instrument(skip(self))]
+    pub async fn anonymize_audit_entries_for_agent(&self, agent_id: Uuid) -> Result<usize> {
+        let conn = self.acquire().await?;
+
+        conn.execute("BEGIN IMMEDIATE;", params!())
+            .await
+            .map_err(|e| HubError::StorageError(format!("GDPR erasure begin: {e}")))?;
+
+        let result: Result<u64> = async {
+            let rows_affected = conn
+                .execute(
+                    "UPDATE audit_log
+                     SET agent_id = ?1, ip_address = NULL
+                     WHERE agent_id = ?2;",
+                    params!(
+                        crate::audit::GDPR_ANONYMIZED_AGENT_ID.to_string(),
+                        agent_id.to_string()
+                    ),
+                )
+                .await
+                .map_err(|e| HubError::StorageError(format!("GDPR erasure update: {e}")))?;
+            Ok(rows_affected)
+        }
+        .await;
+
+        match result {
+            Ok(rows_affected) => {
+                conn.execute("COMMIT;", params!())
+                    .await
+                    .map_err(|e| HubError::StorageError(format!("GDPR erasure commit: {e}")))?;
+                info!(
+                    "GDPR erasure: anonymised {rows_affected} audit entries for agent {agent_id}"
+                );
+                Ok(rows_affected as usize)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK;", params!()).await;
+                Err(e)
+            }
+        }
     }
 
     /// Fetch paginated audit trail for a specific prompt.
