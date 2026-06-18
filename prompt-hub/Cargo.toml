@@ -17,7 +17,7 @@ readme = "README.md"
 default = ["handlebars", "vibe", "rollback", "cost", "learn"]
 smart = ["dep:ndarray"]
 # ONNX runtime inference for smart search (off by default).
-smart-ort = ["dep:ort"]
+smart-ort = ["dep:ort", "dep:reqwest", "dep:ndarray"]
 otel = ["dep:prometheus"]
 tls = ["dep:tokio-rustls"]
 # Template engine — pick one at compile time.
@@ -70,7 +70,8 @@ analytics = []
 preview = []
 i18n = []
 sandbox = []
-voice = []
+# Voice pipelines use reqwest for real STT/TTS cloud backends (OpenAI-compatible).
+voice = ["dep:reqwest"]
 local-llm = ["dep:reqwest"]
 accessibility = []
 auto-purge = []
@@ -116,7 +117,7 @@ libloading = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true }
-ort = { workspace = true, optional = true }
+ort = { workspace = true, optional = true, features = ["ndarray"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

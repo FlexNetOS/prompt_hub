@@ -30,6 +30,7 @@ async fn test_voice_engine_wiring_in_hub() {
         tts_enabled: true,
         stt_enabled: true,
         output_format: VoiceOutputFormat::Mp3,
+        ..VoicePipelineConfig::default()
     })
     .await
     .expect("configure voice");

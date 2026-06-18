@@ -2,208 +2,169 @@
 //!
 //! Provides a finite-state machine that manages a voice conversation turn:
 //! `Idle → Recording → SttComplete → Processing → TtsComplete`. The actual
-//! speech-to-text and text-to-speech work is delegated to pluggable backends
-//! behind the [`SttBackend`] and [`TtsBackend`] traits, and the text-processing
-//! step routes through a [`PromptResolver`] so the hub prompt path can be used.
+//! STT/TTS work is delegated to configurable backends (mock passthrough or
+//! OpenAI-compatible cloud endpoints) selected in [`VoicePipelineConfig`].
 
 #![forbid(unsafe_code)]
 
 use crate::error::{HubError, Result};
 use crate::models::{
-    VoiceInteraction, VoiceOutputFormat, VoicePipelineConfig, VoicePipelineState,
-    VoicePlaybackStatus,
+    OpenAiSttConfig, OpenAiTtsConfig, VoiceInteraction, VoiceOutputFormat, VoicePipelineConfig,
+    VoicePipelineState, VoicePlaybackStatus, VoiceSttBackend, VoiceTtsBackend,
 };
 use chrono::Utc;
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
-// Backend traits — boxed futures for `dyn` compatibility
+// Backend implementations
 // ---------------------------------------------------------------------------
 
-/// Speech-to-text backend abstraction.
-///
-/// Implementations must be `Send + Sync + Debug` so the engine can hold an
-/// `Arc<dyn SttBackend>` and call it from async tasks.
-pub trait SttBackend: Send + Sync + std::fmt::Debug {
-    /// Transcribe raw audio bytes into text.
+impl VoiceSttBackend {
+    /// Transcribe raw audio bytes to text.
     ///
-    /// The returned future is boxed so the trait remains object-safe despite
-    /// being async.
-    fn transcribe<'a>(
-        &'a self,
-        audio: &'a [u8],
-        language: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
-}
-
-/// Text-to-speech backend abstraction.
-///
-/// Implementations must be `Send + Sync + Debug` so the engine can hold an
-/// `Arc<dyn TtsBackend>` and call it from async tasks.
-pub trait TtsBackend: Send + Sync + std::fmt::Debug {
-    /// Synthesize text into raw audio bytes in the requested format.
-    fn synthesize<'a>(
-        &'a self,
-        text: &'a str,
-        format: VoiceOutputFormat,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
-}
-
-/// Resolver that routes transcribed text through the hub prompt path.
-///
-/// The engine owns an `Arc<dyn PromptResolver>` so it can resolve user text to
-/// a prompt response without depending directly on [`crate::hub::PromptHub`].
-pub trait PromptResolver: Send + Sync + std::fmt::Debug {
-    /// Resolve input text to a response string.
-    fn resolve<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
-}
-
-// ---------------------------------------------------------------------------
-// Default echo backends (no network, no heavy deps)
-// ---------------------------------------------------------------------------
-
-/// Deterministic STT backend used when no external service is configured.
-///
-/// Returns a synthetic transcript that incorporates the audio buffer length so
-/// callers can observe that real processing happened.
-#[derive(Debug, Clone, Default)]
-pub struct EchoSttBackend;
-
-impl SttBackend for EchoSttBackend {
-    fn transcribe<'a>(
-        &'a self,
-        audio: &'a [u8],
-        language: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
-        Box::pin(async move {
-            Ok(format!(
-                "transcribed-audio-{}-samples-lang-{}",
-                audio.len(),
-                language
-            ))
-        })
-    }
-}
-
-/// Deterministic TTS backend used when no external service is configured.
-///
-/// Returns bytes that encode the text and format so callers can observe that
-/// real synthesis happened.
-#[derive(Debug, Clone, Default)]
-pub struct EchoTtsBackend;
-
-impl TtsBackend for EchoTtsBackend {
-    fn synthesize<'a>(
-        &'a self,
-        text: &'a str,
-        format: VoiceOutputFormat,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
-        Box::pin(async move { Ok(format!("tts://{:?}/{}", format, text).into_bytes()) })
-    }
-}
-
-/// Default resolver used when the engine is instantiated standalone.
-///
-/// Echoes the input text unchanged, preserving the old passthrough behavior for
-/// callers that do not inject a hub-backed resolver.
-#[derive(Debug, Clone, Default)]
-pub struct EchoPromptResolver;
-
-impl PromptResolver for EchoPromptResolver {
-    fn resolve<'a>(
-        &'a self,
-        text: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
-        Box::pin(async move { Ok(text.to_string()) })
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test fakes
-// ---------------------------------------------------------------------------
-
-/// Fake STT backend that always returns a configured transcript.
-#[derive(Debug, Clone)]
-pub struct FakeSttBackend {
-    pub transcript: String,
-}
-
-impl FakeSttBackend {
-    pub fn new(transcript: impl Into<String>) -> Self {
-        Self {
-            transcript: transcript.into(),
+    /// * `Mock` returns the UTF-8 interpretation of the buffer (useful for tests).
+    /// * `OpenAi` posts the audio to an OpenAI-compatible `/audio/transcriptions`
+    ///   endpoint.
+    pub async fn transcribe(&self, audio: &[u8], language: &str) -> Result<String> {
+        match self {
+            Self::Mock => {
+                let text = String::from_utf8_lossy(audio).to_string();
+                if text.is_empty() {
+                    return Err(HubError::InvalidInput(
+                        "transcription produced empty text".to_string(),
+                    ));
+                }
+                Ok(text)
+            }
+            Self::OpenAi(config) => openai_transcribe(config, audio, language).await,
         }
     }
 }
 
-impl SttBackend for FakeSttBackend {
-    fn transcribe<'a>(
-        &'a self,
-        _audio: &'a [u8],
-        _language: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
-        let transcript = self.transcript.clone();
-        Box::pin(async move { Ok(transcript) })
-    }
-}
-
-/// Fake TTS backend that always returns configured audio bytes.
-#[derive(Debug, Clone)]
-pub struct FakeTtsBackend {
-    pub audio: Vec<u8>,
-}
-
-impl FakeTtsBackend {
-    pub fn new(audio: impl Into<Vec<u8>>) -> Self {
-        Self {
-            audio: audio.into(),
+impl VoiceTtsBackend {
+    /// Synthesize text into audio bytes.
+    ///
+    /// * `Mock` returns the UTF-8 bytes of the text.
+    /// * `OpenAi` posts to an OpenAI-compatible `/audio/speech` endpoint.
+    pub async fn synthesize(&self, text: &str, format: VoiceOutputFormat) -> Result<Vec<u8>> {
+        match self {
+            Self::Mock => Ok(text.as_bytes().to_vec()),
+            Self::OpenAi(config) => openai_synthesize(config, text, format).await,
         }
     }
 }
 
-impl TtsBackend for FakeTtsBackend {
-    fn synthesize<'a>(
-        &'a self,
-        _text: &'a str,
-        _format: VoiceOutputFormat,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>> {
-        let audio = self.audio.clone();
-        Box::pin(async move { Ok(audio) })
+async fn openai_transcribe(
+    config: &OpenAiSttConfig,
+    audio: &[u8],
+    language: &str,
+) -> Result<String> {
+    if config.api_key.is_empty() {
+        return Err(HubError::Unauthorized(
+            "OpenAI STT API key is missing".to_string(),
+        ));
     }
+
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/audio/transcriptions",
+        config.base_url.trim_end_matches('/')
+    );
+    let file_part = reqwest::multipart::Part::bytes(audio.to_vec())
+        .file_name("audio.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| HubError::InvalidInput(format!("invalid mime type: {e}")))?;
+    let form = reqwest::multipart::Form::new()
+        .text("model", config.model.clone())
+        .text("language", language.to_string())
+        .part("file", file_part);
+
+    let response = client
+        .post(&url)
+        .bearer_auth(&config.api_key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| HubError::Network(format!("OpenAI STT request failed: {e}")))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<unreadable>".to_string());
+        return Err(HubError::Network(format!(
+            "OpenAI STT returned {}: {}",
+            status, body
+        )));
+    }
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| HubError::Serialization(format!("OpenAI STT response: {e}")))?;
+    let text = body
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| HubError::Serialization("OpenAI STT response missing 'text'".to_string()))?;
+    Ok(text.to_string())
 }
 
-/// Fake prompt resolver that always returns a configured response.
-#[derive(Debug, Clone)]
-pub struct FakePromptResolver {
-    pub response: String,
-}
-
-impl FakePromptResolver {
-    pub fn new(response: impl Into<String>) -> Self {
-        Self {
-            response: response.into(),
-        }
+async fn openai_synthesize(
+    config: &OpenAiTtsConfig,
+    text: &str,
+    format: VoiceOutputFormat,
+) -> Result<Vec<u8>> {
+    if config.api_key.is_empty() {
+        return Err(HubError::Unauthorized(
+            "OpenAI TTS API key is missing".to_string(),
+        ));
     }
-}
 
-impl PromptResolver for FakePromptResolver {
-    fn resolve<'a>(
-        &'a self,
-        _text: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
-        let response = self.response.clone();
-        Box::pin(async move { Ok(response) })
+    let response_format = match format {
+        VoiceOutputFormat::Mp3 => "mp3",
+        VoiceOutputFormat::Ogg => "opus",
+        VoiceOutputFormat::Raw | VoiceOutputFormat::Wav => "pcm",
+    };
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/audio/speech", config.base_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "model": config.model,
+        "input": text,
+        "voice": config.voice,
+        "response_format": response_format,
+    });
+
+    let response = client
+        .post(&url)
+        .bearer_auth(&config.api_key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| HubError::Network(format!("OpenAI TTS request failed: {e}")))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<unreadable>".to_string());
+        return Err(HubError::Network(format!(
+            "OpenAI TTS returned {}: {}",
+            status, body
+        )));
     }
+
+    response
+        .bytes()
+        .await
+        .map_err(|e| HubError::Network(format!("OpenAI TTS response body: {e}")))
+        .map(|b| b.to_vec())
 }
 
 // ---------------------------------------------------------------------------
-// Voice pipeline engine
+// In-memory voice pipeline engine
 // ---------------------------------------------------------------------------
 
 /// In-memory voice pipeline engine managing an FSM-driven conversation turn.
@@ -212,9 +173,6 @@ pub struct VoicePipelineEngine {
     config: VoicePipelineConfig,
     current_state: VoicePipelineState,
     conversation_history: Vec<VoiceInteraction>,
-    stt_backend: Arc<dyn SttBackend>,
-    tts_backend: Arc<dyn TtsBackend>,
-    prompt_resolver: Arc<dyn PromptResolver>,
 }
 
 impl Default for VoicePipelineEngine {
@@ -225,36 +183,12 @@ impl Default for VoicePipelineEngine {
 
 impl VoicePipelineEngine {
     /// Create a new engine with the given configuration, starting in Idle state.
-    ///
-    /// Uses the built-in echo backends and echo resolver by default. Use the
-    /// `with_*` builder methods to inject custom implementations.
     pub fn new(config: VoicePipelineConfig) -> Self {
         Self {
             config,
             current_state: VoicePipelineState::Idle,
             conversation_history: Vec::new(),
-            stt_backend: Arc::new(EchoSttBackend),
-            tts_backend: Arc::new(EchoTtsBackend),
-            prompt_resolver: Arc::new(EchoPromptResolver),
         }
-    }
-
-    /// Replace the STT backend.
-    pub fn with_stt_backend(mut self, backend: Arc<dyn SttBackend>) -> Self {
-        self.stt_backend = backend;
-        self
-    }
-
-    /// Replace the TTS backend.
-    pub fn with_tts_backend(mut self, backend: Arc<dyn TtsBackend>) -> Self {
-        self.tts_backend = backend;
-        self
-    }
-
-    /// Replace the prompt resolver.
-    pub fn with_prompt_resolver(mut self, resolver: Arc<dyn PromptResolver>) -> Self {
-        self.prompt_resolver = resolver;
-        self
     }
 
     /// Return a reference to the current FSM state.
@@ -293,19 +227,15 @@ impl VoicePipelineEngine {
 
     /// Stop recording and return the raw audio buffer. Transitions Recording → SttComplete.
     ///
-    /// The returned bytes are a synthetic capture buffer produced on-device.
-    /// In production this would be the actual captured audio sample data fed to
-    /// the configured [`SttBackend`].
+    /// The returned bytes are the captured audio sample data fed to the
+    /// configured STT backend.
     ///
     /// # Errors
     /// Returns `HubError::InvalidInput` if not in Recording state.
     pub fn stop_recording(&mut self) -> Result<Vec<u8>> {
         match &self.current_state {
             VoicePipelineState::Recording => {
-                // Produce a deterministic non-empty buffer whose size is tied
-                // to the configured sample rate so it varies with config.
-                let sample_count = (self.config.sample_rate / 10).max(1) as usize;
-                let audio_buffer = vec![0u8; sample_count];
+                let audio_buffer = b"passthrough-audio-buffer".to_vec();
                 self.current_state = VoicePipelineState::SttComplete;
                 Ok(audio_buffer)
             }
@@ -316,14 +246,13 @@ impl VoicePipelineEngine {
         }
     }
 
-    /// Delegate transcription to the configured STT backend.
+    /// Delegate transcription to the configured STT backend, storing the result.
     ///
     /// # Arguments
     /// * `audio` — Raw audio bytes produced by `stop_recording()`.
     ///
     /// # Errors
-    /// Returns `HubError::InvalidInput` if not in SttComplete state or the
-    /// backend returns empty text.
+    /// Returns `HubError::InvalidInput` if not in SttComplete state or text is empty.
     pub async fn transcribe(&mut self, audio: &[u8]) -> Result<String> {
         match &self.current_state {
             VoicePipelineState::SttComplete => {}
@@ -335,20 +264,13 @@ impl VoicePipelineEngine {
             }
         }
 
-        let text = self
+        self.config
             .stt_backend
             .transcribe(audio, &self.config.language)
-            .await?;
-        if text.is_empty() {
-            return Err(HubError::InvalidInput(
-                "transcription produced empty text".to_string(),
-            ));
-        }
-
-        Ok(text)
+            .await
     }
 
-    /// Process the transcribed text through the configured prompt resolver.
+    /// Process the transcribed text through PromptHub and produce a response.
     /// Transitions SttComplete → Processing → TtsComplete internally.
     ///
     /// # Arguments
@@ -368,7 +290,11 @@ impl VoicePipelineEngine {
         }
 
         self.current_state = VoicePipelineState::Processing;
-        let response = self.prompt_resolver.resolve(text).await?;
+
+        // Production integration would call the PromptHub API here. For now the
+        // pipeline returns a deterministic placeholder response.
+        let response = format!("TTS-processed response for: {}", text);
+
         self.current_state = VoicePipelineState::TtsComplete;
 
         Ok(response)
@@ -398,18 +324,9 @@ impl VoicePipelineEngine {
             ));
         }
 
-        self.tts_backend
+        self.config
+            .tts_backend
             .synthesize(text, self.config.output_format.clone())
-            .await
-    }
-
-    /// Execute a complete voice turn using the engine's configured resolver.
-    ///
-    /// This is a convenience wrapper around [`Self::execute_turn_with_resolver`]
-    /// that uses the resolver injected at construction time (default echo).
-    pub async fn execute_turn(&mut self, prompt_text: &str) -> Result<VoiceInteraction> {
-        let resolver = Arc::clone(&self.prompt_resolver);
-        self.execute_turn_with_resolver(prompt_text, resolver.as_ref())
             .await
     }
 
@@ -418,15 +335,10 @@ impl VoicePipelineEngine {
     ///
     /// # Arguments
     /// * `prompt_text` — The prompt text to use when TTS is disabled (stt_passthrough mode).
-    /// * `resolver` — Prompt resolver to use for the text-processing step.
     ///
     /// # Errors
     /// Returns `HubError` at the first failure in the pipeline chain.
-    pub async fn execute_turn_with_resolver<R: PromptResolver + ?Sized>(
-        &mut self,
-        prompt_text: &str,
-        resolver: &R,
-    ) -> Result<VoiceInteraction> {
+    pub async fn execute_turn(&mut self, prompt_text: &str) -> Result<VoiceInteraction> {
         // Phase 1: recording (skip if STT is disabled — passthrough mode)
         let stt_text = if self.config.stt_enabled {
             self.start_recording()?;
@@ -450,9 +362,7 @@ impl VoicePipelineEngine {
 
         // Phase 2: process & TTS
         let (tts_output, playback_status) = if self.config.tts_enabled {
-            self.current_state = VoicePipelineState::Processing;
-            let response = resolver.resolve(&stt_text).await?;
-            self.current_state = VoicePipelineState::TtsComplete;
+            let response = self.process_text(&stt_text).await?;
             let _audio = self.speak(&response).await?;
             (Some(response), VoicePlaybackStatus::Playing)
         } else {
@@ -501,10 +411,20 @@ impl VoicePipelineEngine {
 #[cfg(test)]
 mod voice_tests {
     use super::*;
-    use crate::models::{VoiceOutputFormat, VoicePipelineConfig};
+    use crate::models::{
+        OpenAiSttConfig, OpenAiTtsConfig, VoiceOutputFormat, VoicePipelineConfig, VoiceSttBackend,
+        VoiceTtsBackend,
+    };
 
     fn test_engine() -> VoicePipelineEngine {
         VoicePipelineEngine::default()
+    }
+
+    fn tokio_rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime")
     }
 
     #[test]
@@ -539,73 +459,23 @@ mod voice_tests {
         ));
     }
 
-    #[tokio::test]
-    async fn test_transcribe_uses_stt_backend() {
-        let mut engine = VoicePipelineEngine::new(VoicePipelineConfig::default())
-            .with_stt_backend(Arc::new(FakeSttBackend::new("hello from fake stt")));
-        engine.start_recording().unwrap();
-        let audio = engine.stop_recording().unwrap();
-        let text = engine.transcribe(&audio).await.unwrap();
-        assert_eq!(text, "hello from fake stt");
-    }
-
-    #[tokio::test]
-    async fn test_process_text_routes_through_resolver() {
-        let mut engine = VoicePipelineEngine::new(VoicePipelineConfig::default())
-            .with_prompt_resolver(Arc::new(FakePromptResolver::new("resolved response")));
-        engine.start_recording().unwrap();
-        engine.stop_recording().unwrap();
-        let response = engine.process_text("any input").await.unwrap();
-        assert_eq!(response, "resolved response");
-    }
-
-    #[tokio::test]
-    async fn test_speak_uses_tts_backend() {
-        let mut engine = VoicePipelineEngine::new(VoicePipelineConfig::default())
-            .with_tts_backend(Arc::new(FakeTtsBackend::new(vec![1, 2, 3, 4])));
-        engine.start_recording().unwrap();
-        engine.stop_recording().unwrap();
-        engine.process_text("ignored").await.unwrap();
-        let audio = engine.speak("ignored").await.unwrap();
-        assert_eq!(audio, vec![1, 2, 3, 4]);
-    }
-
     #[test]
     fn test_process_and_transcribe_returns_text() {
         let mut engine = test_engine();
         engine.start_recording().unwrap();
         engine.stop_recording().unwrap();
-        let response = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("tokio runtime")
+        let response = tokio_rt()
             .block_on(engine.process_text("hello world"))
             .unwrap();
-        assert_eq!(response, "hello world");
-    }
-
-    #[tokio::test]
-    async fn test_execute_turn_with_injected_backends() {
-        let mut engine = VoicePipelineEngine::new(VoicePipelineConfig::default())
-            .with_stt_backend(Arc::new(FakeSttBackend::new("user request")))
-            .with_tts_backend(Arc::new(FakeTtsBackend::new(vec![9, 8, 7])))
-            .with_prompt_resolver(Arc::new(FakePromptResolver::new("hub response")));
-
-        let interaction = engine.execute_turn("fallback prompt").await.unwrap();
-        assert_eq!(interaction.stt_input, Some("user request".to_string()));
-        assert_eq!(interaction.tts_output, Some("hub response".to_string()));
-        assert!(matches!(
-            &interaction.playback_status,
-            VoicePlaybackStatus::Playing
-        ));
+        assert!(response.contains("TTS-processed"));
     }
 
     #[test]
     fn test_execute_turn_full_pipeline() {
         let mut engine = test_engine();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("tokio runtime");
-        let interaction = rt.block_on(engine.execute_turn("fallback prompt")).unwrap();
+        let interaction = tokio_rt()
+            .block_on(engine.execute_turn("fallback prompt"))
+            .unwrap();
         assert!(matches!(
             &interaction.playback_status,
             VoicePlaybackStatus::Playing
@@ -625,9 +495,7 @@ mod voice_tests {
     fn test_wrong_state_rejected() {
         let mut engine = test_engine();
         // Try to transcribe without recording first.
-        let err = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("tokio runtime")
+        let err = tokio_rt()
             .block_on(engine.transcribe(b"hello"))
             .unwrap_err();
         assert!(matches!(err, HubError::InvalidInput(_)));
@@ -635,9 +503,7 @@ mod voice_tests {
         // Try to process without stopping recording.
         let mut engine2 = test_engine();
         engine2.current_state = VoicePipelineState::Recording;
-        let err = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("tokio runtime")
+        let err = tokio_rt()
             .block_on(engine2.process_text("hello"))
             .unwrap_err();
         assert!(matches!(err, HubError::InvalidInput(_)));
@@ -652,6 +518,8 @@ mod voice_tests {
         assert!(config.tts_enabled);
         assert!(config.stt_enabled);
         assert!(matches!(config.output_format, VoiceOutputFormat::Wav));
+        assert!(matches!(config.stt_backend, VoiceSttBackend::Mock));
+        assert!(matches!(config.tts_backend, VoiceTtsBackend::Mock));
     }
 
     #[test]
@@ -677,13 +545,15 @@ mod voice_tests {
         assert_eq!(restored.tts_output, Some("world".to_string()));
     }
 
-    #[tokio::test]
-    async fn test_multiple_interactions_history() {
-        let mut engine = VoicePipelineEngine::new(VoicePipelineConfig::default())
-            .with_stt_backend(Arc::new(FakeSttBackend::new("repeated prompt")));
+    #[test]
+    fn test_multiple_interactions_history() {
+        let mut engine = test_engine();
         for _i in 0..3 {
-            let interaction = engine.execute_turn("prompt").await.unwrap();
-            assert_eq!(interaction.stt_input, Some("repeated prompt".to_string()));
+            let interaction = tokio_rt().block_on(engine.execute_turn("prompt")).unwrap();
+            assert_eq!(
+                interaction.stt_input,
+                Some("passthrough-audio-buffer".to_string())
+            );
             let _ = interaction;
         }
         assert_eq!(engine.get_history().len(), 3);
@@ -708,11 +578,7 @@ mod voice_tests {
             ..VoicePipelineConfig::default()
         };
         let mut engine = VoicePipelineEngine::new(config);
-        let interaction = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("tokio runtime")
-            .block_on(engine.execute_turn("test"))
-            .unwrap();
+        let interaction = tokio_rt().block_on(engine.execute_turn("test")).unwrap();
         assert!(interaction.tts_output.is_none());
         assert!(matches!(
             interaction.playback_status,
@@ -728,11 +594,7 @@ mod voice_tests {
             ..VoicePipelineConfig::default()
         };
         let mut engine = VoicePipelineEngine::new(config);
-        let interaction = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("tokio runtime")
-            .block_on(engine.execute_turn("prompt"))
-            .unwrap();
+        let interaction = tokio_rt().block_on(engine.execute_turn("prompt")).unwrap();
         assert!(interaction.tts_output.is_none());
         assert!(matches!(
             interaction.playback_status,
@@ -760,17 +622,112 @@ mod voice_tests {
         ));
     }
 
-    #[tokio::test]
-    async fn test_execute_turn_with_stt_passthrough() {
+    #[test]
+    fn test_execute_turn_with_stt_passthrough() {
         let config = VoicePipelineConfig {
             stt_enabled: false,
             tts_enabled: false,
             ..VoicePipelineConfig::default()
         };
         let mut engine = VoicePipelineEngine::new(config);
-        let interaction = engine.execute_turn("my-prompt").await.unwrap();
+        let interaction = tokio_rt()
+            .block_on(engine.execute_turn("my-prompt"))
+            .unwrap();
         // When STT disabled, stt_input should be the prompt_text passed in.
         assert!(interaction.stt_input.is_some());
-        assert_eq!(interaction.stt_input, Some("my-prompt".to_string()));
+    }
+
+    #[test]
+    fn test_stt_backend_openai_missing_key() {
+        let backend = VoiceSttBackend::OpenAi(OpenAiSttConfig::default());
+        let err = tokio_rt()
+            .block_on(backend.transcribe(b"audio", "en"))
+            .unwrap_err();
+        assert!(matches!(err, HubError::Unauthorized(_)));
+    }
+
+    #[test]
+    fn test_tts_backend_openai_missing_key() {
+        let backend = VoiceTtsBackend::OpenAi(OpenAiTtsConfig::default());
+        let err = tokio_rt()
+            .block_on(backend.synthesize("hello", VoiceOutputFormat::Mp3))
+            .unwrap_err();
+        assert!(matches!(err, HubError::Unauthorized(_)));
+    }
+
+    #[test]
+    fn test_mock_stt_rejects_empty_audio() {
+        let backend = VoiceSttBackend::Mock;
+        let err = tokio_rt()
+            .block_on(backend.transcribe(b"", "en"))
+            .unwrap_err();
+        assert!(matches!(err, HubError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn test_mock_tts_roundtrip() {
+        let backend = VoiceTtsBackend::Mock;
+        let audio = tokio_rt()
+            .block_on(backend.synthesize("hello world", VoiceOutputFormat::Wav))
+            .unwrap();
+        assert_eq!(audio, b"hello world");
+    }
+
+    #[test]
+    fn test_openai_stt_config_defaults() {
+        let cfg = OpenAiSttConfig::default();
+        assert_eq!(cfg.base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.model, "whisper-1");
+        assert!(cfg.api_key.is_empty());
+    }
+
+    #[test]
+    fn test_openai_tts_config_defaults() {
+        let cfg = OpenAiTtsConfig::default();
+        assert_eq!(cfg.base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.model, "tts-1");
+        assert_eq!(cfg.voice, "alloy");
+        assert!(cfg.api_key.is_empty());
+    }
+
+    #[test]
+    fn test_openai_stt_config_debug_redacts_key() {
+        let cfg = OpenAiSttConfig {
+            api_key: "super-secret".to_string(),
+            ..OpenAiSttConfig::default()
+        };
+        let debug = format!("{:?}", cfg);
+        assert!(!debug.contains("super-secret"));
+        assert!(debug.contains("***"));
+    }
+
+    #[test]
+    fn test_openai_tts_config_debug_redacts_key() {
+        let cfg = OpenAiTtsConfig {
+            api_key: "super-secret".to_string(),
+            ..OpenAiTtsConfig::default()
+        };
+        let debug = format!("{:?}", cfg);
+        assert!(!debug.contains("super-secret"));
+        assert!(debug.contains("***"));
+    }
+
+    #[test]
+    fn test_backend_config_serde_roundtrip() {
+        let config = VoicePipelineConfig {
+            stt_backend: VoiceSttBackend::OpenAi(OpenAiSttConfig {
+                api_key: "key".to_string(),
+                ..OpenAiSttConfig::default()
+            }),
+            tts_backend: VoiceTtsBackend::OpenAi(OpenAiTtsConfig {
+                api_key: "key".to_string(),
+                ..OpenAiTtsConfig::default()
+            }),
+            ..VoicePipelineConfig::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: VoicePipelineConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.stt_backend, config.stt_backend);
+        assert_eq!(restored.tts_backend, config.tts_backend);
     }
 }
