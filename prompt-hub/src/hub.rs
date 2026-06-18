@@ -3044,15 +3044,20 @@ impl PromptHub {
     }
 
     /// Execute garbage collection across all configured types.
+    ///
+    /// Runs the real, transactional purge against the live storage handle —
+    /// the same handle and delete idiom the auto-purge path uses.
     #[cfg(feature = "retention")]
-    pub fn run_garbage_collection(&self) -> Result<crate::garbage_collector::GcReport> {
-        self.garbage_collector.collect()
+    pub async fn run_garbage_collection(&self) -> Result<crate::garbage_collector::GcReport> {
+        self.garbage_collector.collect(&self.storage).await
     }
 
     /// Purge soft-deleted items and return count of purged rows.
     #[cfg(feature = "retention")]
-    pub fn purge_soft_deleted(&self) -> Result<u64> {
-        self.garbage_collector.purge_soft_deleted()
+    pub async fn purge_soft_deleted(&self) -> Result<u64> {
+        self.garbage_collector
+            .purge_soft_deleted(&self.storage)
+            .await
     }
 
     /// Get garbage collection statistics.
