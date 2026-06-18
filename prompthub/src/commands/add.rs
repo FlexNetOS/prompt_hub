@@ -26,7 +26,7 @@ pub async fn run(file: Option<&Path>, interactive: bool) -> Result<()> {
         create_default_prompt()
     };
 
-    let identity = AgentIdentity::default();
+    let identity = crate::identity::cli_identity();
     let id = hub.register(prompt, &identity).await?;
     info!("Registered prompt {}", id);
     println!("Registered prompt {}", id);
@@ -49,7 +49,7 @@ fn create_default_prompt() -> Prompt {
         metrics: PromptMetrics::default(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
-        author: AgentIdentity::default(),
+        author: crate::identity::cli_identity(),
         deleted_at: None,
         generation_params: None,
         locale: None,

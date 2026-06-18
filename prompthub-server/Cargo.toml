@@ -16,17 +16,33 @@ name = "prompthub-server"
 path = "src/main.rs"
 
 [features]
-default = ["prompt-hub/handlebars"]
+default = ["prompt-hub/handlebars", "prompt-hub/vibe", "prompt-hub/budget"]
 smart = ["prompt-hub/smart"]
+gather = ["prompt-hub/gather"]
+vibe = ["prompt-hub/vibe"]
+budget = ["prompt-hub/budget"]
+rollback = ["prompt-hub/rollback"]
+multi-provider = ["prompt-hub/multi-provider"]
+gradual-rollout = ["prompt-hub/gradual-rollout"]
+fallback = ["prompt-hub/fallback"]
+privacy = ["prompt-hub/privacy"]
+confidence = ["prompt-hub/confidence"]
+cost = ["prompt-hub/cost"]
+learn = ["prompt-hub/learn"]
+cost-limits = ["prompt-hub/cost-limits"]
+beta-program = ["prompt-hub/beta-program"]
+quota = ["prompt-hub/quota"]
+moderation = ["prompt-hub/moderation"]
+smart-ort = ["prompt-hub/smart-ort"]
 otel = ["prompt-hub/otel"]
-sqlcipher = ["prompt-hub/sqlcipher"]
 tls = ["prompt-hub/tls", "dep:tokio-rustls"]
 handlebars = ["prompt-hub/handlebars"]
 tera = ["prompt-hub/tera"]
 tiktoken = ["prompt-hub/tiktoken"]
 tokenizers = ["prompt-hub/tokenizers"]
 plugins = ["prompt-hub/plugins"]
-qdrant = ["prompt-hub/qdrant"]
+retention = ["prompt-hub/retention"]
+auto-purge = ["prompt-hub/auto-purge"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }
@@ -50,3 +66,9 @@ schemars = { workspace = true, optional = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true, features = ["json"] }
+tempfile = "3"
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true, features = ["timeout", "compression-full"] }

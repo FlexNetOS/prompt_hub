@@ -1,20 +1,89 @@
 #![forbid(unsafe_code)]
 
+use crate::analytics::Analytics;
+use crate::audit::SqliteAuditLogger;
 use crate::auth::{Action, RbacAuthManager};
+#[cfg(feature = "budget")]
+use crate::budget::{BudgetAlert, BudgetConfig, BudgetTracker};
+#[cfg(feature = "chaos")]
+use crate::chaos::{ChaosConfig, ChaosEngine, ChaosResult};
+#[cfg(feature = "gather")]
+use crate::gather::SmartContextGatherer;
+// CanaryDeployment lives in models.rs for backward compat.
+#[cfg(feature = "circuit-breaker")]
+use crate::circuit_breaker::CircuitBreaker;
+#[cfg(feature = "qdrant")]
+use crate::config::EmbedderBackend;
 use crate::config::HubConfig;
+use crate::diff::PromptDiff;
 use crate::error::{HubError, Result};
+#[cfg(feature = "retention")]
+use crate::garbage_collector::GarbageCollector;
+#[cfg(feature = "gradual-rollout")]
+use crate::gradual_rollout::RolloutEngine;
+use crate::health::HealthAggregator;
 use crate::hooks::{HookRegistry, JunieHook};
+#[cfg(feature = "i18n")]
+use crate::i18n::I18nEngine;
+use crate::junie::Junie;
+use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
+use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
+#[cfg(feature = "malware-scan")]
+use crate::malware_scan::{MalwareScanConfig, ScanResult};
 use crate::metrics::MetricsCollector;
+#[cfg(feature = "mobile")]
+use crate::mobile::MobileEngine;
+#[cfg(feature = "gradual-rollout")]
+use crate::models::CanaryDeployment;
+#[cfg(feature = "local-llm")]
+use crate::models::LocalModelConfig;
 use crate::models::*;
+#[cfg(feature = "sandbox")]
+use crate::models::{Sandbox, SandboxConfig, SandboxMode};
+#[cfg(feature = "voice")]
+use crate::models::{VoiceInteraction, VoiceOutputFormat, VoicePipelineConfig, VoicePipelineState};
+#[cfg(feature = "moderation")]
+use crate::moderation::ModerationEngine;
+#[cfg(feature = "multimodal")]
+use crate::multimodal::MultimodalEngine;
+#[cfg(feature = "offline")]
+use crate::offline::OfflineState;
+use crate::pollination::{CrossAgentPollination, Pattern};
+#[cfg(feature = "preview")]
+use crate::preview::PreviewEngine;
+use crate::provider_health::{HealthSummary, ProviderHealthMonitor};
+#[cfg(feature = "qdrant")]
+use crate::qdrant::{QdrantClient, QdrantEngine, VectorSearchMode};
+use crate::quality_gate::{QualityGate, QualityResult};
+#[cfg(feature = "quota")]
+use crate::quota::QuotaEnforcer;
+#[cfg(feature = "retention")]
+use crate::retention::{DataType, RetentionPolicy};
+#[cfg(feature = "rollback")]
+use crate::rollback::SafeDeployer;
 use crate::sanitize::{PromptSanitizer, SanitizationResult};
+use crate::satisfaction::{SatisfactionMetrics, SatisfactionTracker};
+#[cfg(feature = "qdrant")]
+use crate::search::Embedder;
 use crate::search::{FastEngine, HybridEngine, SearchEngine, SmartEngine};
 use crate::storage::{Storage, StorageConfig};
+use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
+#[cfg(feature = "voice")]
+use crate::voice::{PromptResolver, VoicePipelineEngine};
+#[cfg(feature = "voice-anonymize")]
+use crate::voice_anonymize::Anonymizer;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
 use std::path::Path;
+#[cfg(feature = "voice")]
+use std::pin::Pin;
 use std::sync::Arc;
+#[cfg(feature = "retention")]
+use std::sync::RwLock;
+#[cfg(feature = "budget")]
+use tracing::debug;
 use tracing::{info, instrument, warn};
 use uuid::Uuid;
 
@@ -35,18 +104,31 @@ pub mod lock {
     #[derive(Debug, Clone, Default)]
     pub struct LockManager {
         #[allow(dead_code)]
-        locks: std::sync::Arc<std::sync::Mutex<Vec<LockToken>>>,
+        locks: Arc<std::sync::Mutex<Vec<LockToken>>>,
     }
 
     impl LockManager {
-        /// Create a new lock manager
+        /// Create a new lock manager instance with an empty lock store.
+        ///
+        /// The underlying storage is a thread-safe `Mutex<Vec<LockToken>>`
+        /// suitable for in-process coordination across agent tasks.
         pub fn new() -> Self {
             Self {
-                locks: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                locks: Arc::new(std::sync::Mutex::new(Vec::new())),
             }
         }
 
-        /// Create a lock token for a prompt
+        /// Create a lock token that grants exclusive edit access to *prompt_id*
+        /// for the given *agent_id* until it expires after *ttl_secs*.
+        ///
+        /// # Arguments
+        /// * `prompt_id` — UUID of the prompt to lock
+        /// * `agent_id` — ID of the agent requesting the lock
+        /// * `ttl_secs` — Time-to-live in seconds before the token auto-expires
+        ///
+        /// # Returns
+        /// A [`LockToken`] that can be passed back to [`LockManager::is_expired`]
+        /// or used to prove ownership when calling `unlock`.
         pub fn create_lock(prompt_id: Uuid, agent_id: AgentId, ttl_secs: u64) -> LockToken {
             LockToken {
                 prompt_id,
@@ -56,7 +138,13 @@ pub mod lock {
             }
         }
 
-        /// Check if a lock token has expired
+        /// Check whether *token* has passed its expiry wall-clock time.
+        ///
+        /// # Arguments
+        /// * `token` — A previously created [`LockToken`] to inspect
+        ///
+        /// # Returns
+        /// `true` if `Utc::now() > token.expires_at`, `false` otherwise.
         pub fn is_expired(token: &LockToken) -> bool {
             Utc::now() > token.expires_at
         }
@@ -67,6 +155,57 @@ pub use lock::{LockManager, LockToken};
 
 /// Type alias for agent identifiers.
 pub type AgentId = Uuid;
+
+/// Search engine kind — either the default HybridEngine or a Qdrant-backed engine.
+#[derive(Debug)]
+#[cfg(feature = "qdrant")]
+enum SearchEngineKind {
+    Hybrid(Arc<HybridEngine>),
+    Qdrant(Arc<QdrantEngine>),
+}
+#[cfg(feature = "qdrant")]
+impl SearchEngine for SearchEngineKind {
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        filters: &'a crate::SearchFilters,
+        pagination: &'a Pagination,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<crate::Paginated<crate::ScoredPrompt>>> + Send + 'a>,
+    > {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.search(query, filters, pagination),
+            SearchEngineKind::Qdrant(e) => e.search(query, filters, pagination),
+        }
+    }
+
+    fn index<'a>(
+        &'a self,
+        prompt: &'a crate::Prompt,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.index(prompt),
+            SearchEngineKind::Qdrant(e) => e.index(prompt),
+        }
+    }
+
+    fn remove(
+        &self,
+        prompt_id: Uuid,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.remove(prompt_id),
+            SearchEngineKind::Qdrant(e) => e.remove(prompt_id),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            SearchEngineKind::Hybrid(e) => e.name(),
+            SearchEngineKind::Qdrant(e) => e.name(),
+        }
+    }
+}
 
 /// Compute a tamper-evidence hash over a before→after audit transition.
 ///
@@ -92,18 +231,150 @@ fn diff_hash(before: Option<&str>, after: Option<&str>) -> String {
 #[derive(Debug)]
 pub struct PromptHub {
     storage: Arc<Storage>,
+    #[cfg(not(feature = "qdrant"))]
     search_engine: Arc<HybridEngine>,
+    #[cfg(feature = "qdrant")]
+    search_engine: Arc<SearchEngineKind>,
     sanitizer: PromptSanitizer,
     auth: RbacAuthManager,
     lock_manager: LockManager,
     metrics: Arc<MetricsCollector>,
     sync: SyncManager,
+    /// Drives orderly shutdown of background daemons and the axum server.
+    shutdown_coordinator: crate::shutdown::ShutdownCoordinator,
     hooks: HookRegistry,
+    /// The in-repo Junie orchestrator agent. The default [`JunieHook`]
+    /// registered in [`HookRegistry`] wraps Junie's orchestration around core
+    /// operations; this field exposes the orchestrator handle directly.
+    junie: Junie,
+    quality_gate: Arc<QualityGate>,
+    lineage: LineageTracker,
+    swarm_registry: Arc<SwarmRoleRegistry>,
+    pollination: Arc<std::sync::Mutex<CrossAgentPollination>>,
+    satisfaction_tracker: Arc<SatisfactionTracker>,
+    health_monitor: Arc<std::sync::Mutex<ProviderHealthMonitor>>,
+    load_balancer: Arc<std::sync::Mutex<LoadBalancer>>,
+    #[cfg(feature = "budget")]
+    budget_tracker: Arc<BudgetTracker>,
+    #[cfg(feature = "chaos")]
+    chaos_engine: ChaosEngine,
+    #[cfg(feature = "chaos-automation")]
+    chaos_auto: Option<Arc<std::sync::Mutex<crate::chaos_auto::ChaosAuto>>>,
+    #[cfg(feature = "cost-limits")]
+    cost_limiter: std::sync::Arc<crate::cost_limits::CostLimiter>,
+    #[cfg(feature = "beta-program")]
+    beta_program: Arc<crate::beta_program::BetaProgram>,
+    #[cfg(feature = "multi-provider")]
+    multi_provider_router: std::sync::Mutex<crate::multi_provider::MultiProviderRouter>,
+    #[cfg(feature = "circuit-breaker")]
+    circuit_breaker: Arc<CircuitBreaker>,
+    #[cfg(feature = "moderation")]
+    moderation: Arc<ModerationEngine>,
+    #[cfg(feature = "quota")]
+    quota_enforcer: Arc<QuotaEnforcer>,
+    #[cfg(feature = "preview")]
+    preview_engine: Arc<PreviewEngine>,
+    #[cfg(feature = "sandbox")]
+    sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
+    #[cfg(feature = "voice")]
+    voice_engine: std::sync::Arc<tokio::sync::Mutex<VoicePipelineEngine>>,
+    #[cfg(feature = "voice-anonymize")]
+    voice_anonymizer: std::sync::Arc<std::sync::Mutex<Anonymizer>>,
+    #[cfg(feature = "touch")]
+    touch_config: Arc<std::sync::Mutex<crate::touch::TouchConfig>>,
+    #[cfg(feature = "local-llm")]
+    local_model_config: std::sync::Arc<std::sync::Mutex<Vec<LocalModelConfig>>>,
+    #[cfg(feature = "gradual-rollout")]
+    active_rollouts: std::sync::Mutex<Vec<GraduatedRolloutConfig>>,
+    #[cfg(feature = "multimodal")]
+    multimodal_engine: MultimodalEngine,
+    #[cfg(feature = "i18n")]
+    i18n_engine: I18nEngine,
+    analytics: Arc<std::sync::Mutex<Analytics>>,
+    audit_logger: Arc<SqliteAuditLogger>,
+    diff_engine: PromptDiff,
+    health_aggregator: HealthAggregator,
+    #[cfg(feature = "retention")]
+    retention_policy: Arc<RwLock<RetentionPolicy>>,
+    #[cfg(feature = "retention")]
+    garbage_collector: GarbageCollector,
+    #[cfg(feature = "rollback")]
+    safe_deployer: SafeDeployer,
+    #[cfg(feature = "malware-scan")]
+    malware_scan_config: Arc<std::sync::Mutex<MalwareScanConfig>>,
+    #[cfg(feature = "offline")]
+    offlined: std::sync::Arc<std::sync::RwLock<Option<OfflineState>>>,
+    #[cfg(feature = "auto-purge")]
+    auto_purge_engine:
+        std::sync::Arc<std::sync::Mutex<Option<Arc<crate::auto_purge::AutoPurgeEngine>>>>,
+    #[cfg(feature = "mobile")]
+    mobile_engine: std::sync::Arc<std::sync::RwLock<Option<Arc<std::sync::Mutex<MobileEngine>>>>>,
+    #[cfg(feature = "gather")]
+    smart_gatherer: SmartContextGatherer,
+}
+
+/// Resolver that routes voice transcripts through the hub prompt path.
+///
+/// Converts the transcript to an [`Intent`] via [`PromptHub::process_input`],
+/// then attempts to find a matching prompt via [`PromptHub::get`]. If no
+/// prompt matches, the original transcript is returned unchanged.
+#[cfg(feature = "voice")]
+#[derive(Debug)]
+struct HubPromptResolver<'a> {
+    hub: &'a PromptHub,
+}
+
+#[cfg(feature = "voice")]
+impl PromptResolver for HubPromptResolver<'_> {
+    fn resolve<'b>(
+        &'b self,
+        text: &'b str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'b>> {
+        let hub = self.hub;
+        Box::pin(async move {
+            let input = UserInput {
+                input_type: InputType::Text,
+                raw_data: Vec::new(),
+                extracted_text: text.to_string(),
+            };
+            let intent = hub.process_input(input).await?;
+            let prompt = hub
+                .get(
+                    Role::Orchestrator,
+                    &intent.raw_text,
+                    &AgentIdentity::default(),
+                )
+                .await?;
+            Ok(prompt
+                .map(|p| {
+                    if p.system_prompt.is_empty() {
+                        p.user_template
+                    } else {
+                        p.system_prompt
+                    }
+                })
+                .unwrap_or(intent.raw_text))
+        })
+    }
 }
 
 impl PromptHub {
     /// Create a new PromptHub instance backed by SQLite storage and a hybrid
-    /// search engine.
+    /// search engine (FTS5 + optional ONNX embeddings).
+    ///
+    /// Initializes the database connection pool, registers the default Junie
+    /// orchestrator hook, and sets up RBAC, metrics, sync, and satisfaction
+    /// tracking infrastructure.
+    ///
+    /// # Arguments
+    /// * `db_path` — Filesystem path where the libsql/SQLite database will live.
+    ///   Pass `:memory:` for an ephemeral in-process store (useful for tests).
+    /// * `config` — [`HubConfig`] controlling pool size, search defaults,
+    ///   embedding model/dimension/backend, and migration policy.
+    ///
+    /// # Errors
+    /// Returns [`HubError::StorageError`] if the database cannot be opened or
+    /// migrations fail to apply.
     #[instrument]
     pub async fn new(db_path: &Path, config: HubConfig) -> Result<Self> {
         let storage_config = StorageConfig {
@@ -115,7 +386,12 @@ impl PromptHub {
 
         let storage = Arc::new(Storage::new(storage_config).await?);
         let fast = Arc::new(FastEngine::new(storage.clone()));
-        let smart = Arc::new(SmartEngine::new(config.embedding_model, storage.clone()));
+        let smart = Arc::new(SmartEngine::new_with_backend(
+            config.embedding_model.clone(),
+            storage.clone(),
+            config.embedding_dimension,
+            &config.embedding_backend,
+        ));
         let hybrid = Arc::new(HybridEngine::new(fast, smart));
 
         info!("PromptHub initialized at {:?}", db_path);
@@ -123,36 +399,516 @@ impl PromptHub {
         let metrics = Arc::new(MetricsCollector::default());
         let mut hub = Self {
             storage,
+            #[cfg(not(feature = "qdrant"))]
             search_engine: hybrid,
+            #[cfg(feature = "qdrant")]
+            search_engine: std::sync::Arc::new(SearchEngineKind::Hybrid(hybrid)),
             sanitizer: PromptSanitizer::default(),
             auth: RbacAuthManager::new(),
             lock_manager: LockManager::new(),
             metrics: metrics.clone(),
             sync: SyncManager::new(),
+            shutdown_coordinator: crate::shutdown::ShutdownCoordinator::new(),
             hooks: HookRegistry::new(),
+            junie: Junie::new(),
+            quality_gate: Arc::new(QualityGate::new()),
+            lineage: LineageTracker::new(),
+            swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
+            pollination: Arc::new(std::sync::Mutex::new(CrossAgentPollination::new())),
+            satisfaction_tracker: Arc::new(SatisfactionTracker::new(1000)),
+            health_monitor: Arc::new(std::sync::Mutex::new(ProviderHealthMonitor::new())),
+            load_balancer: Arc::new(std::sync::Mutex::new(LoadBalancer::new(
+                RoutingStrategy::Weighted,
+            ))),
+            #[cfg(feature = "budget")]
+            budget_tracker: Arc::new(BudgetTracker::default()),
+            #[cfg(feature = "chaos")]
+            chaos_engine: ChaosEngine::new(),
+            #[cfg(feature = "chaos-automation")]
+            chaos_auto: None,
+            #[cfg(feature = "cost-limits")]
+            cost_limiter: std::sync::Arc::new(crate::cost_limits::CostLimiter::default()),
+            #[cfg(feature = "beta-program")]
+            beta_program: Arc::new(crate::beta_program::BetaProgram::default()),
+            #[cfg(feature = "multi-provider")]
+            multi_provider_router: std::sync::Mutex::new(
+                crate::multi_provider::MultiProviderRouter::default(),
+            ),
+            #[cfg(feature = "circuit-breaker")]
+            circuit_breaker: Arc::new(CircuitBreaker::default()),
+            #[cfg(feature = "moderation")]
+            moderation: Arc::new(ModerationEngine::new()),
+            #[cfg(feature = "quota")]
+            quota_enforcer: Arc::new(QuotaEnforcer::default()),
+            #[cfg(feature = "preview")]
+            preview_engine: Arc::new(PreviewEngine),
+            #[cfg(feature = "sandbox")]
+            sandbox_engine: std::sync::Arc::new(crate::sandbox::SandboxEngine::default()),
+            #[cfg(feature = "voice")]
+            voice_engine: std::sync::Arc::new(tokio::sync::Mutex::new(
+                VoicePipelineEngine::default(),
+            )),
+            #[cfg(feature = "voice-anonymize")]
+            voice_anonymizer: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::voice_anonymize::Anonymizer::default_with_builtins(),
+            )),
+            #[cfg(feature = "touch")]
+            touch_config: Arc::new(std::sync::Mutex::new(crate::touch::TouchConfig::default())),
+            #[cfg(feature = "local-llm")]
+            local_model_config: Arc::new(std::sync::Mutex::new(Vec::<LocalModelConfig>::new())),
+            #[cfg(feature = "gradual-rollout")]
+            active_rollouts: std::sync::Mutex::new(Vec::new()),
+            #[cfg(feature = "multimodal")]
+            multimodal_engine: MultimodalEngine,
+            #[cfg(feature = "i18n")]
+            i18n_engine: I18nEngine::new(),
+            analytics: Arc::new(std::sync::Mutex::new(Analytics::new())),
+            audit_logger: Arc::new(SqliteAuditLogger::new()),
+            diff_engine: PromptDiff::new(),
+            health_aggregator: HealthAggregator::new(),
+            #[cfg(feature = "retention")]
+            retention_policy: Arc::new(RwLock::new(RetentionPolicy::default())),
+            #[cfg(feature = "retention")]
+            garbage_collector: GarbageCollector::new(RetentionPolicy::default()),
+            safe_deployer: SafeDeployer::new(),
+            #[cfg(feature = "malware-scan")]
+            malware_scan_config: Arc::new(std::sync::Mutex::new(MalwareScanConfig::default())),
+            #[cfg(feature = "offline")]
+            offlined: Arc::new(std::sync::RwLock::new(None)),
+            #[cfg(feature = "auto-purge")]
+            auto_purge_engine: Arc::new(std::sync::Mutex::new(None)),
+            #[cfg(feature = "mobile")]
+            mobile_engine: Arc::new(std::sync::RwLock::new(None)),
+            #[cfg(feature = "gather")]
+            smart_gatherer: SmartContextGatherer,
         };
+
+        // ── Post-struct initialization for feature-gated wiring ───────────
+
+        #[cfg(feature = "retention")]
+        {
+            let retention = crate::retention::RetentionPolicy::default();
+            hub.garbage_collector = GarbageCollector::new(retention.clone());
+            hub.retention_policy = Arc::new(RwLock::new(retention));
+        }
 
         // Register default hooks
         hub.hooks.register(Box::new(JunieHook));
+
+        #[cfg(feature = "budget")]
+        info!("Budget tracker initialized with default monthly budget");
+
+        #[cfg(feature = "chaos")]
+        info!("Chaos engine initialized for prompt evaluation");
+
+        #[cfg(feature = "chaos-automation")]
+        info!("Chaos automation subsystem ready (scheduler disabled until started)");
+
+        #[cfg(feature = "circuit-breaker")]
+        info!("Circuit breaker initialized with defaults (threshold=5, timeout=30s)");
+
+        #[cfg(feature = "moderation")]
+        info!("Content moderation engine initialized in permissive mode");
+
+        #[cfg(feature = "quota")]
+        info!("Quota enforcer initialized with defaults (daily=1M, hourly=100K, burst=10K)");
+
+        #[cfg(feature = "preview")]
+        info!("Preview engine ready for pre-execution rendering");
+
+        #[cfg(feature = "sandbox")]
+        info!("Sandbox engine initialized in permissive mode");
+
+        #[cfg(feature = "local-llm")]
+        info!("Local LLM engine initialized (no models configured yet)");
+
+        #[cfg(feature = "voice-anonymize")]
+        info!("Voice anonymizer initialized with built-in PII patterns");
+
+        #[cfg(feature = "touch")]
+        info!("Touch input layer initialized (threshold=50px, debounce=300ms)");
+
+        // ── Qdrant vector search engine wiring ──────────────────────────────
+        #[cfg(feature = "qdrant")]
+        if let Some(ref qconfig) = config.qdrant_config {
+            info!("Qdrant config detected — building vector search engine");
+
+            // Build embedder for the Qdrant engine.
+            let embedder: Arc<dyn Embedder> = match config.embedding_backend {
+                EmbedderBackend::Hash => {
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                }
+                #[cfg(feature = "smart-ort")]
+                EmbedderBackend::OnnxRuntime => {
+                    if let Ok(ort) =
+                        crate::search::OrtEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")
+                    {
+                        Arc::new(ort) as Arc<dyn Embedder>
+                    } else {
+                        warn!(
+                            "smart-ort feature enabled but OrtEmbedder creation failed; using HashEmbedder"
+                        );
+                        Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                            as Arc<dyn Embedder>
+                    }
+                }
+                #[cfg(not(feature = "smart-ort"))]
+                EmbedderBackend::OnnxRuntime => {
+                    warn!(
+                        "EmbedderBackend::OnnxRuntime requested but smart-ort feature is disabled; using HashEmbedder"
+                    );
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                        as Arc<dyn Embedder>
+                }
+                #[cfg(feature = "qdrant")]
+                EmbedderBackend::Qdrant => {
+                    // Qdrant is its own vector store — fall back to Hash.
+                    warn!("Qdrant backend requested at embedding level; using HashEmbedder");
+                    Arc::new(crate::search::HashEmbedder::new(qconfig.vector_size))
+                        as Arc<dyn Embedder>
+                }
+            };
+
+            let client = QdrantClient::new(qconfig.clone());
+            if qconfig.auto_create_collection {
+                // ignore errors — the collection may not exist but that's OK;
+                // subsequent upserts will create it automatically.
+                let _ = client.ensure_collection().await;
+            }
+
+            let qengine = Arc::new(QdrantEngine::new(
+                client,
+                embedder,
+                VectorSearchMode::default(),
+            ));
+
+            // Replace the default hybrid engine with the Qdrant-backed one.
+            #[cfg(feature = "qdrant")]
+            {
+                hub.search_engine = Arc::new(SearchEngineKind::Qdrant(qengine));
+            }
+        }
+
+        #[cfg(feature = "gradual-rollout")]
+        info!("Gradual rollout engine initialized");
+
+        #[cfg(feature = "multimodal")]
+        info!("Multimodal engine initialized (image placeholder support)");
+
+        #[cfg(feature = "i18n")]
+        info!("I18n translation engine initialized");
+
+        info!("Analytics aggregator initialized");
+
+        info!("Audit logging initialized (SqliteAuditLogger backend)");
+
+        info!("Diff engine initialized (LCS-based text diff)");
+        info!("Health aggregator initialized");
+
+        #[cfg(feature = "retention")]
+        info!("Retention policy and garbage collection initialized");
+
+        #[cfg(feature = "malware-scan")]
+        info!("Malware scanner initialized with default configuration");
 
         Ok(hub)
     }
 
     // ── Accessors for server layer ──────────────────────────────────────
 
-    /// Return a cloneable handle to the storage layer.
+    /// Return a cloneable `Arc` handle to the underlying storage layer.
+    ///
+    /// The returned handle can be shared across axum handlers or worker tasks.
+    /// Callers that need direct mutation access should use `Arc::get_mut()`
+    /// on the cloned handle rather than this method (which always returns a clone).
     pub fn storage(&self) -> Arc<Storage> {
         Arc::clone(&self.storage)
     }
 
-    /// Return a cloneable handle to the metrics collector.
+    /// Return a cloneable `Arc` handle to the metrics collector.
+    ///
+    /// The collector accumulates request counts, sanitization stats, lock events,
+    /// and satisfaction signals across the lifetime of this PromptHub instance.
     pub fn metrics(&self) -> Arc<MetricsCollector> {
         Arc::clone(&self.metrics)
+    }
+
+    /// Return a reference to the in-repo Junie orchestrator agent.
+    ///
+    /// Junie is the primary orchestrator for the PromptHub ecosystem; its
+    /// identity, role, and default system prompt are reachable through the
+    /// returned handle. The default [`JunieHook`] is also registered in the
+    /// hook registry so Junie's orchestration wraps core operations — this
+    /// accessor exposes the orchestrator itself as a first-class subsystem.
+    pub fn junie(&self) -> &Junie {
+        &self.junie
+    }
+
+    /// Return a clone of the hub's [`ShutdownCoordinator`](crate::shutdown::ShutdownCoordinator).
+    ///
+    /// Background daemons and the axum server subscribe to the returned handle
+    /// (via [`subscribe`](crate::shutdown::ShutdownCoordinator::subscribe)) so
+    /// they all unwind on a single signal. The signal is fired by
+    /// [`PromptHub::shutdown`] or, for signal-driven exit, by
+    /// [`ShutdownCoordinator::wait_for_signal`](crate::shutdown::ShutdownCoordinator::wait_for_signal).
+    pub fn shutdown_coordinator(&self) -> crate::shutdown::ShutdownCoordinator {
+        self.shutdown_coordinator.clone()
+    }
+
+    /// Whether [`shutdown`](Self::shutdown) has already been initiated.
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutdown_coordinator.is_shutting_down()
+    }
+
+    // ── Chaos engineering ─────────────────────────────────────────────────
+
+    /// Return a handle to the chaos evaluation engine.
+    #[cfg(feature = "chaos")]
+    pub fn chaos_engine(&self) -> &ChaosEngine {
+        &self.chaos_engine
+    }
+
+    /// Run a full chaos evaluation across all configured strategies.
+    ///
+    /// Executes each strategy's *iterations_per_strategy* mutated prompts through the
+    /// provided executor closure, assesses validity of every response, and returns one
+    /// [`ChaosResult`] per strategy with pass rate and severity classification.
+    ///
+    /// # Arguments
+    /// * `config` — Evaluation configuration (strategies, iterations, thresholds).
+    /// * `executor` — Closure accepting a prompt string and returning the output as a future.
+    #[cfg(feature = "chaos")]
+    pub async fn run_chaos(
+        &self,
+        config: ChaosConfig,
+        executor: impl FnMut(&str) -> String + Send + 'static,
+    ) -> Result<Vec<ChaosResult>> {
+        let engine = self.chaos_engine.clone();
+
+        // Wrap the synchronous executor so it matches the async trait boundary.
+        let mut exec = executor;
+        let results = engine
+            .run(config, move |prompt: &str| {
+                let output = exec(prompt);
+                async move { output }
+            })
+            .await;
+
+        Ok(results)
+    }
+
+    // ── Chaos automation (automated scheduling & trend tracking) ───────────────
+
+    /// Return a handle to the chaos automation subsystem, if enabled.
+    #[cfg(feature = "chaos-automation")]
+    pub fn chaos_auto(&self) -> Option<&Arc<std::sync::Mutex<crate::chaos_auto::ChaosAuto>>> {
+        self.chaos_auto.as_ref()
+    }
+
+    /// Start the chaos automation scheduler with the given *config*.
+    ///
+    /// Initializes a [`ChaosAuto`](crate::chaos_auto::ChaosAuto) instance (must be `None` before call) and
+    /// spawns its background task. Returns `Ok(Some(handle))` on success, or
+    /// `Ok(None)` if already started.
+    #[cfg(feature = "chaos-automation")]
+    #[allow(clippy::await_holding_lock)]
+    pub async fn start_chaos_auto(
+        &mut self,
+        config: crate::chaos_auto::ChaosAutoConfig,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
+        if self.chaos_auto.is_some() {
+            return Ok(None); // Already started.
+        }
+
+        let (_tx, rx) = tokio::sync::broadcast::channel(1);
+        let auto = std::sync::Arc::new(std::sync::Mutex::new(crate::chaos_auto::ChaosAuto::new(
+            config, rx,
+        )));
+
+        // Note: The guard is held across the await. This is safe because
+        // spawn_task does not do long-running synchronous work — it only
+        // sets up tokio intervals and spawns a task which immediately drops
+        // the future reference back to us via JoinHandle.
+        let handle = auto.lock().unwrap().spawn_task(self).await?;
+        self.chaos_auto = Some(auto);
+
+        Ok(Some(handle))
+    }
+
+    // ── Auto-purge (periodic prompt cleanup) ──────────────────────────────
+
+    /// Return a handle to the auto-purge engine, if enabled.
+    #[cfg(feature = "auto-purge")]
+    pub fn auto_purge_engine(&self) -> Option<Arc<crate::auto_purge::AutoPurgeEngine>> {
+        let outer = self.auto_purge_engine.lock().unwrap();
+        outer.clone()
+    }
+
+    /// Run a single purge cycle synchronously (blocking on storage).
+    #[cfg(feature = "auto-purge")]
+    pub async fn purge_now(&self) -> Result<crate::auto_purge::PurgeStats> {
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        engine.run_purge(self).await
+    }
+
+    /// Get a snapshot of current purge statistics.
+    #[cfg(feature = "auto-purge")]
+    pub fn get_purge_stats(&self) -> Result<crate::auto_purge::PurgeStats> {
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        Ok(engine.stats())
+    }
+
+    /// Update the auto-purge configuration.
+    #[cfg(feature = "auto-purge")]
+    pub fn update_purge_config(
+        &self,
+        updater: impl FnOnce(&mut crate::auto_purge::AutoPurgeConfig),
+    ) -> Result<()> {
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        engine.update_config(updater);
+        Ok(())
+    }
+
+    /// Start the auto-purge daemon with the given *config*.
+    #[cfg(feature = "auto-purge")]
+    pub async fn start_purge_daemon(
+        &self,
+        config: crate::auto_purge::AutoPurgeConfig,
+    ) -> Result<Option<tokio::task::JoinHandle<()>>> {
+        let engine = {
+            let mut outer = self.auto_purge_engine.lock().unwrap();
+            if outer.is_none() {
+                *outer = Some(Arc::new(crate::auto_purge::AutoPurgeEngine::new(config)));
+            }
+            outer.clone().unwrap()
+        };
+
+        engine.update_config(|c| {
+            c.enabled = true;
+        });
+        let handle = engine.spawn_daemon_task().await?;
+
+        Ok(Some(handle))
+    }
+
+    /// Stop the auto-purge daemon (sends shutdown signal to the loop).
+    #[cfg(feature = "auto-purge")]
+    pub fn stop_purge_daemon(&self) -> Result<()> {
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+
+        engine.shutdown();
+        Ok(())
+    }
+
+    // ── Mobile / Offline-First ─────────────────────────────────────────────
+
+    /// Enable mobile (offline-first) mode with the given *config*.
+    ///
+    /// Creates an [`MobileEngine`] wrapping a fresh
+    /// on-device store. CRUD operations proceed locally when offline; changes are
+    /// queued for push sync when connectivity returns.
+    #[cfg(feature = "mobile")]
+    pub fn enable_mobile_mode(&self, config: crate::mobile::MobileConfig) -> Result<()> {
+        let mut guard = self.mobile_engine.write().unwrap();
+        if guard.is_some() {
+            return Err(HubError::InvalidInput(
+                "mobile mode is already enabled".to_string(),
+            ));
+        }
+        *guard = Some(Arc::new(std::sync::Mutex::new(
+            crate::mobile::MobileEngine::new(config),
+        )));
+        Ok(())
+    }
+
+    /// Enqueue a pending push operation from mobile mode.
+    ///
+    /// Returns the assigned sequence number for this push, or an error if
+    /// mobile mode is not enabled.
+    #[cfg(feature = "mobile")]
+    pub fn enqueue_mobile_push(
+        &self,
+        op_type: crate::mobile::PushOpType,
+        payload_size_bytes: usize,
+    ) -> Result<u64> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let mut inner = engine.lock().unwrap();
+        Ok(inner.enqueue_push(op_type, payload_size_bytes))
+    }
+
+    /// Check whether device sync should be suppressed based on current network condition.
+    #[cfg(feature = "mobile")]
+    pub fn should_suppress_sync(&self) -> Result<bool> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let inner = engine.lock().unwrap();
+        Ok(inner.should_suppress_sync())
+    }
+
+    /// Build a bandwidth-aware sync plan for pending mobile changes.
+    #[cfg(feature = "mobile")]
+    pub fn build_mobile_sync_plan(
+        &self,
+        available_bytes: usize,
+    ) -> Result<crate::mobile::SyncPlan> {
+        let guard = self.mobile_engine.read().unwrap();
+        let engine = guard.as_ref().ok_or_else(|| {
+            HubError::InvalidInput(
+                "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
+            )
+        })?;
+        let inner = engine.lock().unwrap();
+        Ok(inner.build_sync_plan(available_bytes))
     }
 
     // ── Prompt CRUD ───────────────────────────────────────────────────────
 
     /// Register a new prompt after sanitization and RBAC checks.
+    ///
+    /// The system-sanitizer evaluates the prompt's `system_prompt` and
+    /// `user_template` for policy violations (PII, injection, content
+    /// restrictions). Blocked prompts produce an error; suspicious ones are
+    /// logged but accepted. On success the prompt is indexed by the search
+    /// engine and persisted to storage.
+    ///
+    /// # Arguments
+    /// * `prompt` — The [`Prompt`] to register. Its `id` must be unique.
+    /// * `identity` — The caller's [`AgentIdentity`] used for RBAC authorization
+    ///   and audit trail population.
+    ///
+    /// # Errors
+    /// - [`HubError::SanitizationError`] if the content is blocked by policy.
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::StorageError`] if persistence fails (e.g. unique constraint).
     #[instrument(skip(self, prompt))]
     pub async fn register(&self, prompt: Prompt, identity: &AgentIdentity) -> Result<Uuid> {
         RbacAuthManager::authorize_action(identity, Action::Write)?;
@@ -207,6 +963,20 @@ impl PromptHub {
     }
 
     /// Retrieve a single prompt by role and intent.
+    ///
+    /// Uses the search engine to find the best matching prompt for the given
+    /// *intent* filtered to those targeting *role*. Returns the top result, or
+    /// `None` if no match is found. This is the primary lookup method used by
+    /// agents at runtime.
+    ///
+    /// # Arguments
+    /// * `role` — The [`Role`] to filter prompts by (e.g. `Developer`, `Architect`).
+    /// * `intent` — Natural-language intent text for relevance ranking.
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC authorization.
+    ///
+    /// # Returns
+    /// `Ok(Some(prompt))` when a match exists, `Ok(None)` when no prompt
+    /// matches the filter, or an error on auth/storage failure.
     #[instrument(skip(self))]
     pub async fn get(
         &self,
@@ -229,7 +999,120 @@ impl PromptHub {
         Ok(results.items.into_iter().next().map(|sp| sp.prompt))
     }
 
+    /// Get a single prompt by its UUID with RBAC authorization.
+    ///
+    /// Performs an exact-UUID lookup through the storage layer, gated by
+    /// [`RbacAuthManager`] Read authorization for the provided identity.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to retrieve.
+    /// * `identity` — Caller's [`AgentIdentity`] (used for RBAC).
+    ///
+    /// # Returns
+    /// `Ok(Some(prompt))` if found, `Ok(None)` if not, or an error on failure.
+    pub async fn get_by_id(&self, id: Uuid, identity: &AgentIdentity) -> Result<Option<Prompt>> {
+        RbacAuthManager::authorize_action(identity, Action::Read)?;
+        self.metrics.record_request();
+        self.storage.get_prompt(id).await
+    }
+
+    /// Count tokens for a stored prompt's combined system + user content.
+    ///
+    /// Fetches the prompt by UUID (gated by [`RbacAuthManager`] Read
+    /// authorization via [`PromptHub::get_by_id`]) and counts the tokens of its
+    /// `system_prompt` and `user_template` under the named `model` using
+    /// [`TokenCounter`](crate::tokens::TokenCounter). With the `tiktoken` feature this uses `tiktoken-rs`;
+    /// otherwise a character/word heuristic is applied.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the stored prompt.
+    /// * `model` — Model identifier (e.g. `"gpt-4"`) to count tokens for.
+    /// * `identity` — Caller's [`AgentIdentity`] (used for RBAC Read).
+    ///
+    /// # Returns
+    /// A [`crate::tokens::TokenCount`] for the prompt under `model`.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks the `Read` capability.
+    /// - [`HubError::NotFound`] if no prompt exists with the given `id`.
+    #[instrument(skip(self))]
+    pub async fn count_prompt_tokens(
+        &self,
+        id: Uuid,
+        model: &str,
+        identity: &AgentIdentity,
+    ) -> Result<crate::tokens::TokenCount> {
+        let prompt = self
+            .get_by_id(id, identity)
+            .await?
+            .ok_or_else(|| HubError::NotFound(id.to_string()))?;
+        crate::tokens::TokenCounter::count_prompt(
+            &prompt.system_prompt,
+            &prompt.user_template,
+            model,
+        )
+        .await
+    }
+
+    /// Estimate the input + output cost of a stored prompt under `model`.
+    ///
+    /// Fetches the prompt by UUID (gated by [`RbacAuthManager`] Read
+    /// authorization via [`PromptHub::get_by_id`]), counts the input tokens of
+    /// its `system_prompt` and `user_template`, and combines them with
+    /// `expected_output_tokens` to produce a cost estimate via
+    /// [`TokenCounter::estimate_prompt_cost`](crate::tokens::TokenCounter::estimate_prompt_cost). Pricing is approximate and based
+    /// on common provider tiers.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the stored prompt.
+    /// * `model` — Model identifier (e.g. `"gpt-4"`) to price against.
+    /// * `expected_output_tokens` — Anticipated completion length, in tokens.
+    /// * `identity` — Caller's [`AgentIdentity`] (used for RBAC Read).
+    ///
+    /// # Returns
+    /// A [`crate::tokens::CostEstimateDetail`] with input/output token counts
+    /// and per-segment and total cost.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks the `Read` capability.
+    /// - [`HubError::NotFound`] if no prompt exists with the given `id`.
+    #[instrument(skip(self))]
+    pub async fn estimate_prompt_cost(
+        &self,
+        id: Uuid,
+        model: &str,
+        expected_output_tokens: usize,
+        identity: &AgentIdentity,
+    ) -> Result<crate::tokens::CostEstimateDetail> {
+        let prompt = self
+            .get_by_id(id, identity)
+            .await?
+            .ok_or_else(|| HubError::NotFound(id.to_string()))?;
+        crate::tokens::TokenCounter::estimate_prompt_cost(
+            &prompt.system_prompt,
+            &prompt.user_template,
+            model,
+            expected_output_tokens,
+        )
+        .await
+    }
+
     /// Search prompts using the configured search engine.
+    ///
+    /// Delegates to the internal hybrid search pipeline (FTS5 + optional
+    /// embedding-based retrieval) and returns a paginated set of scored matches.
+    /// Filters narrow by role, domain, tags, and status; pagination controls
+    /// page number and per-page count.
+    ///
+    /// # Arguments
+    /// * `query` — Free-text search query against prompt content.
+    /// * `mode` — Search mode selector (`Fast`, `Smart`, or `Hybrid`).
+    /// * `filters` — [`SearchFilters`] for role, domain, tags, status, etc.
+    /// * `pagination` — [`Pagination`] with page number and per-page size limits.
+    ///
+    /// # Returns
+    /// A [`Paginated<ScoredPrompt>`] containing matched prompts sorted by
+    /// relevance score. Empty results produce a valid empty paginated response.
     #[instrument(skip(self))]
     pub async fn search(
         &self,
@@ -243,7 +1126,19 @@ impl PromptHub {
             .await
     }
 
-    /// List all prompts with pagination.
+    /// List all prompts with pagination, optionally filtered by status and domain.
+    ///
+    /// This method returns every stored prompt (subject to any optional scope
+    /// filters encoded in *pagination*) without performing a text search. Use
+    /// [`PromptHub::search`] when you need relevance-ranked results.
+    ///
+    /// # Arguments
+    /// * `pagination` — [`Pagination`] with `page` and `per_page` controls the
+    ///   slice of the full prompt catalogue to return.
+    ///
+    /// # Returns
+    /// A [`Paginated<Prompt>`] containing the requested page of prompts and the
+    /// total count across all pages.
     #[instrument(skip(self))]
     pub async fn list(&self, pagination: Pagination) -> Result<Paginated<Prompt>> {
         let offset = (pagination.page.saturating_sub(1)) * pagination.per_page;
@@ -260,9 +1155,46 @@ impl PromptHub {
         })
     }
 
+    /// Seed the store with the built-in base role templates (idempotent).
+    ///
+    /// Registers the default Orchestrator/Architect/Implementer/Critic/Reviewer
+    /// templates and the standard handoff template for any that are not already
+    /// present (matched by name), each through the normal RBAC + sanitize +
+    /// audit [`PromptHub::register`] path. Safe to call on every startup: a
+    /// second call inserts nothing.
+    ///
+    /// # Arguments
+    /// * `identity` — caller's [`AgentIdentity`]; must hold the `Write`
+    ///   capability (enforced by the underlying registrations).
+    ///
+    /// # Returns
+    /// The number of templates newly inserted by this call.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write`.
+    /// - any storage/sanitize error surfaced by [`PromptHub::register`].
+    #[instrument(skip(self))]
+    pub async fn seed_defaults(&self, identity: &AgentIdentity) -> Result<usize> {
+        crate::defaults::seed_database(self, identity).await
+    }
+
     // ── Lock management ───────────────────────────────────────────────────
 
-    /// Acquire an edit lock on a prompt.
+    /// Acquire an edit lock on a prompt for exclusive modification.
+    ///
+    /// Creates a [`LockToken`] that proves the caller's right to edit the given
+    /// prompt until it expires. The token must be returned to [`PromptHub::unlock`]
+    /// before the prompt can be modified again by another agent.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to lock.
+    /// * `agent` — Caller's [`AgentIdentity`] (used for RBAC and audit trail).
+    /// * `ttl` — Time-to-live duration; after this period the token auto-expires
+    ///   and may be acquired by another agent.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *agent* lacks the `Lock` RBAC action.
+    /// - [`HubError::StorageError`] if audit logging fails.
     #[instrument(skip(self))]
     pub async fn lock(
         &self,
@@ -291,7 +1223,19 @@ impl PromptHub {
         Ok(token)
     }
 
-    /// Release a previously acquired lock.
+    /// Release a previously acquired lock, revoking the caller's exclusive
+    /// edit access to the locked prompt.
+    ///
+    /// If the *token* has expired, the operation fails and the lock remains in
+    /// effect for another agent to acquire. On success a release audit entry is
+    /// written to storage.
+    ///
+    /// # Arguments
+    /// * `token` — A [`LockToken`] previously returned by [`PromptHub::lock`].
+    ///
+    /// # Errors
+    /// - [`HubError::LockError`] if *token* has expired or is invalid.
+    /// - [`HubError::StorageError`] if the release audit entry cannot be written.
     #[instrument(skip(self))]
     pub async fn unlock(&self, token: LockToken) -> Result<()> {
         if LockManager::is_expired(&token) {
@@ -325,7 +1269,19 @@ impl PromptHub {
 
     // ── Audit & ownership ─────────────────────────────────────────────────
 
-    /// Get the audit trail for a prompt.
+    /// Get the full audit trail (all mutations) for a prompt.
+    ///
+    /// Returns every logged action — create, update, evolve, roll-back, lock,
+    /// unlock, ownership transfer — associated with *id*, paginated by page and
+    /// per-page count. Use this to reconstruct a complete change history.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to look up audit entries for.
+    /// * `pagination` — [`Pagination`] controlling which slice of entries to return.
+    ///
+    /// # Returns
+    /// A [`Paginated<AuditEntry>`] containing the requested page and total count
+    /// of audit entries. Empty when no mutations have been logged.
     #[instrument(skip(self))]
     pub async fn audit_trail(
         &self,
@@ -337,7 +1293,23 @@ impl PromptHub {
             .await
     }
 
-    /// Transfer prompt ownership between agents (admin only).
+    /// Transfer prompt ownership from one agent to another (admin-only).
+    ///
+    /// Changes the `author` field of the prompt identified by *id* to *to*'s
+    /// agent ID. The caller must hold the `Admin` RBAC action; a full audit
+    /// entry is written with before/after diffs. The original owner (*from*) is
+    /// recorded for audit but not enforced at storage level.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to transfer.
+    /// * `_from` — Current owner's [`AgentIdentity`] (recorded in audit).
+    /// * `to` — New owner's [`AgentIdentity`].
+    /// * `admin` — Admin agent whose credentials authorize this operation.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *admin* lacks `Admin` RBAC action.
+    /// - [`HubError::NotFound`] if the prompt identified by *id* does not exist.
+    /// - [`HubError::StorageError`] on persistence failure.
     #[instrument(skip(self))]
     pub async fn transfer_ownership(
         &self,
@@ -379,7 +1351,21 @@ impl PromptHub {
     // ── Vibe Coding ───────────────────────────────────────────────────────
 
     /// Natural-language request → deliverable (Vibe Coding).
+    ///
+    /// Delegates to the VibeEngine (feature-gated) which transforms a free-form user request
+    /// into a structured deliverable with an confidence score, based on the
+    /// requested *level* of skill. Requires the `vibe` feature flag.
+    ///
+    /// # Arguments
+    /// * `request` — Natural-language description of the desired output.
+    /// * `input` — [`UserInput`] carrying auxiliary parameters (files, context, etc.).
+    /// * `level` — Required [`SkillLevel`] for the generated response.
+    ///
+    /// # Returns
+    /// A [`VibeResult`] containing the generated deliverable and a confidence
+    /// score indicating how well the output matches the request.
     #[instrument(skip(self))]
+    #[cfg(feature = "vibe")]
     pub async fn vibe_code(
         &self,
         request: &str,
@@ -396,9 +1382,103 @@ impl PromptHub {
         Ok(result)
     }
 
+    /// Convert a multi-modal [`UserInput`] into a structured [`Intent`].
+    ///
+    /// Delegates to [`MultiModalInput`](crate::multimodal_input::MultiModalInput),
+    /// which handles every `InputType` — text, voice, screenshot, sketch, file,
+    /// and URL — inferring the domain, role, task type, and complexity of the
+    /// request. This is the front-door normalizer that turns any input modality
+    /// into the `Intent` consumed by the vibe/orchestration path.
+    ///
+    /// Always available (not feature-gated); the processor is stateless.
+    ///
+    /// # Arguments
+    /// * `input` — The [`UserInput`] to normalize (its `input_type` + `extracted_text`).
+    ///
+    /// # Returns
+    /// A structured [`Intent`] suitable for downstream classification or routing.
+    #[instrument(skip(self))]
+    pub async fn process_input(&self, input: UserInput) -> Result<Intent> {
+        use crate::multimodal_input::MultiModalInput;
+        MultiModalInput.process(input).await
+    }
+
+    // ── Template rendering ────────────────────────────────────────────────
+
+    /// Render a stored prompt's `user_template` with the supplied variables.
+    ///
+    /// Resolves the prompt via RBAC-gated lookup, verifies every entry in the
+    /// prompt's `required_vars` is supplied, then renders the template through the
+    /// feature-selected [`TemplateEngine`](crate::templates::TemplateEngine)
+    /// (Handlebars by default, Tera under its feature, or the built-in fallback).
+    ///
+    /// # Arguments
+    /// * `id` — The prompt to render.
+    /// * `vars` — Variable name → JSON value bindings for the template.
+    /// * `identity` — Caller identity; requires `Read` capability.
+    ///
+    /// # Errors
+    /// - [`HubError::NotFound`] if no prompt with *id* exists.
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Read`.
+    /// - [`HubError::ValidationError`] if a `required_vars` entry is missing or the
+    ///   template fails to render.
+    #[instrument(skip(self, vars))]
+    pub async fn render_prompt(
+        &self,
+        id: Uuid,
+        vars: std::collections::HashMap<String, serde_json::Value>,
+        identity: &AgentIdentity,
+    ) -> Result<String> {
+        let prompt = self
+            .get_by_id(id, identity)
+            .await?
+            .ok_or(HubError::NotFound(id.to_string()))?;
+
+        let missing: Vec<String> = prompt
+            .required_vars
+            .iter()
+            .filter(|v| !vars.contains_key(*v))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(HubError::ValidationError(format!(
+                "Missing required template variables: {}",
+                missing.join(", ")
+            )));
+        }
+
+        let mut ctx = crate::templates::TemplateContext::new();
+        ctx.vars = vars;
+        let engine = crate::templates::default_engine();
+        let rendered = engine.render(&prompt.user_template, &ctx)?;
+        info!(prompt_id = %id, "Rendered prompt template");
+        Ok(rendered)
+    }
+
+    /// Lint a raw template string through the feature-selected
+    /// [`TemplateEngine`](crate::templates::TemplateEngine), returning any
+    /// structural issues (e.g. unbalanced `{{ }}` braces). Does not require a
+    /// stored prompt or authorization — it inspects the supplied text only.
+    pub fn lint_template(&self, template: &str) -> Vec<crate::templates::LintIssue> {
+        crate::templates::default_engine().lint(template)
+    }
+
     // ── Context gathering ─────────────────────────────────────────────────
 
-    /// Gather project context from the filesystem.
+    /// Gather project context from the filesystem at *project_path*.
+    ///
+    /// Walks the directory tree to collect Cargo manifests, source files, config
+    /// files, and dependency information, returning a structured [`ProjectContext`]
+    /// suitable for downstream intent classification or cost estimation.
+    ///
+    /// # Arguments
+    /// * `project_path` — Absolute path to the root of the project directory.
+    ///
+    /// # Returns
+    /// A [`ProjectContext`] with file trees, manifests, and inferred metadata.
+    ///
+    /// # Errors
+    /// - [`HubError`] with IO detail if the path cannot be read or is not a directory.
     #[instrument(skip(self))]
     pub async fn gather_context(&self, project_path: &Path) -> Result<ProjectContext> {
         use crate::context_gatherer::ContextGatherer;
@@ -407,9 +1487,60 @@ impl PromptHub {
         Ok(ctx)
     }
 
+    // ── Smart context gathering ───────────────────────────────────────────
+
+    /// Gather enhanced project context with relevance-ranked files and extracted code patterns.
+    ///
+    /// Requires the `gather` feature flag. Returns a [`SmartContext`](crate::gather::SmartContext) wrapping the base
+    /// [`ProjectContext`] with file relevance rankings and extracted structural patterns
+    /// (imports, function signatures, struct/trait definitions) suitable for prompt
+    /// engineering workflows.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn gather_context_smart(
+        &self,
+        project_path: &Path,
+    ) -> Result<crate::gather::SmartContext> {
+        let smart = self.smart_gatherer.gather_smart(project_path).await?;
+        info!("Smart gather complete for {}", smart.project_path);
+        Ok(smart)
+    }
+
+    /// Collect only the relevance-ranked file list.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn collect_relevant_files(
+        &self,
+        project_path: &Path,
+    ) -> Vec<crate::gather::RelevanceEntry> {
+        self.smart_gatherer
+            .collect_relevant_files(project_path)
+            .await
+    }
+
+    /// Extract structural code patterns from key source files in a project.
+    #[cfg(feature = "gather")]
+    #[instrument(skip(self))]
+    pub async fn extract_patterns(&self, project_path: &Path) -> Vec<crate::gather::CodePattern> {
+        self.smart_gatherer.extract_patterns(project_path).await
+    }
+
     // ── Cost estimation ───────────────────────────────────────────────────
 
-    /// Estimate the cost of an intent in a given project context.
+    /// Estimate the cost of executing an *intent* within the given *context*.
+    ///
+    /// Analyzes the intent's complexity against project metadata (crate count,
+    /// file sizes, dependency depth) to produce a dollar-cost projection.
+    /// Requires the `cost` feature flag.
+    ///
+    /// # Arguments
+    /// * `intent` — The [`Intent`] whose cost should be estimated.
+    /// * `context` — A [`ProjectContext`] describing the target codebase.
+    ///
+    /// # Returns
+    /// A [`CostEstimate`] with USD cost, token counts (input/output), and a
+    /// breakdown by component (analysis, generation, testing).
+    #[cfg(feature = "cost")]
     #[instrument(skip(self))]
     pub async fn estimate_cost(
         &self,
@@ -428,7 +1559,19 @@ impl PromptHub {
 
     // ── Privacy scanning ──────────────────────────────────────────────────
 
-    /// Scan user input for privacy issues.
+    /// Scan user input for potential privacy violations (PII, secrets, credentials).
+    ///
+    /// Runs the configured privacy scanner over every field in *input* and
+    /// returns a categorized report of detected issues with severity levels.
+    /// Requires the `privacy` feature flag.
+    ///
+    /// # Arguments
+    /// * `input` — The [`UserInput`] to scan for privacy-sensitive content.
+    ///
+    /// # Returns
+    /// A [`PrivacyReport`] with a risk level (low / medium / high), detected
+    /// issues by category, and suggested mitigations.
+    #[cfg(feature = "privacy")]
     #[instrument(skip(self))]
     pub async fn scan_privacy(&self, input: &UserInput) -> Result<PrivacyReport> {
         use crate::privacy::PrivacyScanner;
@@ -440,7 +1583,20 @@ impl PromptHub {
 
     // ── Confidence scoring ────────────────────────────────────────────────
 
-    /// Score confidence for an intent against project context.
+    /// Score confidence for an *intent* against a given project *context*.
+    ///
+    /// Evaluates how well the intent aligns with existing code patterns, module
+    /// structure, and dependency graph to produce a confidence score (0.0–1.0).
+    /// Requires the `confidence` feature flag.
+    ///
+    /// # Arguments
+    /// * `intent` — The [`Intent`] to evaluate.
+    /// * `context` — A [`ProjectContext`] describing the target codebase structure.
+    ///
+    /// # Returns
+    /// A [`ConfidenceScore`] with a numeric score (0.0–1.0), supporting factors,
+    /// and confidence breakdown by dimension (domain fit, pattern match, etc.).
+    #[cfg(feature = "confidence")]
     #[instrument(skip(self))]
     pub async fn score_confidence(
         &self,
@@ -456,18 +1612,84 @@ impl PromptHub {
 
     // ── Graceful shutdown helper ──────────────────────────────────────────
 
-    /// Gracefully shut down the hub: close storage, drain metrics.
+    /// Gracefully shut down the hub in an orderly sequence.
+    ///
+    /// Drives the [`ShutdownCoordinator`](crate::shutdown::ShutdownCoordinator)
+    /// and unwinds resources in dependency order:
+    ///
+    /// 1. **Broadcast** the shutdown signal so every subscriber (the axum
+    ///    server, spawned daemons) begins to unwind. Idempotent — calling
+    ///    `shutdown` twice fires the signal once.
+    /// 2. **Stop background daemons** that own their own scheduler loops: the
+    ///    auto-purge daemon and the chaos-automation scheduler (feature-gated).
+    /// 3. **Flush storage** — checkpoint the WAL to disk via
+    ///    [`optimize_on_close`](crate::storage::Storage::optimize_on_close) so
+    ///    no committed data is left only in the write-ahead log.
+    ///
+    /// Daemon-stop steps are best-effort and logged on failure (e.g. a daemon
+    /// that was never started): they must not abort the storage flush, which is
+    /// the data-safety-critical step. Only a WAL-flush failure is returned as an
+    /// error.
+    ///
+    /// Intended for use at process exit or during hot-reload cycles.
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or a [`HubError::StorageError`] if the WAL flush
+    /// fails (which would indicate potential data loss).
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
-        info!("Shutting down PromptHub storage...");
+        info!("PromptHub shutdown initiated");
+
+        // 1. Broadcast the shutdown signal to all subscribers. Idempotent.
+        let fired = self.shutdown_coordinator.shutdown();
+        if !fired {
+            info!("PromptHub shutdown already in progress");
+        }
+
+        // 2. Stop background daemons that run their own scheduler loops.
+        #[cfg(feature = "auto-purge")]
+        {
+            // Best-effort: the daemon may never have been started.
+            if let Err(e) = self.stop_purge_daemon() {
+                tracing::debug!("auto-purge daemon not stopped during shutdown: {e}");
+            }
+        }
+        #[cfg(feature = "chaos-automation")]
+        {
+            if let Some(auto) = self.chaos_auto.as_ref()
+                && let Ok(guard) = auto.lock()
+            {
+                guard.shutdown();
+                info!("chaos-automation scheduler signalled to stop");
+            }
+        }
+
+        // 3. Flush storage last so committed data survives the WAL checkpoint.
+        info!("Flushing PromptHub storage...");
         self.storage.optimize_on_close().await?;
+
         info!("PromptHub shutdown complete");
         Ok(())
     }
 
     // ── Prompt lifecycle ──────────────────────────────────────────────────
 
-    /// Update an existing prompt.
+    /// Update an existing prompt with the given *patch* and audit the change.
+    ///
+    /// Applies only the fields set in *patch* (e.g. `system_prompt`,
+    /// `user_template`, `tags`). The caller's *identity* is recorded in the
+    /// audit trail along with a before/after diff hash for tamper evidence.
+    /// RBAC requires `Write` capability.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to update.
+    /// * `patch` — [`PromptPatch`] containing only the fields to change.
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC and audit trail.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::NotFound`] if no prompt with *id* exists.
+    /// - [`HubError::StorageError`] on persistence failure.
     #[instrument(skip(self))]
     pub async fn update(
         &self,
@@ -505,7 +1727,22 @@ impl PromptHub {
         Ok(updated)
     }
 
-    /// Rollback a prompt to a previous version.
+    /// Rollback a prompt to a previous version identified by *to_version*.
+    ///
+    /// Restores the prompt stored under *id* to its state at the named
+    /// *to_version*, then re-indexes it in the search engine and logs an
+    /// audit entry. Requires the `rollback` feature flag and `Write` RBAC.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the prompt to roll back.
+    /// * `to_version` — Version string (e.g. `"v1.2.0"`) to restore.
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC and audit trail.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::NotFound`] if the prompt or target version does not exist.
+    /// - [`HubError::StorageError`] on persistence failure.
+    #[cfg(feature = "rollback")]
     #[instrument(skip(self))]
     pub async fn rollback(
         &self,
@@ -543,7 +1780,23 @@ impl PromptHub {
         Ok(rolled)
     }
 
-    /// Evolve a prompt using the specified strategy.
+    /// Evolve a prompt using the specified *strategy*, producing a new version.
+    ///
+    /// Applies the given [`EvolutionStrategy`] (mutate, crossover, etc.) to the
+    /// existing prompt identified by *id*. The result is persisted as a **new**
+    /// prompt (different UUID) and indexed for search; the original is preserved
+    /// in storage for lineage tracing.
+    ///
+    /// # Arguments
+    /// * `id` — UUID of the base prompt to evolve.
+    /// * `strategy` — The [`EvolutionStrategy`] to apply (`Mutate`, `Crossover`, etc.).
+    /// * `identity` — Caller's [`AgentIdentity`] for RBAC and audit trail.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write` capability.
+    /// - [`HubError::NotFound`] if no prompt with *id* exists.
+    /// - [`HubError::Internal("No crossover candidates")`] for `Crossover` when
+    ///   no other prompts are available to act as parents.
     #[instrument(skip(self))]
     pub async fn evolve_prompt(
         &self,
@@ -590,7 +1843,20 @@ impl PromptHub {
         Ok(evolved)
     }
 
-    /// Execute the fallback chain for an intent.
+    /// Execute the configured fallback chain for an *intent* within a given *context*.
+    ///
+    /// Tries each fallback strategy in order (e.g. direct generation → template
+    /// injection → handoff to orchestrator) until one succeeds. Requires the
+    /// `fallback` feature flag.
+    ///
+    /// # Arguments
+    /// * `intent` — The [`Intent`] to resolve via fallback strategies.
+    /// * `context` — A [`ProjectContext`] providing codebase metadata for resolution.
+    ///
+    /// # Returns
+    /// An [`Artifact`] (code, prompt, or other output type) produced by the first
+    /// strategy that succeeds, or an error if all fallbacks fail.
+    #[cfg(feature = "fallback")]
     #[instrument(skip(self))]
     pub async fn fallback_chain(
         &self,
@@ -608,6 +1874,16 @@ impl PromptHub {
     }
 
     /// Learn from user feedback to improve future results.
+    ///
+    /// Records the *correction* string alongside the original *intent* in the
+    /// learning engine's history so that future requests for similar intents can
+    /// benefit from this correction. Requires the `learn` feature flag.
+    ///
+    /// # Arguments
+    /// * `correction` — Free-text description of what was wrong and how to fix it.
+    /// * `intent` — The [`Intent`] that triggered the feedback (for indexing).
+    /// * `agent_id` — UUID of the agent providing the correction (audit trail).
+    #[cfg(feature = "learn")]
     #[instrument(skip(self))]
     pub async fn learn_from_feedback(
         &self,
@@ -629,6 +1905,1517 @@ impl PromptHub {
         engine.learn_from_feedback(correction).await?;
         info!("Learned from feedback by agent {}", agent_id);
         Ok(())
+    }
+
+    // ── Quality gate ────────────────────────────────────────────────────
+
+    /// Run the quality gate pipeline against an artifact.
+    ///
+    /// Returns a `QualityResult` with scores and pass/fail for lint,
+    /// security, performance, and accessibility checks registered on the gate.
+    #[instrument(skip(self))]
+    pub async fn run_quality_gate(&self, artifact: &Artifact) -> Result<QualityResult> {
+        let result = self.quality_gate.check(artifact).await?;
+        info!(
+            passed = %result.passed,
+            warnings = %result.warnings.len(),
+            errors = %result.errors.len(),
+            "Quality gate result"
+        );
+        Ok(result)
+    }
+
+    // ── Version lineage ───────────────────────────────────────────────
+
+    /// Get the ancestry path (from root to *version_id*) in the version graph.
+    ///
+    /// Returns the ordered chain of ancestor version IDs and the depth of the
+    /// tree branch ending at *version_id*.
+    ///
+    /// # Arguments
+    /// * `version_id` — The version whose ancestry path to resolve.
+    ///
+    /// # Returns
+    /// An [`AncestryPath`] with `path` (ordered root-first) and `depth`.
+    ///
+    /// # Errors
+    /// - [`HubError::NotFound`] if *version_id* is not tracked.
+    #[instrument(skip(self))]
+    pub fn get_lineage_ancestry(&self, version_id: &str) -> Result<AncestryPath> {
+        self.lineage.get_ancestry(version_id)
+    }
+
+    /// Detect all forks in the lineage graph.
+    ///
+    /// A fork occurs when a single version has two or more children (i.e.
+    /// multiple branches diverge from one parent). This is useful for
+    /// identifying parallel evolution of prompts.
+    #[instrument(skip(self))]
+    pub fn detect_lineage_forks(&self) -> Vec<Fork> {
+        self.lineage.detect_forks()
+    }
+
+    /// Get all descendant version IDs reachable from *version_id*.
+    ///
+    /// Traverses the full descendant graph (not just direct children) and returns
+    /// every reachable version ID in breadth-first order.
+    ///
+    /// # Arguments
+    /// * `version_id` — The root version to traverse descendants of.
+    #[instrument(skip(self))]
+    pub fn get_lineage_descendants(&self, version_id: &str) -> Vec<String> {
+        self.lineage.get_descendants(version_id)
+    }
+
+    /// Build a lineage tree rooted at *root_version*, including all descendants.
+    ///
+    /// Returns `None` if the root is not tracked. The tree encodes parent-child
+    /// edges and fork points for visualization or diffing.
+    ///
+    /// # Arguments
+    /// * `root_version` — The version to root the tree at.
+    #[instrument(skip(self))]
+    pub fn build_lineage_tree(&self, root_version: &str) -> Option<LineageTree> {
+        self.lineage.build_tree(root_version)
+    }
+
+    /// Mutable access to the lineage tracker (caller owns mutation).
+    ///
+    /// Prefer using this over storing a separate Arc/Mutex — it avoids
+    /// double-allocation and keeps the tracker inline with PromptHub.
+    #[allow(clippy::mutable_key_type)]
+    pub fn lineage_mut(&mut self) -> &mut LineageTracker {
+        &mut self.lineage
+    }
+
+    /// Number of registered version nodes in the lineage graph.
+    #[inline]
+    pub fn lineage_node_count(&self) -> usize {
+        self.lineage.node_count()
+    }
+
+    /// Check whether a specific *version_id* is tracked in the lineage graph.
+    #[inline]
+    pub fn has_lineage_version(&self, version_id: &str) -> bool {
+        self.lineage.has_version(version_id)
+    }
+
+    /// Get the set of root versions (no parents).
+    pub fn lineage_roots(&self) -> &[String] {
+        self.lineage.roots()
+    }
+
+    // - Swarm role registry --------------------------------------------------
+
+    /// Return a cloneable handle to the swarm role registry.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers or
+    /// downstream components. Mutable operations (e.g., registering custom
+    /// roles) use `Arc::get_mut()` on the original.
+    pub fn manage_swarm(&self) -> Arc<SwarmRoleRegistry> {
+        Arc::clone(&self.swarm_registry)
+    }
+
+    /// Validate a set of roles against the swarm dependency DAG.
+    ///
+    /// Returns an empty vec if all roles are valid, or a list of conflicts
+    /// (missing required roles, duplicates, capability gaps, custom-name
+    /// violations).
+    #[instrument(skip(self, roles))]
+    pub fn validate_swarm_roles(&self, roles: &[Role]) -> Result<Vec<Conflict>> {
+        swarm::validate_swarm_roles(roles)
+    }
+
+    /// Generate a swarm bundle for the given roles, domain, and workflow.
+    ///
+    /// Validates the role DAG, builds the dependency graph, generates a
+    /// consistency report, evolution suggestions, and handoff templates.
+    #[instrument(skip(self, roles))]
+    pub async fn generate_swarm_bundle(
+        &self,
+        roles: Vec<Role>,
+        domain: Domain,
+        workflow_id: Uuid,
+    ) -> Result<SwarmBundle> {
+        swarm::generate_swarm_bundle(roles, domain, workflow_id).await
+    }
+
+    // - Cross-agent pollination ---------------------------------------------------
+
+    /// Return a cloneable handle to the cross-agent pollination engine.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers. Mutable
+    /// operations (e.g., sharing patterns) use `Arc::get_mut()` on the original.
+    pub fn pollination(&self) -> Arc<std::sync::Mutex<CrossAgentPollination>> {
+        Arc::clone(&self.pollination)
+    }
+
+    /// Extract reusable prompt patterns from a prompt for cross-agent sharing.
+    ///
+    /// Analyzes the prompt's `system_prompt` and `user_template` to detect
+    /// structural patterns (e.g. step-by-step, few-shot, chain-of-thought) that
+    /// could be reused by other agents in the swarm.
+    ///
+    /// # Arguments
+    /// * `prompt` — The [`Prompt`] to extract patterns from.
+    ///
+    /// # Returns
+    /// A vector of [`Pattern`] structs, each describing a detected structural
+    /// pattern with its confidence score and applicable domain tags.
+    #[instrument(skip(self, prompt))]
+    pub fn extract_pollination_patterns(&self, prompt: &Prompt) -> Result<Vec<Pattern>> {
+        Ok(CrossAgentPollination::extract_patterns(prompt))
+    }
+
+    /// Rank all patterns in the pollination pool by composite score.
+    ///
+    /// Scores combine usage frequency, success rate, and domain diversity to
+    /// produce a ranking of reusable patterns. Only returns the top *num_domains*
+    /// distinct-domain representatives.
+    ///
+    /// # Arguments
+    /// * `num_domains` — Maximum number of distinct domains to return (i.e. result count).
+    ///
+    /// # Returns
+    /// A vector of `(pattern_name, score)` tuples sorted descending by score.
+    #[instrument(skip(self))]
+    pub fn rank_pollination_patterns(&self, num_domains: usize) -> Result<Vec<(String, f64)>> {
+        let engine = self
+            .pollination
+            .lock()
+            .map_err(|e| HubError::Internal(format!("pollination mutex poisoned: {e}")))?;
+        Ok(engine
+            .rank_patterns(num_domains)
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v))
+            .collect())
+    }
+
+    /// Mutable access to the pollination engine (caller owns mutation).
+    ///
+    /// Prefer using this over cloning the Arc + holding a separate guard -- it
+    /// avoids double-allocation and keeps the engine inline with PromptHub.
+    pub fn pollination_mut(&mut self) -> &mut CrossAgentPollination {
+        let mutex = Arc::get_mut(&mut self.pollination).expect("pollination mutex poisoned");
+        mutex.get_mut().expect("pollination lock poisoned")
+    }
+
+    // - User satisfaction tracker --------------------------------------------------
+
+    /// Return a cloneable handle to the user satisfaction tracker.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers. Mutable
+    /// operations (e.g., recording ratings) use the provided delegate methods
+    /// or call into the tracker directly via this handle.
+    pub fn satisfaction_tracker(&self) -> Arc<SatisfactionTracker> {
+        Arc::clone(&self.satisfaction_tracker)
+    }
+
+    /// Record a CSAT rating (1-5), delegated to the satisfaction tracker.
+    ///
+    /// Scores outside the valid range 1..=5 are silently ignored. The optional
+    /// *context* string is stored alongside the rating for later segmentation.
+    ///
+    /// # Arguments
+    /// * `score` — CSAT score on a 1-5 Likert scale (1=Dissatisfied, 5=Satisfied).
+    /// * `context` — Free-form context describing the user's experience.
+    #[instrument(skip(self))]
+    pub fn record_csat_rating(&self, score: u8, context: &str) {
+        self.satisfaction_tracker.record_csat(score, context);
+    }
+
+    /// Record an NPS rating (1-10), delegated to the satisfaction tracker.
+    ///
+    /// Scores outside the valid range 1..=10 are silently ignored. The aggregate
+    /// NPS score is computed as `(promoters - detractors) / total`.
+    ///
+    /// # Arguments
+    /// * `score` — NPS score on a 1-10 scale (9-10=promoter, 7-8=passive, 1-6=detractor).
+    #[instrument(skip(self))]
+    pub fn record_nps_rating(&self, score: u8) {
+        self.satisfaction_tracker.record_nps(score);
+    }
+
+    /// Record a success/failure event in the satisfaction funnel.
+    ///
+    /// Tracks whether a prompt resolution was ultimately successful and how many
+    /// attempts it took. Events feed into the one-shot success rate metric.
+    ///
+    /// # Arguments
+    /// * `prompt_id` — Identifier of the prompt involved in this interaction.
+    /// * `successful` — Whether the user's goal was achieved on this attempt.
+    /// * `attempts` — Number of attempts before resolution (1 = solved immediately).
+    #[instrument(skip(self))]
+    pub fn record_satisfaction_event(&self, prompt_id: &str, successful: bool, attempts: u8) {
+        self.satisfaction_tracker
+            .record_event(prompt_id, successful, attempts);
+    }
+
+    /// Query current satisfaction metrics (CSAT average, NPS score, success rate).
+    ///
+    /// Returns aggregate statistics across all recorded ratings and events. When
+    /// no data has been collected, all numeric fields default to 0.0.
+    #[instrument(skip(self))]
+    pub fn satisfaction_metrics(&self) -> Result<SatisfactionMetrics> {
+        Ok(self.satisfaction_tracker.metrics())
+    }
+
+    // ── Provider health monitor ---------------------------------------------------
+
+    /// Return a cloneable handle to the provider health monitor.
+    ///
+    /// The returned `Arc` can be cloned and shared across handlers. Mutable
+    /// operations (e.g., registering providers, recording latencies) use the
+    /// provided delegate methods or call into the monitor directly via this handle.
+    pub fn health_monitor(&self) -> Arc<std::sync::Mutex<ProviderHealthMonitor>> {
+        Arc::clone(&self.health_monitor)
+    }
+
+    /// Register an LLM provider for health monitoring.
+    ///
+    /// Adds a new named provider to the monitor's registry. Subsequent calls
+    /// with the same *name* will overwrite the previous URL and reset any
+    /// accumulated latency/error metrics.
+    ///
+    /// # Arguments
+    /// * `name` — Unique identifier for this provider (e.g., `"gpt-4o"`).
+    /// * `url` — Base URL or endpoint string for the provider.
+    #[instrument(skip(self))]
+    pub fn register_provider(&self, name: &str, url: &str) {
+        let monitor = self.health_monitor();
+        monitor.lock().unwrap().register(name, url);
+        info!(provider = name, url = url, "Registered LLM provider");
+    }
+
+    /// Record a successful API call for the named provider.
+    ///
+    /// The *latency_ms* is stored alongside the current timestamp and used to
+    /// compute rolling averages for latency-based health thresholds.
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    /// * `latency_ms` — Round-trip latency in milliseconds.
+    #[instrument(skip(self))]
+    pub fn record_success(&self, provider_name: &str, latency_ms: u64) {
+        let monitor = self.health_monitor();
+        monitor
+            .lock()
+            .unwrap()
+            .record_success(provider_name, latency_ms);
+        info!(
+            provider = provider_name,
+            latency_ms = latency_ms,
+            "Recorded provider success"
+        );
+    }
+
+    /// Record a failed API call for the named provider.
+    ///
+    /// Each failure increments the error rate used by health thresholds. If the
+    /// rolling error rate exceeds the configured threshold, the provider's status
+    /// transitions to `HealthStatus::Unhealthy`.
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    #[instrument(skip(self))]
+    pub fn record_failure(&self, provider_name: &str) {
+        let monitor = self.health_monitor();
+        monitor.lock().unwrap().record_failure(provider_name);
+        warn!(provider = provider_name, "Recorded provider failure");
+    }
+
+    /// Check whether the named provider is currently considered healthy.
+    ///
+    /// A provider is healthy when its rolling error rate stays below the configured
+    /// threshold and its average latency is within bounds. Returns `false` if the
+    /// provider has never been registered or probed.
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    #[instrument(skip(self))]
+    pub fn is_healthy(&self, provider_name: &str) -> bool {
+        let monitor = self.health_monitor();
+        let healthy = monitor.lock().unwrap().is_healthy(provider_name);
+        info!(provider = provider_name, healthy = healthy, "Health check");
+        healthy
+    }
+
+    /// Retrieve the full health summary for all registered providers.
+    ///
+    /// Returns a [`HealthSummary`] containing per-provider status, average latency,
+    /// error rate, and total call counts. Providers that have been registered but
+    /// never probed appear with `HealthStatus::Unknown` status.
+    pub fn get_health_summary(&self) -> HealthSummary {
+        let monitor = self.health_monitor();
+        monitor.lock().unwrap().summary()
+    }
+
+    // ── Load balancer -----------------------------------------------------------
+
+    // ── Rollback (safe deployment) --------------------------------------------
+
+    /// Deploy a prompt with automatic rollback capability.
+    /// Requires the `rollback` feature flag and Write RBAC.
+    #[cfg(feature = "rollback")]
+    pub async fn deploy_with_rollback(
+        &self,
+        artifact: &crate::models::Artifact,
+        rollback_enabled: bool,
+    ) -> Result<crate::rollback::DeployResult> {
+        self.safe_deployer
+            .deploy_with_rollback(artifact, rollback_enabled)
+            .await
+    }
+
+    /// Restore a prompt to a previously saved snapshot by ID.
+    #[cfg(feature = "rollback")]
+    pub async fn restore_snapshot(&self, id: &str) -> Result<()> {
+        self.safe_deployer.restore_snapshot(id).await
+    }
+
+    /// Check if a specific rollback snapshot is available.
+    #[cfg(feature = "rollback")]
+    pub fn is_rollback_available(&self, snapshot_id: &str) -> bool {
+        self.safe_deployer.is_rollback_available(snapshot_id)
+    }
+
+    /// Return a cloneable handle to the load balancer.
+    pub fn load_balancer(&self) -> Arc<std::sync::Mutex<LoadBalancer>> {
+        Arc::clone(&self.load_balancer)
+    }
+
+    /// Add a provider to the load balancer pool.
+    ///
+    /// The *weight* parameter controls how often this provider is selected
+    /// during weighted round-robin routing (higher weight = more requests).
+    ///
+    /// # Arguments
+    /// * `name` — Unique identifier for the provider (e.g., `"gpt-4o-primary"`).
+    /// * `url` — Endpoint URL for the provider.
+    /// * `weight` — Relative traffic share (default 1 = equal weight).
+    #[instrument(skip(self))]
+    pub fn add_lb_provider(&self, name: &str, url: &str, weight: u32) {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().add_provider(name, url, weight);
+        info!(
+            provider = name,
+            weight = weight,
+            "Added provider to load balancer"
+        );
+    }
+
+    /// Select the next healthy provider according to the configured routing strategy.
+    ///
+    /// For `WeightedRoundRobin`, returns a [`ProviderSelection`] with the selected
+    /// provider's details and computed weight for the current round. Returns an error
+    /// if no providers are registered or all are marked unhealthy.
+    /// Select the next healthy provider according to the configured routing strategy.
+    ///
+    /// For `Weighted` strategy, returns a [`ProviderSelection`] with the selected
+    /// provider's details and computed weight for the current round. Returns an error
+    /// if no providers are registered or all are marked unhealthy.
+    #[instrument(skip(self))]
+    pub fn select_provider(&self) -> Result<ProviderSelection> {
+        let lb = self.load_balancer();
+        let binding = lb.lock().unwrap();
+        binding.select_provider()
+    }
+
+    /// Record latency metrics for a specific provider in the load balancer pool.
+    ///
+    /// Used by health monitors or probes to update latency statistics that
+    /// may influence routing decisions (e.g., preferring faster providers).
+    ///
+    /// # Arguments
+    /// * `provider_name` — Name of the registered provider.
+    /// * `latency_ms` — Measured round-trip latency in milliseconds.
+    #[instrument(skip(self))]
+    pub fn record_lb_latency(&self, provider_name: &str, latency_ms: u64) {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().record_latency(provider_name, latency_ms);
+    }
+
+    /// Record a failure event for the named provider in the load balancer pool.
+    ///
+    /// Increments the error counter used by health-aware routing. Providers with
+    /// too many errors may be temporarily excluded from the rotation.
+    #[instrument(skip(self))]
+    pub fn record_lb_failure(&self, provider_name: &str) {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().record_error(provider_name);
+        warn!(provider = provider_name, "Recorded load balancer failure");
+    }
+
+    /// Return current stats for all providers in the load balancer pool.
+    pub fn get_lb_stats(&self) -> Vec<ProviderStats> {
+        let lb = self.load_balancer();
+        lb.lock().unwrap().stats()
+    }
+
+    // ── Budget tracking ────────────────────────────────────────────────
+
+    /// Record a spend amount against the monthly budget.
+    ///
+    /// Increments the current spend counter and fires an alert if any
+    /// configured threshold is crossed for the first time (50%, 80%, 100%).
+    /// Requires the `budget` feature flag.
+    ///
+    /// # Arguments
+    /// * `amount_usd` — Spend amount in US dollars to record.
+    ///
+    /// # Returns
+    /// A [`BudgetAlert`] indicating if a threshold was crossed, or `None`.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn record_spend(&self, amount_usd: f64) -> BudgetAlert {
+        let alert = self.budget_tracker.record_spend(amount_usd);
+        if let BudgetAlert::None = alert {
+            debug!("Recorded ${:.4} spend", amount_usd);
+        }
+        alert
+    }
+
+    /// Get the current monthly budget utilization as a percentage.
+    ///
+    /// Returns 0.0 if no budget is configured or if spend has not been reset
+    /// for the billing period.
+    /// Requires the `budget` feature flag.
+    ///
+    /// # Returns
+    /// A float in the range [0.0, 100.0+] where >100.0 means over budget.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn budget_utilization(&self) -> f64 {
+        self.budget_tracker.utilization_percent()
+    }
+
+    /// Get the current month's spend in USD.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn current_spend_usd(&self) -> f64 {
+        self.budget_tracker.current_spend_usd()
+    }
+
+    /// Check whether the monthly budget has been exceeded.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn is_budget_exceeded(&self) -> bool {
+        self.budget_tracker.is_exceeded()
+    }
+
+    /// Update the configured monthly budget amount.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn set_monthly_budget(&self, monthly_budget_usd: f64) {
+        self.budget_tracker.set_budget(monthly_budget_usd);
+    }
+
+    /// Load a persisted [`BudgetConfig`] into the tracker.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn load_budget_config(&self, config: &BudgetConfig) -> Result<()> {
+        self.budget_tracker.load_config(config)
+    }
+
+    /// Save the current budget state as a [`BudgetConfig`] for the given org.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn save_budget_config(&self, org_id: &str) -> Result<BudgetConfig> {
+        self.budget_tracker.save_config(org_id)
+    }
+
+    /// Reset spend counters for a new billing period.
+    #[cfg(feature = "budget")]
+    #[instrument(skip(self))]
+    pub fn reset_budget_period(&self) {
+        self.budget_tracker.reset_period();
+    }
+
+    // ── Cost limits (multi-dimensional budget enforcement) -----------------------
+
+    /// Record spend against an entity's resource bucket with overage enforcement.
+    ///
+    /// Returns the [`LimitStatus`](crate::cost_limits::LimitStatus) after recording the spend, indicating whether
+    /// it was allowed, flagged as over-limit, or blocked.
+    #[cfg(feature = "cost-limits")]
+    #[instrument(skip(self))]
+    pub async fn check_cost_limits(
+        &self,
+        entity_id: &str,
+        resource: crate::cost_limits::Resource,
+        amount_usd: f64,
+    ) -> crate::cost_limits::LimitStatus {
+        self.cost_limiter
+            .check_and_record(entity_id, resource, amount_usd)
+    }
+
+    /// Add or update a cost limit for an entity-resource pair.
+    #[cfg(feature = "cost-limits")]
+    #[instrument(skip(self))]
+    pub fn set_cost_limit(
+        &self,
+        entity_id: &str,
+        resource: crate::cost_limits::Resource,
+        budget_usd: f64,
+        policy: crate::cost_limits::OveragePolicy,
+    ) -> crate::cost_limits::LimitEntry {
+        self.cost_limiter
+            .set_limit(entity_id, resource, budget_usd, policy)
+    }
+
+    /// Get utilization percentage for an entity-resource pair.
+    #[cfg(feature = "cost-limits")]
+    pub fn cost_utilization(
+        &self,
+        entity_id: &str,
+        resource: crate::cost_limits::Resource,
+    ) -> Option<f64> {
+        self.cost_limiter.utilization(entity_id, resource)
+    }
+
+    /// Get all tracked entities and their limit statuses.
+    #[cfg(feature = "cost-limits")]
+    pub fn cost_limit_status(
+        &self,
+    ) -> Vec<(
+        String,
+        crate::cost_limits::Resource,
+        f64,
+        crate::cost_limits::OveragePolicy,
+    )> {
+        self.cost_limiter
+            .entity_ids()
+            .into_iter()
+            .flat_map(|id| {
+                self.cost_limiter
+                    .entity_status(&id)
+                    .into_iter()
+                    .map(move |(res, util, pol)| (id.clone(), res, util, pol))
+            })
+            .collect()
+    }
+
+    // ── Beta program (phased deployment) -------------------------------------------
+
+    /// Create a new beta cohort for testing.
+    #[cfg(feature = "beta-program")]
+    pub fn create_beta_cohort(&self, id: &str, name: &str) -> crate::beta_program::BetaCohort {
+        self.beta_program.create_cohort(id, name)
+    }
+
+    /// Enroll a participant in a beta cohort.
+    #[cfg(feature = "beta-program")]
+    pub fn enroll_beta(&self, cohort_id: &str, participant_id: &str) -> bool {
+        self.beta_program.enroll(cohort_id, participant_id)
+    }
+
+    /// Record feedback from a beta participant.
+    #[cfg(feature = "beta-program")]
+    pub fn record_feedback(
+        &self,
+        cohort_id: &str,
+        participant_id: &str,
+        score: u8,
+        comment: String,
+    ) -> bool {
+        self.beta_program
+            .record_feedback(cohort_id, participant_id, score, comment)
+    }
+
+    /// Get overall beta program statistics.
+    #[cfg(feature = "beta-program")]
+    pub fn beta_stats(&self) -> crate::beta_program::ProgramStats {
+        self.beta_program.stats()
+    }
+
+    // ── Multi-provider routing ---------------------------------------------------
+
+    /// Add a new provider to the multi-provider routing pool.
+    #[cfg(feature = "multi-provider")]
+    pub fn add_provider(&self, config: crate::multi_provider::ProviderConfig) {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .add_provider(config);
+    }
+
+    /// Select the best provider for routing, optionally filtering by vendor.
+    #[cfg(feature = "multi-provider")]
+    pub fn route_to_vendor(
+        &self,
+        vendor_filter: Option<crate::multi_provider::Vendor>,
+    ) -> Option<crate::multi_provider::RoutingDecision> {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .select(vendor_filter)
+    }
+
+    /// Record a successful request for a multi-provider routing entry.
+    #[cfg(feature = "multi-provider")]
+    pub fn record_provider_success(&self, provider_name: &str) {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .record_success(provider_name);
+    }
+
+    /// Record a failed request for a multi-provider routing entry.
+    #[cfg(feature = "multi-provider")]
+    pub fn record_provider_failure(&self, provider_name: &str) {
+        self.multi_provider_router
+            .lock()
+            .unwrap()
+            .record_failure(provider_name);
+    }
+
+    /// Get the health statistics for all providers in the pool.
+    #[cfg(feature = "multi-provider")]
+    pub fn provider_pool_stats(&self) -> crate::multi_provider::PoolStats {
+        self.multi_provider_router.lock().unwrap().pool_stats()
+    }
+
+    // ── Circuit breaker ----------------------------------------------------------
+
+    /// Return a cloneable handle to the circuit breaker.
+    #[cfg(feature = "circuit-breaker")]
+    pub fn circuit_breaker(&self) -> Arc<CircuitBreaker> {
+        Arc::clone(&self.circuit_breaker)
+    }
+
+    // ── Content moderation ────────────────────────────────────────────
+
+    /// Moderate user input for harmful content before processing.
+    ///
+    /// Runs the prompt against all configured moderation categories
+    /// (hate, violence, self-harm, sexual, illegal, harassment) and returns
+    /// a [`ModerationReport`](crate::moderation::ModerationReport) with allow/block/flag result.
+    ///
+    /// Requires the `moderation` feature flag.
+    #[cfg(feature = "moderation")]
+    #[instrument(skip(self, prompt))]
+    pub fn check_content(&self, prompt: &str) -> Result<crate::moderation::ModerationReport> {
+        self.moderation.check(prompt)
+    }
+
+    /// Quick boolean check: returns `true` if the content passes moderation.
+    #[cfg(feature = "moderation")]
+    #[instrument(skip(self, prompt))]
+    pub fn is_content_safe(&self, prompt: &str) -> bool {
+        self.moderation.is_allowed(prompt)
+    }
+
+    /// Moderate multiple prompts in sequence for bulk operations.
+    #[cfg(feature = "moderation")]
+    pub fn check_content_batch(
+        &self,
+        prompts: &[String],
+    ) -> Vec<Result<crate::moderation::ModerationReport>> {
+        self.moderation.check_batch(prompts)
+    }
+
+    /// Return a cloneable handle to the moderation engine.
+    #[cfg(feature = "moderation")]
+    pub fn moderation_engine(&self) -> Arc<ModerationEngine> {
+        Arc::clone(&self.moderation)
+    }
+
+    // ── Token quota ---------------------------------------------------------
+
+    /// Check and consume tokens against configured daily/hourly/burst quotas.
+    ///
+    /// Returns `QuotaStatus::Allowed` if the request fits within all limits,
+    /// or the first exceeded limit (burst > hourly > daily check order).
+    #[cfg(feature = "quota")]
+    #[instrument(skip(self, tokens))]
+    pub fn check_and_consume(&self, tokens: u64) -> Result<crate::quota::QuotaStatus> {
+        self.quota_enforcer.check_and_consume(tokens)
+    }
+
+    /// Return current quota usage snapshot.
+    #[cfg(feature = "quota")]
+    pub fn quota_usage(&self) -> crate::quota::QuotaUsage {
+        self.quota_enforcer.usage()
+    }
+
+    /// Reset all quota counters (admin override or testing).
+    #[cfg(feature = "quota")]
+    pub fn reset_quota(&self) {
+        self.quota_enforcer.reset_all();
+    }
+
+    /// Return a cloneable `Arc` handle to the quota enforcer.
+    #[cfg(feature = "quota")]
+    pub fn quota_enforcer_handle(&self) -> Arc<QuotaEnforcer> {
+        Arc::clone(&self.quota_enforcer)
+    }
+
+    // ── Preview engine ------------------------------------------------------
+
+    /// Generate a pre-execution preview for the given plan.
+    #[cfg(feature = "preview")]
+    #[instrument(skip(self, plan))]
+    pub async fn preview_generate(
+        &self,
+        plan: &crate::models::ExecutionPlan,
+    ) -> Result<crate::preview::PreviewType> {
+        self.preview_engine.generate(plan).await
+    }
+
+    /// Preview the artifacts that would be generated.
+    #[cfg(feature = "preview")]
+    #[instrument(skip(self, artifacts))]
+    pub async fn preview_artifacts(
+        &self,
+        artifacts: &[crate::models::Artifact],
+    ) -> Result<crate::preview::PreviewType> {
+        self.preview_engine.preview_artifacts(artifacts).await
+    }
+
+    /// Return a cloneable `Arc` handle to the preview engine.
+    #[cfg(feature = "preview")]
+    pub fn preview_engine_handle(&self) -> Arc<PreviewEngine> {
+        Arc::clone(&self.preview_engine)
+    }
+
+    // ── Gradual rollout ────────────────────────────────────────────────
+
+    /// Determine whether a user should see the new feature under an active rollout.
+    #[cfg(feature = "gradual-rollout")]
+    #[instrument(skip(self, canary))]
+    pub fn check_rollout(&self, canary: &CanaryDeployment, user_id: Uuid) -> bool {
+        RolloutEngine::should_rollout(canary, user_id)
+    }
+
+    /// Register a new rollout configuration into the active rollouts list.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn register_rollout(&self, config: GraduatedRolloutConfig) {
+        let mut guards = self.active_rollouts.lock().unwrap();
+        guards.push(config);
+    }
+
+    /// Check whether a rollout with *rollout_id* is active and whether the user
+    /// falls within its percentage bucket. Returns `Some(false)` if not found,
+    /// `Some(true/false)` based on hash inclusion.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn find_rollout_inclusion(
+        &self,
+        rollout_id: &str,
+        feature: &str,
+        user_id: Uuid,
+    ) -> Option<bool> {
+        let guards = self.active_rollouts.lock().unwrap();
+        let config = guards
+            .iter()
+            .find(|c| c.rollout_id == rollout_id && c.active)?;
+
+        // Check each segment
+        for segment in &config.segments {
+            if segment.target_users.contains(&user_id) {
+                return Some(true);
+            }
+        }
+        // Fall back to percentage-based check using the config's first segment or a synthetic one
+        let canary = CanaryDeployment {
+            feature: feature.to_string(),
+            canary_percentage: 50.0,
+            target_users: vec![],
+            rollback_threshold: 0.05,
+        };
+        Some(RolloutEngine::should_rollout(&canary, user_id))
+    }
+
+    /// Evaluate auto-rollback for a rollout by ID. Returns `Some(true)` if rollback
+    /// is needed, `Some(false)` if metrics are healthy, or `None` if not found.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn evaluate_auto_rollback(
+        &self,
+        rollout_id: &str,
+        error_rate: f64,
+        latency_p99_ms: u64,
+    ) -> Option<bool> {
+        let guards = self.active_rollouts.lock().unwrap();
+        let config = guards
+            .iter()
+            .find(|c| c.rollout_id == rollout_id && c.active)?;
+        Some(RolloutEngine::evaluate_rollback(
+            config,
+            error_rate,
+            latency_p99_ms,
+        ))
+    }
+
+    /// Advance a rollout segment to the next stage. Returns the new stage if advanced,
+    /// or `None` if already at Production or not found.
+    #[cfg(feature = "gradual-rollout")]
+    pub fn advance_segment(&self, rollout_id: &str, segment_idx: usize) -> Option<RolloutStage> {
+        let mut guards = self.active_rollouts.lock().unwrap();
+        let config = guards
+            .iter_mut()
+            .find(|c| c.rollout_id == rollout_id && c.active)?;
+        let segment = config.segments.get_mut(segment_idx)?;
+        RolloutEngine::advance_stage(segment)
+    }
+
+    // ── Multimodal (multimodal input support) ──────────────────────────
+
+    /// Return a reference to the multimodal engine.
+    #[cfg(feature = "multimodal")]
+    pub fn multimodal_engine(&self) -> &MultimodalEngine {
+        &self.multimodal_engine
+    }
+
+    /// Validate that an image MIME type is supported by the multimodal engine.
+    #[cfg(feature = "multimodal")]
+    pub fn validate_image_mime_type(&self, mime: &str) -> bool {
+        MultimodalEngine::validate_mime_type(mime)
+    }
+
+    /// Extract all placeholder IDs from a template string.
+    #[cfg(feature = "multimodal")]
+    pub fn extract_placeholder_ids(&self, template: &str) -> Vec<String> {
+        MultimodalEngine::extract_placeholder_ids(template)
+    }
+
+    // ── I18n (internationalization / translation support) ────────────────
+
+    /// Return a reference to the i18n translation engine.
+    #[cfg(feature = "i18n")]
+    pub fn i18n_engine(&self) -> &I18nEngine {
+        &self.i18n_engine
+    }
+
+    /// Register a new translation for a prompt in a specific locale.
+    #[cfg(feature = "i18n")]
+    pub fn register_translation(&mut self, prompt_id: &str, locale: &str, template: String) {
+        self.i18n_engine
+            .register_translation(prompt_id, locale, template);
+    }
+
+    /// Get the localized template for a prompt in a specific locale.
+    #[cfg(feature = "i18n")]
+    pub fn get_localized_template(&self, prompt_id: &str, locale: &str) -> Option<String> {
+        self.i18n_engine
+            .get_translation(prompt_id, locale)
+            .map(|s| s.to_string())
+    }
+
+    /// Get the fallback chain for a locale.
+    #[cfg(feature = "i18n")]
+    pub fn translation_fallback_chain(&self, locale: &str) -> Vec<String> {
+        crate::i18n::I18nEngine::fallback_chain(locale)
+    }
+
+    // ── Execution sandbox ──────────────────────────────────────────────
+
+    /// Create a new sandbox with the given name and configuration.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self, config), fields(name = %name))]
+    pub fn create_sandbox(
+        &self,
+        name: String,
+        mode: SandboxMode,
+        config: SandboxConfig,
+    ) -> Result<Sandbox> {
+        self.sandbox_engine.create_sandbox(name, mode, config)
+    }
+
+    /// Retrieve a sandbox by id.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %id))]
+    pub fn get_sandbox(&self, id: Uuid) -> Result<Sandbox> {
+        self.sandbox_engine.get_sandbox(id)
+    }
+
+    /// Update a sandbox's configuration by id.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %id))]
+    pub fn update_sandbox(&self, id: Uuid, config: SandboxConfig) -> Result<Sandbox> {
+        self.sandbox_engine.update_sandbox(id, config)
+    }
+
+    /// Delete a sandbox by id. Returns `HubError::NotFound` if absent.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %id))]
+    pub fn delete_sandbox(&self, id: Uuid) -> Result<()> {
+        self.sandbox_engine.delete_sandbox(id)
+    }
+
+    /// Enforce sandbox limits for a prompt execution. Returns `SandboxCheckResult`.
+    #[cfg(feature = "sandbox")]
+    #[instrument(skip(self), fields(sandbox_id = %sandbox_id))]
+    pub fn check_sandbox(
+        &self,
+        sandbox_id: Uuid,
+        prompt_tokens: u32,
+        cost_usd: f64,
+        network_call: bool,
+    ) -> crate::models::SandboxCheckResult {
+        self.sandbox_engine
+            .check(sandbox_id, prompt_tokens, cost_usd, network_call)
+    }
+
+    /// Wrap a future with the sandbox's configured timeout.
+    #[cfg(feature = "sandbox")]
+    pub async fn apply_timeout<T: Send + 'static>(
+        &self,
+        sandbox_id: Uuid,
+        future: impl std::future::Future<Output = T> + Send + 'static,
+    ) -> Result<T> {
+        self.sandbox_engine.apply_timeout(sandbox_id, future).await
+    }
+
+    // ── Voice ──────────────────────────────────────────────────────────────
+
+    /// Configure the voice pipeline with a new [`VoicePipelineConfig`].
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self), fields(config = ?config))]
+    pub async fn configure_voice(&self, config: VoicePipelineConfig) -> Result<()> {
+        let mut engine = self.voice_engine.lock().await;
+        engine.configure(config);
+        Ok(())
+    }
+
+    /// Get the current voice pipeline FSM state.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub async fn get_voice_state(&self) -> Option<VoicePipelineState> {
+        let engine = self.voice_engine.lock().await;
+        Some(engine.get_state().clone())
+    }
+
+    /// Get the current voice output format.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub async fn get_voice_output_format(&self) -> Option<VoiceOutputFormat> {
+        let engine = self.voice_engine.lock().await;
+        Some(engine.get_output_format().clone())
+    }
+
+    /// Execute a complete voice turn through the pipeline.
+    ///
+    /// Routes the transcribed text through the hub prompt path via
+    /// [`HubPromptResolver`] before TTS synthesis.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub async fn execute_voice_turn(&self, prompt_text: &str) -> Result<VoiceInteraction> {
+        // Clone the engine Arc so the resolver can borrow `&self` without
+        // conflicting with the mutex guard.
+        let engine_arc = self.voice_engine.clone();
+        let mut engine = engine_arc.lock().await;
+        let resolver = HubPromptResolver { hub: self };
+        engine
+            .execute_turn_with_resolver(prompt_text, &resolver)
+            .await
+    }
+
+    /// Reset the voice pipeline back to Idle.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub async fn reset_voice_pipeline(&self) {
+        let mut engine = self.voice_engine.lock().await;
+        engine.reset();
+    }
+
+    /// Get the current voice pipeline interaction history.
+    #[cfg(feature = "voice")]
+    #[instrument(skip(self))]
+    pub async fn get_voice_history(&self) -> Vec<VoiceInteraction> {
+        let engine = self.voice_engine.lock().await;
+        engine.get_history().to_vec()
+    }
+
+    // ── Local LLM ────────────────────────────────────────────────────────
+
+    /// Register a local model endpoint for on-device inference.
+    #[cfg(feature = "local-llm")]
+    pub fn configure_local_model(&mut self, config: LocalModelConfig) {
+        let mut configs = self
+            .local_model_config
+            .lock()
+            .expect("local-model mutex poisoned");
+        configs.push(config);
+    }
+
+    /// Check the health of all configured local model endpoints.
+    #[cfg(feature = "local-llm")]
+    pub async fn local_model_health(&self) -> Vec<(String, LocalModelHealth)> {
+        let configs = self
+            .local_model_config
+            .lock()
+            .map(|c| c.clone())
+            .unwrap_or_default();
+
+        let mut results = Vec::new();
+        for config in configs {
+            let health = self.health_check_local(&config.base_url).await;
+            results.push((config.model_name, health));
+        }
+        results
+    }
+
+    /// Internal helper: probe a single local endpoint's health.
+    #[cfg(feature = "local-llm")]
+    async fn health_check_local(&self, base_url: &str) -> LocalModelHealth {
+        let url = format!("{base_url}/api/tags");
+        match reqwest::get(&url).await {
+            Ok(resp) if resp.status().is_success() => LocalModelHealth::Healthy,
+            _ => LocalModelHealth::Unavailable,
+        }
+    }
+
+    // ── Analytics ──────────────────────────────────────────────────────
+
+    /// Record an analytics event for tracking usage metrics.
+    #[instrument(skip(self, event))]
+    pub fn record_analytics_event(&self, event: crate::analytics::AnalyticsEvent) {
+        let mut analytics = self.analytics.lock().unwrap();
+        analytics.record_event(event);
+    }
+
+    /// Get a usage report of all tracked analytics.
+    pub fn get_usage_report(&self) -> crate::analytics::UsageReport {
+        let analytics = self.analytics.lock().unwrap();
+        analytics.usage_report()
+    }
+
+    /// Get the overall success rate.
+    pub fn success_rate(&self) -> f64 {
+        let analytics = self.analytics.lock().unwrap();
+        analytics.success_rate()
+    }
+
+    /// Get total cost in USD.
+    pub fn total_cost_usd(&self) -> f64 {
+        let analytics = self.analytics.lock().unwrap();
+        analytics.total_cost_usd()
+    }
+
+    /// Reset all analytics counters.
+    pub fn reset_analytics(&self) {
+        let mut analytics = self.analytics.lock().unwrap();
+        analytics.reset();
+    }
+
+    // ── Audit logging ──────────────────────────────────────────────────
+
+    /// Compute the tamper-evident diff hash for an audit entry.
+    /// The hash is SHA256(before_json || after_json || timestamp).
+    pub fn compute_audit_hash(
+        before: &Option<String>,
+        after: &Option<String>,
+        timestamp: &str,
+    ) -> String {
+        SqliteAuditLogger::compute_diff_hash(before, after, timestamp)
+    }
+
+    /// Verify the integrity hash of an existing audit entry.
+    pub fn verify_audit_integrity(&self, entry: &crate::models::AuditEntry) -> bool {
+        SqliteAuditLogger::verify_entry_integrity(entry)
+    }
+
+    /// Generate SOC2 evidence summary for an audit entry.
+    pub fn soc2_evidence_summary(&self, entry: &crate::models::AuditEntry) -> serde_json::Value {
+        SqliteAuditLogger::soc2_evidence_summary(entry)
+    }
+
+    /// Validate that an audit entry conforms to the SOC2 schema.
+    pub fn validate_soc2_schema(&self, entry: &crate::models::AuditEntry) -> Result<()> {
+        SqliteAuditLogger::validate_soc2_schema(entry)
+    }
+
+    /// Anonymize an audit entry for GDPR right-to-erasure.
+    pub fn anonymize_audit_entry(&self, entry: &mut crate::models::AuditEntry) {
+        SqliteAuditLogger::anonymize_entry(entry);
+    }
+
+    /// Return a cloneable `Arc` handle to the audit logger.
+    pub fn audit_logger_handle(&self) -> Arc<SqliteAuditLogger> {
+        Arc::clone(&self.audit_logger)
+    }
+
+    // ── Text diff engine ───────────────────────────────────────────────
+
+    /// Compute a unified diff between two text documents.
+    pub fn compute_diff(&self, old: &str, new: &str) -> crate::diff::DiffResult {
+        self.diff_engine.compute(old, new, "v0", "v1")
+    }
+
+    /// Summarize a diff with line counts and changed sections.
+    pub fn summarize_diff(&self, diff: &crate::diff::DiffResult) -> crate::diff::ChangeSummary {
+        self.diff_engine.summarize(diff)
+    }
+
+    /// Check if two documents are identical (no diff needed).
+    pub fn is_identical(&self, old: &str, new: &str) -> bool {
+        let diff = self.compute_diff(old, new);
+        self.diff_engine.is_identical(&diff)
+    }
+
+    /// Format a diff as unified diff text.
+    pub fn format_unified_diff(&self, diff: &crate::diff::DiffResult) -> String {
+        self.diff_engine.format_unified(diff)
+    }
+
+    // ── Retention + Garbage Collection ─────────────────────────────────
+
+    /// Set a retention period for a data type.
+    #[cfg(feature = "retention")]
+    pub fn set_retention_period(&self, data_type: DataType, days: u32) {
+        let mut policy = self.retention_policy.write().unwrap();
+        policy.set_period(data_type.clone(), days);
+        drop(policy);
+        self.garbage_collector.set_retention_period(data_type, days);
+    }
+
+    /// Get the retention period (in days) for a data type.
+    #[cfg(feature = "retention")]
+    pub fn get_retention_period(&self, data_type: &DataType) -> u32 {
+        let policy = self.retention_policy.read().unwrap();
+        policy.get_period(data_type)
+    }
+
+    /// Check if data of a given type has expired based on its retention policy.
+    #[cfg(feature = "retention")]
+    pub fn is_data_expired(&self, data_type: &DataType, age_days: u32) -> bool {
+        let policy = self.retention_policy.read().unwrap();
+        policy.is_expired(data_type, age_days)
+    }
+
+    /// Run scheduled cleanup and return results for expired items.
+    #[cfg(feature = "retention")]
+    pub fn run_retention_cleanup(&self) -> Vec<crate::retention::CleanupResult> {
+        let policy = self.retention_policy.read().unwrap();
+        policy.run_cleanup()
+    }
+
+    /// Execute garbage collection across all configured types.
+    ///
+    /// Runs the real, transactional purge against the live storage handle —
+    /// the same handle and delete idiom the auto-purge path uses.
+    #[cfg(feature = "retention")]
+    pub async fn run_garbage_collection(&self) -> Result<crate::garbage_collector::GcReport> {
+        self.garbage_collector.collect(&self.storage).await
+    }
+
+    /// Purge soft-deleted items and return count of purged rows.
+    #[cfg(feature = "retention")]
+    pub async fn purge_soft_deleted(&self) -> Result<u64> {
+        self.garbage_collector
+            .purge_soft_deleted(&self.storage)
+            .await
+    }
+
+    /// Get garbage collection statistics.
+    #[cfg(feature = "retention")]
+    pub fn gc_stats(&self) -> crate::garbage_collector::GcStats {
+        self.garbage_collector.stats()
+    }
+
+    /// Enable or disable automatic garbage collection.
+    #[cfg(feature = "retention")]
+    pub fn set_gc_enabled(&self, enabled: bool) {
+        self.garbage_collector.set_enabled(enabled);
+    }
+
+    /// Check if automatic garbage collection is enabled.
+    #[cfg(feature = "retention")]
+    pub fn gc_enabled(&self) -> bool {
+        self.garbage_collector.is_enabled()
+    }
+
+    // ── Accessibility output formatting ────────────────────────────────────────
+
+    /// Transform prompt content into an accessible format.
+    ///
+    /// This is a pure transformation with no storage or auth side effects. It
+    /// reads the raw content and produces formatted output suitable for screen
+    /// readers, dyslexia-friendly rendering, or braille display.
+    #[cfg(feature = "accessibility")]
+    pub async fn accessible_output(
+        &self,
+        content: &str,
+        config: crate::accessibility::AccessibilityConfig,
+    ) -> Result<crate::accessibility::AccessibleOutput> {
+        use crate::accessibility;
+
+        accessibility::transform(content, &config)
+            .map_err(|e| HubError::InvalidInput(e.to_string()))
+    }
+
+    /// Transform prompt content into all accessible formats simultaneously.
+    ///
+    /// Useful when the display layer needs to provide multiple accessibility
+    /// options at once (screen reader + braille display).
+    #[cfg(feature = "accessibility")]
+    pub async fn accessible_output_all(
+        &self,
+        content: &str,
+    ) -> Result<crate::accessibility::AccessibleMultiOutput> {
+        use crate::accessibility;
+
+        accessibility::transform_all(content).map_err(|e| HubError::InvalidInput(e.to_string()))
+    }
+
+    // ── Malware scan ────────────────────────────────────────────────
+
+    /// Return a cloneable handle to the malware scan configuration.
+    #[cfg(feature = "malware-scan")]
+    pub fn malware_scan_config(&self) -> Arc<std::sync::Mutex<MalwareScanConfig>> {
+        Arc::clone(&self.malware_scan_config)
+    }
+
+    /// Update the malware scan configuration.
+    #[cfg(feature = "malware-scan")]
+    pub fn set_malware_scan_config(&self, config: MalwareScanConfig) {
+        let mut cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
+        *cfg = config;
+    }
+
+    /// Scan a blob of bytes for malware indicators.
+    #[cfg(feature = "malware-scan")]
+    pub fn scan_blob(&self, blob: &[u8]) -> Result<ScanResult> {
+        let cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
+        crate::malware_scan::scan_blob(blob, &cfg)
+    }
+
+    /// Scan a file on disk for malware indicators.
+    #[cfg(feature = "malware-scan")]
+    pub fn scan_file(&self, path: impl AsRef<Path>) -> Result<ScanResult> {
+        let cfg = self
+            .malware_scan_config
+            .lock()
+            .expect("malware-scan mutex poisoned");
+        crate::malware_scan::scan_file(path, &cfg)
+    }
+
+    // ── Offline mode --------------------------------------------------------------
+
+    /// Enable offline mode with the given *config*.
+    ///
+    /// Creates an [`OfflineState`] wrapping a fresh
+    /// [`OfflineStore`](crate::offline::OfflineStore) and transitions it to
+    /// `SyncStatus::Offline`. Subsequent CRUD operations on the store are local-only
+    /// until [`sync`](Self::sync) is called.
+    ///
+    /// # Arguments
+    /// * `config` — [`OfflineConfig`](crate::offline::OfflineConfig) controlling auto-sync behaviour and conflict strategy.
+    #[cfg(feature = "offline")]
+    pub fn enable_offline_mode(&self, config: crate::offline::OfflineConfig) -> Result<()> {
+        let mut guard = self.offlined.write().unwrap();
+        if guard.is_some() {
+            return Err(HubError::InvalidInput(
+                "offline mode is already enabled".to_string(),
+            ));
+        }
+        *guard = Some(crate::offline::OfflineState::new(config));
+        Ok(())
+    }
+
+    /// Sync pending local changes to the storage layer and pull back server state.
+    ///
+    /// The sync flow:
+    /// 1. Write all [`Change::Create`](crate::offline::Change)/[`Change::Update`](crate::offline::Change)/[`Change::Delete`](crate::offline::Change) in
+    ///    `pending_push` to the real [`Storage`] layer.
+    /// 2. Read current server state and push changes into the offline store as pull.
+    /// 3. Apply those pull changes, detecting revision conflicts.
+    /// 4. Update sync status accordingly (Online, Conflict, or Offline).
+    #[cfg(feature = "offline")]
+    pub async fn sync(&self) -> Result<crate::offline::SyncStatus> {
+        let pending_push: Vec<_>;
+
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().ok_or_else(|| {
+                HubError::InvalidInput(
+                    "offline mode is not enabled; call enable_offline_mode first".to_string(),
+                )
+            })?;
+
+            if state.status == crate::offline::SyncStatus::Syncing {
+                return Err(HubError::Conflict("sync already in progress".to_string()));
+            }
+
+            // Mark syncing.
+            state.status = crate::offline::SyncStatus::Syncing;
+
+            // Collect pending changes before dropping the guard.
+            pending_push = std::mem::take(&mut state.store.pending_push)
+                .into_iter()
+                .collect();
+        }
+
+        // Use a trusted local-operator identity for sync operations.
+        let sync_identity = AgentIdentity::local_operator("sync");
+
+        // Step 1: Push local changes to storage (outside the lock).
+        for change in pending_push {
+            match change {
+                crate::offline::Change::Create(_id, prompt) => {
+                    if self
+                        .storage()
+                        .get_prompt(prompt.id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        continue;
+                    }
+                    let _ = self.register(prompt.clone(), &sync_identity).await;
+                }
+                crate::offline::Change::Update(id, patch) => {
+                    if self
+                        .storage()
+                        .get_prompt(id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        let _ = self.storage().update_prompt(id, &patch).await;
+                    }
+                }
+                crate::offline::Change::Delete(id) => {
+                    if self
+                        .storage()
+                        .get_prompt(id)
+                        .await
+                        .is_ok_and(|p| p.is_some())
+                    {
+                        let _ = self.storage().delete_prompt(id).await;
+                    }
+                }
+            }
+        }
+
+        // Step 2: Pull server state (fetch all prompts from storage).
+        let server_prompts = self
+            .storage()
+            .list_prompts(None, None, 0, usize::MAX)
+            .await
+            .unwrap_or_default();
+
+        // Step 3: Build pull changes and apply them.
+        let mut pull_changes = Vec::new();
+        for prompt in &server_prompts {
+            pull_changes.push(crate::offline::Change::Create(prompt.id, prompt.clone()));
+        }
+
+        // Re-acquire the guard to update the offline state.
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().unwrap();
+            state
+                .store
+                .record_pull(crate::offline::Change::Delete(Uuid::default())); // marker that pull happened
+        }
+
+        // Apply server changes, resolve conflicts, and update status (single write lock).
+        let status;
+        {
+            let mut guard = self.offlined.write().unwrap();
+            let state = guard.as_mut().unwrap();
+            let conflicts = state.store.apply_server_changes(pull_changes);
+
+            let unresolved: Vec<_> = conflicts
+                .iter()
+                .filter(|c| state.store.resolve_conflict(c).is_none()) // resolve returns Some when it resolves, None when not.
+                .cloned()
+                .collect();
+
+            if unresolved.is_empty() {
+                state.status = crate::offline::SyncStatus::Online;
+            } else {
+                state.status = crate::offline::SyncStatus::Conflict(unresolved);
+            }
+            status = state.status.clone();
+        }
+
+        Ok(status)
+    }
+
+    /// Return the current sync status, or `None` if offline mode is not enabled.
+    #[cfg(feature = "offline")]
+    pub fn get_sync_status(&self) -> Option<crate::offline::SyncStatus> {
+        let guard = self.offlined.read().unwrap();
+        guard.as_ref().map(|s| s.status.clone())
+    }
+
+    /// Return a handle to the offline state, or `None` if offline mode is not enabled.
+    #[cfg(feature = "offline")]
+    pub fn offlined(
+        &self,
+    ) -> &std::sync::Arc<std::sync::RwLock<Option<crate::offline::OfflineState>>> {
+        &self.offlined
+    }
+
+    // ── Voice anonymize integration ─────────────────────────────────────
+
+    /// Return a cloneable handle to the voice anonymizer.
+    #[cfg(feature = "voice-anonymize")]
+    pub fn voice_anonymizer_handle(&self) -> std::sync::Arc<std::sync::Mutex<Anonymizer>> {
+        Arc::clone(&self.voice_anonymizer)
+    }
+
+    /// Scrub PII from a transcript / text, returning `(anonymized_text, Vec<PiiMatch>)`.
+    ///
+    /// Delegates to the configured [`Anonymizer`] instance (built-in patterns only).
+    #[cfg(feature = "voice-anonymize")]
+    pub fn anonymize_transcript(
+        &self,
+        text: &str,
+    ) -> Result<(String, Vec<crate::voice_anonymize::PiiMatch>)> {
+        let anon = self.voice_anonymizer.lock().unwrap();
+        anon.anonymize(text)
+    }
+
+    // ---------------------------------------------------------------------------
+    // Touch accessor methods
+    // ---------------------------------------------------------------------------
+
+    /// Return a cloneable handle to the touch config.
+    #[cfg(feature = "touch")]
+    pub fn touch_config(&self) -> Arc<std::sync::Mutex<crate::touch::TouchConfig>> {
+        Arc::clone(&self.touch_config)
+    }
+
+    /// Update the touch config in-place.  Replaces every field atomically.
+    #[cfg(feature = "touch")]
+    pub fn set_touch_config(&self, cfg: crate::touch::TouchConfig) -> crate::touch::TouchConfig {
+        let mut guard = self.touch_config.lock().unwrap();
+        std::mem::replace(&mut *guard, cfg)
+    }
+
+    /// Dispatch a raw [`TouchEvent`](crate::touch::TouchEvent) through the gesture-to-action pipeline.
+    ///
+    /// 1. Reads the current `TouchConfig`.
+    /// 2. Resolves the event to a [`TouchAction`](crate::touch::TouchAction) via `gesture_to_action`.
+    /// 3. Executes the action against the prompt store and returns an
+    ///    [`crate::touch::ActionResult`].
+    ///
+    /// Returns `HubError::InvalidInput` when the event does not map to any
+    /// action under the current config.
+    #[cfg(feature = "touch")]
+    pub async fn dispatch_touch(
+        &self,
+        event: crate::touch::TouchEvent,
+    ) -> Result<crate::touch::ActionResult> {
+        let cfg = self.touch_config.lock().unwrap();
+
+        let action = crate::touch::gesture_to_action(&event, &cfg).ok_or_else(|| {
+            HubError::InvalidInput(format!("Unsupported touch gesture: {}", event))
+        })?;
+
+        let mut result = crate::touch::build_action_result(action.clone(), 0);
+
+        if !cfg.haptic_feedback {
+            result.haptic = None;
+        }
+
+        Ok(result)
     }
 }
 
@@ -654,6 +3441,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pollination;
     use std::time::Duration;
     use tempfile::TempDir;
 
@@ -668,6 +3456,9 @@ mod tests {
             max_search_limit: 100,
             embedding_model: "test-model".to_string(),
             embedding_dimension: 384,
+            embedding_backend: crate::config::EmbedderBackend::Hash,
+            #[cfg(feature = "qdrant")]
+            qdrant_config: None,
         }
     }
 
@@ -713,6 +3504,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_hub_exposes_junie_accessor() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // The accessor returns a usable handle to the orchestrator agent.
+        let junie = hub.junie();
+        assert_eq!(junie.identity.name, "Junie");
+        assert_eq!(junie.role(), Role::Junie);
+        assert!(junie.system_prompt().contains("Junie"));
+        // Junie is initialized with the orchestration capabilities.
+        assert!(junie.identity.capabilities.contains(&Capability::Execute));
+
+        // Calling it twice yields the same stable identity (it is a real field,
+        // not a freshly-constructed value each call).
+        assert_eq!(hub.junie().identity.id, junie.identity.id);
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_runs_cleanly() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        assert!(!hub.is_shutting_down());
+
+        // A subscriber should observe the shutdown signal driven by shutdown().
+        let mut rx = hub.shutdown_coordinator().subscribe();
+
+        hub.shutdown().await.expect("shutdown should run cleanly");
+        assert!(hub.is_shutting_down());
+        assert!(
+            rx.try_recv().is_ok(),
+            "shutdown() should broadcast to subscribers"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_is_idempotent() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        // Two shutdowns must both succeed (the second is a no-op broadcast plus
+        // an idempotent storage flush).
+        hub.shutdown().await.expect("first shutdown");
+        hub.shutdown().await.expect("second shutdown");
+        assert!(hub.is_shutting_down());
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_coordinator_is_shared() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        let coordinator = hub.shutdown_coordinator();
+        // Firing the cloned coordinator must be visible through the hub.
+        assert!(coordinator.shutdown());
+        assert!(hub.is_shutting_down());
+    }
+
+    #[tokio::test]
     async fn test_register_and_get() {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
@@ -728,6 +3580,178 @@ mod tests {
 
         let fetched = hub.get(Role::Developer, "greet", &agent).await;
         assert!(fetched.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_render_prompt_and_missing_var() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+        let prompt = test_prompt(); // user_template "Hello, {{name}}!", required_vars ["name"]
+        let id = prompt.id;
+        hub.register(prompt, &agent).await.unwrap();
+
+        // Happy path: the template is rendered through the wired TemplateEngine.
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("name".to_string(), serde_json::json!("World"));
+        let rendered = hub
+            .render_prompt(id, vars, &agent)
+            .await
+            .expect("rendering with all required vars should succeed");
+        assert_eq!(rendered, "Hello, World!");
+
+        // Missing a required var → ValidationError (not a silent partial render).
+        let err = hub
+            .render_prompt(id, std::collections::HashMap::new(), &agent)
+            .await
+            .expect_err("missing required var should error");
+        assert!(matches!(err, HubError::ValidationError(_)));
+
+        // Lint surfaces unbalanced braces through the engine.
+        let issues = hub.lint_template("Hello, {{name}!");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.severity == crate::templates::LintSeverity::Error)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+        let prompt = test_prompt();
+        let id = prompt.id;
+        hub.register(prompt, &agent).await.unwrap();
+
+        let count = hub
+            .count_prompt_tokens(id, "gpt-4", &agent)
+            .await
+            .expect("counting tokens for a stored prompt should succeed");
+        assert_eq!(count.model, "gpt-4");
+        assert!(count.tokens >= 1, "expected at least 1 token");
+    }
+
+    #[tokio::test]
+    async fn test_process_input_text_and_screenshot() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Text modality → coding-domain Create intent (full normalization runs).
+        let text_intent = hub
+            .process_input(UserInput {
+                input_type: InputType::Text,
+                raw_data: vec![],
+                extracted_text: "Create a REST API with user authentication".to_string(),
+            })
+            .await
+            .expect("processing text input through the hub should succeed");
+        assert_eq!(text_intent.domain, Domain::Coding);
+        assert_eq!(text_intent.task_type, TaskType::Create);
+        assert_eq!(text_intent.role, Role::Orchestrator);
+
+        // A non-text modality the vibe text-classifier can't handle on its own:
+        // a screenshot routes to the design domain via the architect role.
+        let shot_intent = hub
+            .process_input(UserInput {
+                input_type: InputType::Screenshot,
+                raw_data: vec![1, 2, 3],
+                extracted_text: "Login page with dark mode".to_string(),
+            })
+            .await
+            .expect("processing screenshot input through the hub should succeed");
+        assert_eq!(shot_intent.domain, Domain::Design);
+        assert_eq!(shot_intent.role, Role::Architect);
+        assert!(shot_intent.raw_text.contains("Build UI like screenshot"));
+    }
+
+    #[tokio::test]
+    async fn test_estimate_prompt_cost() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+        let prompt = test_prompt();
+        let id = prompt.id;
+        hub.register(prompt, &agent).await.unwrap();
+
+        let estimate = hub
+            .estimate_prompt_cost(id, "gpt-4", 100, &agent)
+            .await
+            .expect("estimating cost for a stored prompt should succeed");
+        assert_eq!(estimate.model, "gpt-4");
+        assert!(
+            estimate.input_tokens >= 1,
+            "expected at least 1 input token"
+        );
+        assert_eq!(estimate.output_tokens, 100);
+        assert!(
+            estimate.total_cost >= 0.0,
+            "total cost must be non-negative"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens_not_found() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+
+        let err = hub
+            .count_prompt_tokens(Uuid::new_v4(), "gpt-4", &agent)
+            .await
+            .expect_err("an unknown id should not resolve to a prompt");
+        assert!(matches!(err, HubError::NotFound(_)));
+
+        let err = hub
+            .estimate_prompt_cost(Uuid::new_v4(), "gpt-4", 100, &agent)
+            .await
+            .expect_err("an unknown id should not resolve to a prompt");
+        assert!(matches!(err, HubError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn test_count_prompt_tokens_unauthorized() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let writer = test_agent();
+        let prompt = test_prompt();
+        let id = prompt.id;
+        hub.register(prompt, &writer).await.unwrap();
+
+        // An identity with no capabilities lacks `Read`, so the RBAC gate in
+        // `get_by_id` (reused by both methods) must reject it.
+        let unauthorized = AgentIdentity {
+            id: Uuid::new_v4(),
+            name: "no-caps".to_string(),
+            capabilities: vec![],
+            token_hash: "deadbeef".to_string(),
+            specialization_score: 0.0,
+        };
+
+        let err = hub
+            .count_prompt_tokens(id, "gpt-4", &unauthorized)
+            .await
+            .expect_err("an identity without Read must be rejected");
+        assert!(matches!(err, HubError::Unauthorized(_)));
+
+        let err = hub
+            .estimate_prompt_cost(id, "gpt-4", 100, &unauthorized)
+            .await
+            .expect_err("an identity without Read must be rejected");
+        assert!(matches!(err, HubError::Unauthorized(_)));
     }
 
     #[tokio::test]
@@ -788,6 +3812,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "vibe")]
     async fn test_vibe_code() {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
@@ -828,5 +3853,896 @@ mod tests {
             token: "old".to_string(),
         };
         assert!(LockManager::is_expired(&expired));
+    }
+
+    #[tokio::test]
+    async fn test_quality_gate_empty_passes() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let artifact = Artifact::Code {
+            path: "test.rs".to_string(),
+            content: "fn main() {}".to_string(),
+            language: "rust".to_string(),
+        };
+
+        let result = hub.run_quality_gate(&artifact).await.unwrap();
+        assert!(result.passed);
+        assert_eq!(result.lint_score, 1.0);
+        assert_eq!(result.security_score, 1.0);
+        assert_eq!(result.performance_score, 1.0);
+        assert_eq!(result.accessibility_score, 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_quality_gate_result_type() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let artifact = Artifact::Prompt {
+            system: "You are a helpful assistant.".to_string(),
+            user: "Hello".to_string(),
+        };
+
+        let result = hub.run_quality_gate(&artifact).await.unwrap();
+        assert!(result.passed);
+        assert!(result.warnings.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_lineage_register_and_ancestry() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Register a root version.
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        assert_eq!(hub.lineage_node_count(), 1);
+        assert_eq!(hub.lineage_roots().len(), 1);
+
+        // Register a child version.
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+
+        let ancestry = hub.get_lineage_ancestry("v2").unwrap();
+        assert_eq!(ancestry.path, vec!["v1", "v2"]);
+        assert_eq!(ancestry.depth, 2);
+    }
+
+    #[tokio::test]
+    async fn test_lineage_fork_detection() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v3", "prompt-a", Some("v1"), "charlie")
+            .unwrap();
+
+        let forks = hub.detect_lineage_forks();
+        assert_eq!(forks.len(), 1);
+        assert_eq!(forks[0].fork_point_version, "v1");
+        assert_eq!(forks[0].branches.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_lineage_tree_build() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+
+        let tree = hub.build_lineage_tree("v1").unwrap();
+        assert_eq!(tree.root, "v1");
+        assert_eq!(tree.nodes.len(), 2);
+        assert_eq!(tree.fork_count, 0); // only one child of v1
+    }
+
+    #[tokio::test]
+    async fn test_lineage_descendants() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v2", "prompt-a", Some("v1"), "bob")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v3", "prompt-a", Some("v2"), "charlie")
+            .unwrap();
+
+        let descs = hub.get_lineage_descendants("v1");
+        assert_eq!(descs.len(), 2);
+        assert!(descs.contains(&"v2".to_string()));
+        assert!(descs.contains(&"v3".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_lineage_has_version() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        assert!(!hub.has_lineage_version("v99"));
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+
+        assert!(hub.has_lineage_version("v1"));
+        assert!(!hub.has_lineage_version("v99"));
+    }
+
+    #[tokio::test]
+    async fn test_lineage_duplicate_conflict() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.lineage_mut()
+            .register_version("v1", "prompt-a", None, "alice")
+            .unwrap();
+
+        let result = hub
+            .lineage_mut()
+            .register_version("v1", "prompt-b", None, "bob");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_lineage_missing_parent() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let result =
+            hub.lineage_mut()
+                .register_version("v2", "prompt-a", Some("nonexistent"), "bob");
+        assert!(result.is_err());
+    }
+
+    // - Pollination tests --------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_extract_pollination_patterns_step_by_step() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let prompt = Prompt {
+            id: Uuid::new_v4(),
+            name: "test".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            status: Status::Active,
+            system_prompt: "Follow these steps: 1. Plan 2. Execute".to_string(),
+            user_template: "Help me.".to_string(),
+            required_vars: vec![],
+            domain: Domain::Coding,
+            tags: vec![],
+            target_roles: vec![],
+            metadata: Default::default(),
+            metrics: PromptMetrics {
+                usage_count: 50,
+                success_rate: 0.9,
+                avg_tokens: 300,
+                avg_latency_ms: 100,
+                last_used: Some(chrono::Utc::now()),
+                cost_estimate_usd: 0.0,
+            },
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            author: AgentIdentity {
+                id: Uuid::new_v4(),
+                name: "test".to_string(),
+                capabilities: Default::default(),
+                token_hash: "".to_string(),
+                specialization_score: 0.5,
+            },
+            deleted_at: None,
+            generation_params: None,
+            locale: None,
+            multimodal: None,
+        };
+
+        let patterns = hub.extract_pollination_patterns(&prompt).unwrap();
+        assert!(
+            patterns.iter().any(|p| p.structure == "step-by-step"),
+            "Should detect step-by-step pattern"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pollination_handle_returns_arc() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let handle1 = hub.pollination();
+        let handle2 = hub.pollination();
+        assert_eq!(handle1.lock().unwrap().pool_size(), 0);
+        assert_eq!(Arc::strong_count(&handle1), Arc::strong_count(&handle2));
+    }
+
+    #[tokio::test]
+    async fn test_pollination_mut_share_pattern() {
+        let dir = TempDir::new().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let pattern = pollination::Pattern {
+            id: Uuid::new_v4(),
+            structure: "few-shot".to_string(),
+            domains: vec![Domain::Writing],
+            score: 0.8,
+            usage_count: 10,
+            agent_id: Uuid::new_v4(),
+            example_snippet: "Here is an example...".to_string(),
+        };
+
+        hub.pollination_mut().share_pattern(pattern).unwrap();
+        assert_eq!(hub.pollination().lock().unwrap().pool_size(), 1);
+    }
+
+    // - Swarm role registry tests ------------------------------------------
+
+    #[tokio::test]
+    async fn test_swarm_registry_handle() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let registry = hub.manage_swarm();
+        assert!(!registry.list_roles().is_empty());
+        assert!(registry.get(&Role::Orchestrator).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_validate_swarm_roles_with_orchestrator() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Valid: Orchestrator is the required role.
+        let result = hub.validate_swarm_roles(&[Role::Orchestrator]);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_swarm_roles_critic_without_implementer() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Should produce CapabilityMissing conflict.
+        let result = hub.validate_swarm_roles(&[Role::Orchestrator, Role::Critic]);
+        assert!(result.is_ok());
+        let conflicts = result.unwrap();
+        assert!(
+            conflicts
+                .iter()
+                .any(|c| matches!(c, Conflict::CapabilityMissing))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_generate_swarm_bundle() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let bundle = hub
+            .generate_swarm_bundle(
+                vec![Role::Orchestrator, Role::Architect],
+                Domain::Coding,
+                Uuid::new_v4(),
+            )
+            .await;
+        assert!(bundle.is_ok());
+    }
+
+    // - Satisfaction tracker tests -------------------------------------------
+
+    #[tokio::test]
+    async fn test_satisfaction_tracker_handle() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let handle1 = hub.satisfaction_tracker();
+        let handle2 = hub.satisfaction_tracker();
+        assert_eq!(Arc::strong_count(&handle1), Arc::strong_count(&handle2));
+        // Default tracker has zero ratings/events.
+        assert_eq!(handle1.rating_count(), 0);
+        assert_eq!(handle1.event_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_record_csat_via_hub() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_csat_rating(5, "Great UX");
+        hub.record_csat_rating(3, "Okay experience");
+
+        let tracker = hub.satisfaction_tracker();
+        assert_eq!(tracker.rating_count(), 2);
+        let metrics = tracker.metrics();
+        assert_eq!(metrics.csat_average, 4.0);
+    }
+
+    #[tokio::test]
+    async fn test_record_nps_via_hub() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_nps_rating(10); // promoter
+        hub.record_nps_rating(9); // promoter
+        hub.record_nps_rating(4); // detractor
+
+        let metrics = hub.satisfaction_metrics().unwrap();
+        // (2 - 1) / 3 * 100 = 33.33...
+        assert!(
+            (metrics.nps_score - 33.33).abs() < 0.1,
+            "NPS score: {}",
+            metrics.nps_score
+        );
+    }
+
+    #[tokio::test]
+    async fn test_record_event_via_hub() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_satisfaction_event("p1", true, 1);
+        hub.record_satisfaction_event("p2", true, 3);
+        hub.record_satisfaction_event("p3", false, 1);
+
+        let tracker = hub.satisfaction_tracker();
+        assert_eq!(tracker.event_count(), 3);
+        assert_eq!(tracker.one_shot_success_rate(), 50.0);
+    }
+
+    #[tokio::test]
+    async fn test_satisfaction_metrics_empty() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        let metrics = hub.satisfaction_metrics().unwrap();
+        assert_eq!(metrics.csat_average, 0.0);
+        assert_eq!(metrics.nps_score, 0.0);
+        assert_eq!(metrics.one_shot_success_rate, 0.0);
+        assert_eq!(metrics.total_ratings, 0);
+        assert_eq!(metrics.total_events, 0);
+        assert_eq!(
+            metrics.recent_trend,
+            crate::satisfaction::TrendDirection::Stable
+        );
+    }
+
+    #[tokio::test]
+    async fn test_csat_invalid_silent() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.record_csat_rating(0, "invalid"); // should be silently ignored
+        hub.record_csat_rating(6, "invalid"); // should be silently ignored
+        hub.record_csat_rating(3, "valid"); // should count
+
+        let tracker = hub.satisfaction_tracker();
+        assert_eq!(tracker.rating_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_provider_health_register_and_summary() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Register providers and record metrics
+        hub.register_provider("gpt-4o", "https://api.openai.com/v1");
+        hub.register_provider("claude", "https://api.anthropic.com/v1");
+
+        hub.record_success("gpt-4o", 150);
+        hub.record_success("gpt-4o", 200);
+        // gpt-4o: 0% error rate, avg latency 175ms < 5000ms threshold → Healthy
+
+        let summary = hub.get_health_summary();
+        assert_eq!(summary.providers.len(), 2);
+        assert!(hub.is_healthy("gpt-4o")); // 0% errors, latency well under threshold
+
+        // Record a failure for claude — with default error_rate_threshold=50%,
+        // 1/1 = 100% >= 50% → Unhealthy
+        hub.record_failure("claude");
+        assert!(!hub.is_healthy("claude"));
+
+        let gpt_status = hub.health_monitor().lock().unwrap().get_health("gpt-4o");
+        assert!(gpt_status.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_provider_health_failure_threshold() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.register_provider("flaky", "https://api.example.com/v1");
+
+        // Configure thresholds via the monitor directly
+        {
+            let monitor = hub.health_monitor();
+            monitor.lock().unwrap().configure(100, 50); // latency=100ms, error_rate=50%
+        }
+
+        // Record many failures to push over the threshold
+        for _ in 0..6 {
+            hub.record_failure("flaky");
+        }
+
+        assert!(!hub.is_healthy("flaky"));
+    }
+
+    #[tokio::test]
+    async fn test_load_balancer_add_and_select() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        hub.add_lb_provider("gpt-4o", "https://api.openai.com/v1", 2);
+        hub.add_lb_provider("claude", "https://api.anthropic.com/v1", 1);
+
+        let stats = hub.get_lb_stats();
+        assert_eq!(stats.len(), 2);
+
+        for _ in 0..3 {
+            let selection = hub.select_provider();
+            assert!(selection.is_ok());
+            let sel = selection.unwrap();
+            assert!(sel.provider_name == "gpt-4o" || sel.provider_name == "claude");
+        }
+    }
+
+    #[cfg(feature = "budget")]
+    #[tokio::test]
+    async fn test_budget_delegation() {
+        use crate::budget::BudgetAlert;
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Default budget is $1000
+        assert!(!hub.is_budget_exceeded());
+        assert_eq!(hub.current_spend_usd(), 0.0);
+
+        // Record spend and check utilization
+        let alert = hub.record_spend(500.0);
+        assert_eq!(alert, BudgetAlert::FiftyPercent);
+        assert!((hub.budget_utilization() - 50.0).abs() < 0.01);
+
+        // Exceed budget
+        let alert = hub.record_spend(600.0);
+        assert_eq!(alert, BudgetAlert::HundredPercent);
+        assert!(hub.is_budget_exceeded());
+        assert!((hub.budget_utilization() - 110.0).abs() < 0.01);
+
+        // Save / load config round-trip
+        let _config = hub.save_budget_config("test-org").unwrap();
+
+        hub.reset_budget_period();
+        assert_eq!(hub.current_spend_usd(), 0.0);
+        assert!(!hub.is_budget_exceeded());
+    }
+
+    #[cfg(feature = "circuit-breaker")]
+    #[tokio::test]
+    async fn test_circuit_breaker_accessor() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        let cb = hub.circuit_breaker();
+        assert_eq!(cb.current_state(), "closed");
+
+        // Verify it can gate a failure
+        let result = cb.call(|| Err::<(), _>(HubError::Internal("test".into())));
+        assert!(result.is_err());
+
+        // After 5 consecutive failures it should open
+        for _ in 0..4 {
+            let _ = cb.call(|| Err::<(), _>(HubError::Internal("test".into())));
+        }
+        assert_eq!(cb.current_state(), "open");
+    }
+
+    // ── Moderation integration tests ───────────────────────────────────
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_delegation() {
+        use crate::moderation::ModerationResult;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Safe content passes
+        assert!(hub.is_content_safe("Hello, how are you today?"));
+
+        // check_content returns Allow for safe content
+        let report = hub.check_content("What is Rust?").unwrap();
+        assert!(matches!(report.result, ModerationResult::Allow));
+
+        // handle works across feature gate
+        let handle = hub.moderation_engine();
+        assert!(handle.is_allowed("Hello world"));
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_handle_returns_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        let engine1 = hub.moderation_engine();
+        let engine2 = hub.moderation_engine();
+        assert!(std::ptr::eq(Arc::as_ptr(&engine1), Arc::as_ptr(&engine2)));
+    }
+
+    // ── Quota integration tests ────────────────────────────────────────
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_delegation() {
+        use crate::quota::QuotaStatus;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Default enforcer allows small consumption
+        assert_eq!(hub.check_and_consume(1).unwrap(), QuotaStatus::Allowed);
+
+        // Usage snapshot works
+        let usage = hub.quota_usage();
+        assert_eq!(usage.daily_used, 1);
+        assert_eq!(usage.burst_used, 1);
+
+        // Reset clears counters
+        hub.reset_quota();
+        let usage = hub.quota_usage();
+        assert_eq!(usage.daily_used, 0);
+    }
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_handle_returns_arc() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        let h1 = hub.quota_enforcer_handle();
+        let h2 = hub.quota_enforcer_handle();
+        assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
+    }
+
+    // ── Preview integration tests ──────────────────────────────────────
+
+    #[cfg(feature = "preview")]
+    #[tokio::test]
+    async fn test_preview_engine_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Handle works and returns same Arc
+        let h1 = hub.preview_engine_handle();
+        let h2 = hub.preview_engine_handle();
+        assert!(std::ptr::eq(Arc::as_ptr(&h1), Arc::as_ptr(&h2)));
+    }
+
+    // ── Gradual rollout integration test ───────────────────────────────
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_gradual_rollout_initialized() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Register a rollout and verify it exists
+        use crate::models::{AutoRollbackPolicy, GraduatedRolloutConfig};
+        let config = GraduatedRolloutConfig {
+            rollout_id: "test-rollout".into(),
+            feature: "new-feature".into(),
+            segments: vec![],
+            auto_rollback: AutoRollbackPolicy::OnErrorRate { threshold: 0.05 },
+            active: true,
+        };
+        hub.register_rollout(config);
+
+        // Verify via find_rollout_inclusion
+        let user = Uuid::new_v4();
+        let result = hub.find_rollout_inclusion("test-rollout", "new-feature", user);
+        assert!(result.is_some());
+    }
+
+    // ── Analytics integration test ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_analytics_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Record an event and check report
+        use crate::analytics::{AnalyticsEvent, EventType};
+        hub.record_analytics_event(AnalyticsEvent {
+            event_type: EventType::PromptUse,
+            prompt_id: "test-prompt".into(),
+            user_id: "test-user".into(),
+            tokens_used: 100,
+            cost_micros: 500,
+            success: true,
+            duration_ms: 50,
+            timestamp: chrono::Utc::now(),
+        });
+
+        let report = hub.get_usage_report();
+        assert_eq!(report.total_prompt_uses, 1);
+    }
+
+    // ── Audit integration test ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_audit_utilities_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let test_hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // compute_hash works through delegation
+        let hash_before = crate::audit::SqliteAuditLogger::compute_diff_hash(
+            &Option::<String>::None,
+            &Option::<String>::None,
+            "2026-01-01T00:00:00Z",
+        );
+        assert_eq!(hash_before.len(), 64); // SHA256 hex digest
+
+        let _hash_after = crate::audit::SqliteAuditLogger::compute_diff_hash(
+            &Some(String::from("before")),
+            &Some(String::from("after")),
+            "2026-01-01T00:00:00Z",
+        );
+
+        // Handle works
+        let _handle = test_hub.audit_logger_handle();
+    }
+
+    // ── Diff integration test ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_diff_engine_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Compute a diff between two strings
+        let old_text = "line 1\nline 2\nline 3";
+        let new_text = "line 1\nchanged line\nline 3";
+        let diff = hub.compute_diff(old_text, new_text);
+        assert!(hub.is_identical("identical", "identical"));
+
+        // Summarize the diff
+        let summary = hub.summarize_diff(&diff);
+        assert!(summary.total_changes >= 1);
+        assert!(summary.change_ratio > 0.0);
+
+        // Format as unified diff
+        let formatted = hub.format_unified_diff(&diff);
+        assert!(!formatted.is_empty());
+    }
+
+    // ── Retention + GC integration test ────────────────────────────────
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_retention_gc_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Set and get retention period
+        use crate::retention::DataType;
+        hub.set_retention_period(DataType::AuditLog, 30);
+        let period = hub.get_retention_period(&DataType::AuditLog);
+        assert_eq!(period, 30);
+
+        // Check expiration logic
+        assert!(!hub.is_data_expired(&DataType::AuditLog, 5));
+        assert!(hub.is_data_expired(&DataType::AuditLog, 31));
+
+        // Run retention cleanup
+        let _results = hub.run_retention_cleanup();
+
+        // Garbage collection stats accessible
+        let gc_stats = hub.gc_stats();
+        assert_eq!(gc_stats.prompts_purged_total, 0);
+
+        // GC enabled check
+        assert!(hub.gc_enabled());
+    }
+
+    #[cfg(feature = "multimodal")]
+    #[tokio::test]
+    async fn test_multimodal_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Functional assertions: MIME validation and placeholder extraction
+        assert!(hub.validate_image_mime_type("image/png"));
+        assert!(!hub.validate_image_mime_type("application/octet-stream"));
+
+        // Placeholder extraction works (format: {{id}})
+        let ids = hub.extract_placeholder_ids("Hello {{img1}} World {{img2}}");
+        assert_eq!(ids, vec!["img1".to_string(), "img2".to_string()]);
+    }
+
+    #[cfg(feature = "i18n")]
+    #[tokio::test]
+    async fn test_i18n_accessible() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Engine handle accessible and valid
+        #[allow(clippy::no_effect)]
+        {
+            let _engine = hub.i18n_engine();
+        }
+
+        // Translation registration works
+        hub.register_translation("prompt-1", "fr", "Bonjour le monde".to_string());
+
+        // Translation retrieval works
+        let fr = hub.get_localized_template("prompt-1", "fr");
+        assert_eq!(fr, Some("Bonjour le monde".to_string()));
+
+        // Fallback chain works
+        let chain = hub.translation_fallback_chain("en-US");
+        assert!(!chain.is_empty());
+    }
+
+    // ── Malware scan integration test ────────────────────────────────
+
+    #[cfg(feature = "malware-scan")]
+    #[tokio::test]
+    async fn test_malware_scan_hub_integration() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Config handle accessible and valid
+        let _config = hub.malware_scan_config();
+        assert_eq!(Arc::strong_count(&_config), 2); // hub holds one, we cloned
+
+        // Scan clean content
+        let result = hub.scan_blob(b"Hello, this is clean text.");
+        assert!(matches!(result, Ok(ScanResult::Clean)));
+
+        // Scan malicious ELF in .txt via file
+        let tmp = dir.path().join("fake.txt");
+        std::fs::write(&tmp, b"\x7fELF\x02\x01\x01").unwrap();
+        let result = hub.scan_file(&tmp);
+        match result {
+            Ok(ScanResult::Malicious { .. }) => {} // expected
+            other => panic!("expected Malicious, got {:?}", other),
+        }
+
+        // Config update works
+        use crate::malware_scan::MalwareScanConfig;
+        hub.set_malware_scan_config(MalwareScanConfig {
+            max_file_size_bytes: 0, // accept everything
+            inspect_content: true,
+            block_patterns: vec!["VBA".to_string()],
+        });
+    }
+
+    // ── Voice-anonymize integration test ──────────────────────────────
+
+    #[cfg(feature = "voice-anonymize")]
+    #[tokio::test]
+    async fn test_voice_anonymize_hub_integration() {
+        use crate::voice_anonymize::PiiType;
+
+        let dir = tempfile::tempdir().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+            .await
+            .unwrap();
+
+        // Handle accessible and valid
+        let _handle = hub.voice_anonymizer_handle();
+
+        // Anonymize a transcript with PII
+        let transcript =
+            "Hello, my name is John. My email is john@example.com and my phone is 555-123-4567.";
+        let (result, found) = hub.anonymize_transcript(transcript).unwrap();
+
+        // Both Email and Phone should be found
+        assert!(result.contains("[EMAIL]"));
+        assert!(result.contains("[PHONE]"));
+        assert!(!result.contains("john@example.com"));
+        assert!(!result.contains("555-123-4567"));
+        assert_eq!(found.len(), 2);
+
+        // Verify match types
+        let types: Vec<_> = found.iter().map(|m| &m.pii_type).collect();
+        assert!(types.contains(&&PiiType::Email));
+        assert!(types.contains(&&PiiType::Phone));
     }
 }

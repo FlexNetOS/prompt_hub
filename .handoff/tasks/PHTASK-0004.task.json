@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0004",
+  "title": "Recover feature: `beta-program`",
+  "status": "done",
+  "priority": "P1",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Beta testing program management: beta cohorts, rollout percentages, feedback collection (phased deployment).",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`beta-program` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:ed9b06d7903a0c335387046d90b2d894ec9f105514f16d8ad33802d6ba2a1a08",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:2a4088ac3ee67b1d919992d2a60880017a3c3dc2a75daaf7852f440af66680bd"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "6b78a63"
+}

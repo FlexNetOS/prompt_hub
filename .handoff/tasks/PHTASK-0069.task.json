@@ -1,0 +1,40 @@
+{
+  "acceptance_criteria": [
+    "the server can bind a rustls TLS listener behind the tls feature (with optional mTLS client-cert verify), OR the tls flag + tokio-rustls dep are formally retired",
+    "no declared-but-unused tls feature/dep remains in any crate",
+    "if implemented, rustls is ring-only; cargo check -F tls (or default, if retired) is clean"
+  ],
+  "allows_dependency_addition": true,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0069",
+  "intent_lock": {
+    "acceptance_hash": "blake3:300e8392764f46e39d7408fec1a453d27f6285df8980a1b3efe56e5f76501ed6",
+    "objective_hash": "blake3:ad7d8e89efda2d042e9d969904ca880f494eeace5099396d343c3ed581b52ad5",
+    "path_scope_hash": "blake3:d69e34fcd3f9ff50cfeb405efbcbf7cfbb448cc1ab15bf9b784029ea0fd7c818"
+  },
+  "objective": "The `tls` feature is declared in all three crates (prompt-hub/prompthub/prompthub-server Cargo.toml) and pulls dep:tokio-rustls, but there are ZERO #[cfg(feature=\"tls\")] and ZERO tokio_rustls/rustls references anywhere in src — the server binds plain TCP. SPEC.md §Server promises 'TLS/mTLS support (optional feature)'. No-downgrade: implement the rustls/mTLS server-acceptor path behind the tls feature (cert/key load, optional client-cert verify) wired into prompthub-server bind — preferred — OR formally retire the tls flag + tokio-rustls dep with a rationale. Trust-boundary invariant: rustls MUST be ring-only (no aws-lc).",
+  "path_scope": [
+    "prompthub-server/src/main.rs",
+    "prompthub-server/src/server.rs",
+    "prompthub-server/Cargo.toml",
+    "prompt-hub/Cargo.toml",
+    "prompthub/Cargo.toml"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit handoff 2026-06-18 (completeness reconcile: untracked stubs + hollow features + route gap)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Wire TLS/mTLS server path or retire the hollow `tls` feature"
+}

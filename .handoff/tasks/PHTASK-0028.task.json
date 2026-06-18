@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0028",
+  "title": "Fix default-features build of prompt-hub (argon2 OsRng)",
+  "status": "done",
+  "priority": "P0",
+  "objective": "`cargo build -p prompt-hub` with DEFAULT features fails: E0432 unresolved import argon2::password_hash::rand_core::OsRng in auth.rs. Stash-confirmed PRE-EXISTING; masked because CI only builds --all-features. Fix: gate the OsRng import behind the feature that provides getrandom, or add a default-features CI job + fix root cause.",
+  "path_scope": [
+    "prompt-hub/**",
+    "Cargo.toml",
+    ".github/workflows/ci.yml"
+  ],
+  "acceptance_criteria": [
+    "`cargo build -p prompt-hub` (default features) succeeds",
+    "a default-features build job exists in CI"
+  ],
+  "test_commands": [
+    "cargo build -p prompt-hub"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:b11f3d4821df326fafb77fa8df3c19d0531b3c10fa7fd2da5be034b564c979c9",
+    "path_scope_hash": "blake3:700305c12dc9136afd3a7d967b46af33a605eb0ac25c5d7560db8646657110ab",
+    "acceptance_hash": "blake3:b8c270d546dab79b040819d771bd46263131369180685154338d51723cd3cfb0"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "resolution": "Root Cargo.toml: password-hash dep 0.6 -> 0.5 (argon2 0.5.3 re-exports password-hash 0.5.0; the 0.6 dep never unified, so OsRng/getrandom was missing in default builds). Added ci.yml 'default-build' job building all 3 crates with default features (regression guard \u2014 every other job uses --all-features, which masked the break). Verified: cargo build -p {prompt-hub,prompthub,prompthub-server} default OK; all-features check/clippy/fmt green; auth hash tests pass."
+}

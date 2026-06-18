@@ -5,12 +5,14 @@
 use anyhow::Result;
 use clap::Parser;
 use prompt_hub::config::HubConfig;
+use std::io::IsTerminal;
 use std::sync::Arc;
 use tracing::info;
 
 mod cli;
 mod commands;
 mod fuzzy;
+mod identity;
 #[cfg(feature = "tui")]
 mod tui;
 
@@ -28,19 +30,24 @@ fn parse_role(s: &str) -> prompt_hub::models::Role {
 async fn main() -> Result<()> {
     let args = cli::Cli::parse();
 
-    // Initialize tracing
+    // Initialize tracing. Logs go to stderr so stdout stays reserved for
+    // machine-readable command output (e.g. `prompthub metrics` Prometheus
+    // exposition). ANSI is disabled when stderr is not a TTY so redirected
+    // logs aren't polluted with escape codes.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&args.log_level));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
         .init();
 
     match args.command {
-        Commands::Init { path } => {
+        Commands::Init { path, seed } => {
             info!("Initializing prompthub");
-            commands::init::run(path.as_deref()).await?;
+            commands::init::run(path.as_deref(), seed).await?;
         }
         Commands::Add { file, interactive } => {
             info!("Adding prompt");
@@ -51,7 +58,7 @@ async fn main() -> Result<()> {
             let config = HubConfig::load().unwrap_or_default();
             let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
                 .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             match hub.get(parse_role(&role), &intent, &identity).await? {
                 Some(prompt) => {
                     println!("Found prompt: {} (v{})", prompt.name, prompt.version);
@@ -91,21 +98,13 @@ async fn main() -> Result<()> {
                 .await?;
             let content = tokio::fs::read_to_string(&file).await?;
             let patch = parse_update_patch(&content)?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             let updated = hub.update(id, patch, &identity).await?;
             println!("Updated prompt {} (v{})", updated.name, updated.version);
         }
         Commands::Rollback { id, to_version } => {
             info!(%id, %to_version, "Rolling back prompt");
-            let config = HubConfig::load().unwrap_or_default();
-            let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
-                .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
-            let rolled = hub.rollback(id, &to_version, &identity).await?;
-            println!(
-                "Rolled back prompt {} to version {}",
-                rolled.name, to_version
-            );
+            commands::rollback::run(id, &to_version).await?;
         }
         Commands::Diff { id, v1, v2 } => {
             info!(%id, "Diffing versions");
@@ -117,7 +116,7 @@ async fn main() -> Result<()> {
             let config = HubConfig::load().unwrap_or_default();
             let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
                 .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
+            let identity = identity::cli_identity();
             let token = hub
                 .lock(id, &identity, std::time::Duration::from_secs(ttl_seconds))
                 .await?;
@@ -203,13 +202,7 @@ async fn main() -> Result<()> {
         }
         Commands::Evolve { id, strategy } => {
             info!(%id, ?strategy, "Evolving prompt");
-            let config = HubConfig::load().unwrap_or_default();
-            let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
-                .await?;
-            let identity = prompt_hub::models::AgentIdentity::default();
-            let evolved = hub.evolve_prompt(id, strategy, &identity).await?;
-            println!("Evolved prompt {} into new prompt {}", id, evolved.id);
-            println!("  New version: {}", evolved.version);
+            commands::evolve::run(id, strategy).await?;
         }
         Commands::Tokens { prompt_id, model } => {
             info!(%prompt_id, %model, "Counting tokens");
@@ -269,18 +262,7 @@ async fn main() -> Result<()> {
         }
         Commands::Vibe { request } => {
             info!(%request, "Vibe Coding");
-            let config = HubConfig::load().unwrap_or_default();
-            let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
-                .await?;
-            let result = hub
-                .vibe_code(
-                    &request,
-                    prompt_hub::models::UserInput::default(),
-                    prompt_hub::models::SkillLevel::Beginner,
-                )
-                .await?;
-            println!("Vibe Coding Result:\n{}", result.summary);
-            println!("Confidence: {:.1}%", result.confidence * 100.0);
+            commands::vibe::run(&request).await?;
         }
         Commands::Magic { action, target } => {
             info!(%action, ?target, "Magic Wand");
@@ -289,40 +271,15 @@ async fn main() -> Result<()> {
         }
         Commands::Gather => {
             info!("Gathering context");
-            let config = HubConfig::load().unwrap_or_default();
-            let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
-                .await?;
-            let ctx = hub.gather_context(std::path::Path::new(".")).await?;
-            println!("Gathered context for current directory:");
-            println!("  Language: {}", ctx.language);
-            println!("  Framework: {}", ctx.framework);
-            println!("  Files: {}", ctx.existing_files.len());
-            println!("  Team size: {}", ctx.team_size);
+            commands::gather::run().await?;
         }
         Commands::Preview { request } => {
             info!(%request, "Previewing");
-            println!("Preview: '{}'...", request);
-            println!("  (Preview generates a plan without executing)");
+            commands::preview::run(&request).await?;
         }
         Commands::Cost { request } => {
             info!(%request, "Estimating cost");
-            let config = HubConfig::load().unwrap_or_default();
-            let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
-                .await?;
-            let intent = prompt_hub::models::Intent {
-                raw_text: request.clone(),
-                ..Default::default()
-            };
-            let ctx = hub.gather_context(std::path::Path::new(".")).await?;
-            let estimate = hub.estimate_cost(&intent, &ctx).await?;
-            println!("Cost estimate for '{}'", request);
-            println!(
-                "  Tokens: {} in / {} out",
-                estimate.tokens_input, estimate.tokens_output
-            );
-            println!("  Estimated cost: ${:.4}", estimate.cost_usd);
-            println!("  Time estimate: {}s", estimate.time_seconds);
-            println!("  Confidence: {:.0}%", estimate.confidence * 100.0);
+            commands::cost::run(&request).await?;
         }
         Commands::Scan { path } => {
             info!(?path, "Scanning");
@@ -331,8 +288,7 @@ async fn main() -> Result<()> {
         }
         Commands::Deploy { artifact_id, safe } => {
             info!(%artifact_id, safe, "Deploying artifact");
-            println!("Deploying {} (safe={})...", artifact_id, safe);
-            println!("  (Deploy requires artifact generation first — use 'vibe')");
+            commands::deploy::run(artifact_id, safe).await?;
         }
         Commands::Summarize { run_id } => {
             info!(%run_id, "Summarizing run");
@@ -341,14 +297,7 @@ async fn main() -> Result<()> {
         }
         Commands::Feedback { correction } => {
             info!("Recording feedback");
-            let config = HubConfig::load().unwrap_or_default();
-            let hub = prompt_hub::hub::PromptHub::new(std::path::Path::new("prompthub.db"), config)
-                .await?;
-            let intent = prompt_hub::models::Intent::default();
-            let agent_id = uuid::Uuid::new_v4();
-            hub.learn_from_feedback(&correction, &intent, agent_id)
-                .await?;
-            println!("Feedback recorded: '{}'", correction);
+            commands::feedback::run(&correction).await?;
         }
         Commands::Junie { subcommand } => {
             info!(?subcommand, "Junie command");
