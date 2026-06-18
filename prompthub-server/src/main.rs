@@ -2,6 +2,8 @@
 // WIP server: some handlers/specs are scaffolded ahead of being wired into routes.
 #![allow(dead_code)]
 
+use std::net::SocketAddr;
+
 use anyhow::Result;
 use axum::serve;
 use clap::Parser;
@@ -100,25 +102,28 @@ async fn main() -> Result<()> {
     // coordinator is the single shutdown rendezvous shared with the hub's
     // background daemons.
     let serve_coordinator = coordinator.clone();
-    serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let mut rx = serve_coordinator.subscribe();
-            // Listen for OS signals; this also broadcasts to every other
-            // subscriber (the hub's daemons). On handler-install failure we log
-            // and fall back to awaiting the broadcast so the server can still
-            // be shut down programmatically.
-            tokio::select! {
-                res = serve_coordinator.wait_for_signal() => {
-                    if let Err(e) = res {
-                        warn!("signal handler failed, awaiting broadcast instead: {e}");
-                        let _ = rx.recv().await;
-                    }
+    serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let mut rx = serve_coordinator.subscribe();
+        // Listen for OS signals; this also broadcasts to every other
+        // subscriber (the hub's daemons). On handler-install failure we log
+        // and fall back to awaiting the broadcast so the server can still
+        // be shut down programmatically.
+        tokio::select! {
+            res = serve_coordinator.wait_for_signal() => {
+                if let Err(e) = res {
+                    warn!("signal handler failed, awaiting broadcast instead: {e}");
+                    let _ = rx.recv().await;
                 }
-                _ = rx.recv() => {}
             }
-            info!("Server received shutdown signal, draining connections");
-        })
-        .await?;
+            _ = rx.recv() => {}
+        }
+        info!("Server received shutdown signal, draining connections");
+    })
+    .await?;
 
     // Server has stopped accepting connections; run the orderly hub shutdown
     // (stop daemons, flush WAL to disk).
