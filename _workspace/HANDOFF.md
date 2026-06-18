@@ -14,3 +14,9 @@
 >
 > Full original content is archived verbatim under `.handoff/history/_workspace-archive/`.
 > Cold-start: read `.handoff/context/capsule.json`, then run `hf resume`.
+
+## Legacy note preserved from pre-migration handoff
+
+The previous `_workspace/HANDOFF.md` guidance (resume command, baseline checks, cycle
+history, and findings) was superseded by the `.handoff/` kernel and is retained in
+the archive path above for forensic continuity.
