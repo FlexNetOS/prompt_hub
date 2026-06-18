@@ -87,6 +87,52 @@ pub fn create_router(state: AppState) -> Router {
         .route("/openapi.json", get(routes::openapi_json))
         .route("/docs", get(routes::swagger_ui));
 
+    // Context gathering (base route always-on; smart routes require gather)
+    let router = router.route("/api/v1/context/gather", post(routes::gather_context_route));
+
+    #[cfg(feature = "gather")]
+    let router = router
+        .route(
+            "/api/v1/context/gather/smart",
+            post(routes::gather_context_smart_route),
+        )
+        .route(
+            "/api/v1/context/files",
+            post(routes::collect_relevant_files_route),
+        )
+        .route(
+            "/api/v1/context/patterns",
+            post(routes::extract_patterns_route),
+        );
+
+    // Lineage routes (always-on)
+    let router = router
+        .route(
+            "/api/v1/lineage/ancestry/{version_id}",
+            get(routes::get_lineage_ancestry_route),
+        )
+        .route(
+            "/api/v1/lineage/forks",
+            get(routes::detect_lineage_forks_route),
+        )
+        .route(
+            "/api/v1/lineage/descendants/{version_id}",
+            get(routes::get_lineage_descendants_route),
+        )
+        .route(
+            "/api/v1/lineage/tree/{version_id}",
+            get(routes::build_lineage_tree_route),
+        )
+        .route(
+            "/api/v1/lineage/count",
+            get(routes::lineage_node_count_route),
+        )
+        .route("/api/v1/lineage/roots", get(routes::lineage_roots_route))
+        .route(
+            "/api/v1/lineage/has/{version_id}",
+            get(routes::has_lineage_version_route),
+        );
+
     // Vibe coding — natural language → deliverable (feature: vibe)
     #[cfg(feature = "vibe")]
     let router = router.route("/api/v1/vibe/code", post(routes::vibe_code));

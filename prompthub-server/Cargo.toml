@@ -18,6 +18,7 @@ path = "src/main.rs"
 [features]
 default = ["prompt-hub/handlebars", "prompt-hub/vibe", "prompt-hub/budget"]
 smart = ["prompt-hub/smart"]
+gather = ["prompt-hub/gather"]
 vibe = ["prompt-hub/vibe"]
 budget = ["prompt-hub/budget"]
 rollback = ["prompt-hub/rollback"]

@@ -1552,6 +1552,32 @@ pub struct LintTemplateRequest {
     pub template: String,
 }
 
+// ── Context gathering request DTOs ────────────────────────────────────────
+
+/// Request body for gathering project context.
+#[derive(Debug, Deserialize)]
+pub struct GatherContextRequest {
+    pub project_path: String,
+}
+
+/// Request body for smart context gathering and relevance-ranked files.
+#[derive(Debug, Deserialize)]
+pub struct GatherContextSmartRequest {
+    pub project_path: String,
+}
+
+/// Request body for collecting relevance-ranked files.
+#[derive(Debug, Deserialize)]
+pub struct CollectRelevantFilesRequest {
+    pub project_path: String,
+}
+
+/// Request body for extracting structural code patterns.
+#[derive(Debug, Deserialize)]
+pub struct ExtractPatternsRequest {
+    pub project_path: String,
+}
+
 // ── Prompt lifecycle handler functions ────────────────────────────────────
 
 /// Build an admin-capable identity for ownership-transfer administration.
@@ -2013,6 +2039,157 @@ pub async fn lint_template_route(
     success(json!({ "issues": issues_json })).into_response()
 }
 
+// ── Context gathering handlers ────────────────────────────────────────────
+
+/// Gather full project context from a filesystem path.
+#[instrument(skip(state))]
+pub async fn gather_context_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<GatherContextRequest>,
+) -> Response {
+    if payload.project_path.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "project_path cannot be empty").into_response();
+    }
+
+    match state
+        .hub
+        .gather_context(std::path::Path::new(&payload.project_path))
+        .await
+    {
+        Ok(ctx) => success(json!(ctx)).into_response(),
+        Err(e) => map_hub_error("context gather", e),
+    }
+}
+
+/// Gather smart project context with relevance-ranked files and code patterns.
+#[cfg(feature = "gather")]
+#[instrument(skip(state))]
+pub async fn gather_context_smart_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<GatherContextSmartRequest>,
+) -> Response {
+    if payload.project_path.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "project_path cannot be empty").into_response();
+    }
+
+    match state
+        .hub
+        .gather_context_smart(std::path::Path::new(&payload.project_path))
+        .await
+    {
+        Ok(ctx) => success(json!(ctx)).into_response(),
+        Err(e) => map_hub_error("smart context gather", e),
+    }
+}
+
+/// Collect relevance-ranked files for a project.
+#[cfg(feature = "gather")]
+#[instrument(skip(state))]
+pub async fn collect_relevant_files_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CollectRelevantFilesRequest>,
+) -> Response {
+    if payload.project_path.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "project_path cannot be empty").into_response();
+    }
+
+    let files = state
+        .hub
+        .collect_relevant_files(std::path::Path::new(&payload.project_path))
+        .await;
+    success(json!({ "files": files })).into_response()
+}
+
+/// Extract structural code patterns from key source files.
+#[cfg(feature = "gather")]
+#[instrument(skip(state))]
+pub async fn extract_patterns_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExtractPatternsRequest>,
+) -> Response {
+    if payload.project_path.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "project_path cannot be empty").into_response();
+    }
+
+    let patterns = state
+        .hub
+        .extract_patterns(std::path::Path::new(&payload.project_path))
+        .await;
+    success(json!({ "patterns": patterns })).into_response()
+}
+
+// ── Lineage handlers ──────────────────────────────────────────────────────
+
+/// Get the ancestry path from a version back to the root.
+#[instrument(skip(state))]
+pub async fn get_lineage_ancestry_route(
+    State(state): State<Arc<AppState>>,
+    Path(version_id): Path<String>,
+) -> Response {
+    if !state.hub.has_lineage_version(&version_id) {
+        return error(StatusCode::NOT_FOUND, "version not found").into_response();
+    }
+
+    match state.hub.get_lineage_ancestry(&version_id) {
+        Ok(path) => success(json!(path)).into_response(),
+        Err(e) => map_hub_error("lineage ancestry", e),
+    }
+}
+
+/// Detect all forks in the lineage graph.
+#[instrument(skip(state))]
+pub async fn detect_lineage_forks_route(State(state): State<Arc<AppState>>) -> Response {
+    let forks = state.hub.detect_lineage_forks();
+    success(json!({ "forks": forks })).into_response()
+}
+
+/// Get all descendant versions reachable from a given version.
+#[instrument(skip(state))]
+pub async fn get_lineage_descendants_route(
+    State(state): State<Arc<AppState>>,
+    Path(version_id): Path<String>,
+) -> Response {
+    let descendants = state.hub.get_lineage_descendants(&version_id);
+    success(json!({ "version_id": version_id, "descendants": descendants })).into_response()
+}
+
+/// Build a lineage tree rooted at a given version.
+#[instrument(skip(state))]
+pub async fn build_lineage_tree_route(
+    State(state): State<Arc<AppState>>,
+    Path(version_id): Path<String>,
+) -> Response {
+    match state.hub.build_lineage_tree(&version_id) {
+        Some(tree) => success(json!(tree)).into_response(),
+        None => error(StatusCode::NOT_FOUND, "version not found").into_response(),
+    }
+}
+
+/// Return the number of registered lineage nodes.
+#[instrument(skip(state))]
+pub async fn lineage_node_count_route(State(state): State<Arc<AppState>>) -> Response {
+    success(json!({ "count": state.hub.lineage_node_count() })).into_response()
+}
+
+/// Return all root versions (versions with no parent).
+#[instrument(skip(state))]
+pub async fn lineage_roots_route(State(state): State<Arc<AppState>>) -> Response {
+    success(json!({ "roots": state.hub.lineage_roots() })).into_response()
+}
+
+/// Check whether a specific version is tracked in the lineage graph.
+#[instrument(skip(state))]
+pub async fn has_lineage_version_route(
+    State(state): State<Arc<AppState>>,
+    Path(version_id): Path<String>,
+) -> Response {
+    success(json!({
+        "version_id": version_id,
+        "has_version": state.hub.has_lineage_version(&version_id)
+    }))
+    .into_response()
+}
+
 // ── Test module below ─────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2026,6 +2203,7 @@ mod tests {
     use prompt_hub::metrics::MetricsCollector;
     use serde_json::Value;
     use std::sync::Arc;
+    use tempfile::TempDir;
     use tower::ServiceExt;
 
     #[test]
@@ -3208,5 +3386,237 @@ mod tests {
         .await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Context gathering route tests ───────────────────────────────────────
+
+    /// Seed a small temporary project directory for context tests.
+    fn temp_project_dir() -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+"#,
+        )
+        .unwrap();
+        tmp
+    }
+
+    #[tokio::test]
+    async fn test_gather_context_route() {
+        let state = evolve_test_state().await;
+        let tmp = temp_project_dir();
+
+        let response = gather_context_route(
+            axum::extract::State(state),
+            axum::Json(GatherContextRequest {
+                project_path: tmp.path().to_string_lossy().to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_gather_context_route_empty_path_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = gather_context_route(
+            axum::extract::State(state),
+            axum::Json(GatherContextRequest {
+                project_path: "".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "gather")]
+    #[tokio::test]
+    async fn test_gather_context_smart_route() {
+        let state = evolve_test_state().await;
+        let tmp = temp_project_dir();
+
+        let response = gather_context_smart_route(
+            axum::extract::State(state),
+            axum::Json(GatherContextSmartRequest {
+                project_path: tmp.path().to_string_lossy().to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "gather")]
+    #[tokio::test]
+    async fn test_collect_relevant_files_route() {
+        let state = evolve_test_state().await;
+        let tmp = temp_project_dir();
+
+        let response = collect_relevant_files_route(
+            axum::extract::State(state),
+            axum::Json(CollectRelevantFilesRequest {
+                project_path: tmp.path().to_string_lossy().to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "gather")]
+    #[tokio::test]
+    async fn test_extract_patterns_route() {
+        let state = evolve_test_state().await;
+        let tmp = temp_project_dir();
+
+        let response = extract_patterns_route(
+            axum::extract::State(state),
+            axum::Json(ExtractPatternsRequest {
+                project_path: tmp.path().to_string_lossy().to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Lineage route tests ─────────────────────────────────────────────────
+
+    /// Seed a simple lineage graph in a fresh test state.
+    async fn seed_lineage(state: &mut Arc<AppState>) {
+        let app = Arc::get_mut(state).expect("single state reference in test");
+        let hub = Arc::get_mut(&mut app.hub).expect("single hub reference in test");
+        hub.lineage_mut()
+            .register_version("v1", "prompt-1", None, "alice")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v2", "prompt-1", Some("v1"), "bob")
+            .unwrap();
+        hub.lineage_mut()
+            .register_version("v3", "prompt-1", Some("v1"), "charlie")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_lineage_ancestry_route() {
+        let mut state = evolve_test_state().await;
+        seed_lineage(&mut state).await;
+
+        let response = get_lineage_ancestry_route(
+            axum::extract::State(state),
+            axum::extract::Path("v2".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_lineage_ancestry_route_not_found() {
+        let state = evolve_test_state().await;
+
+        let response = get_lineage_ancestry_route(
+            axum::extract::State(state),
+            axum::extract::Path("missing".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_detect_lineage_forks_route() {
+        let mut state = evolve_test_state().await;
+        seed_lineage(&mut state).await;
+
+        let response = detect_lineage_forks_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_lineage_descendants_route() {
+        let mut state = evolve_test_state().await;
+        seed_lineage(&mut state).await;
+
+        let response = get_lineage_descendants_route(
+            axum::extract::State(state),
+            axum::extract::Path("v1".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_build_lineage_tree_route() {
+        let mut state = evolve_test_state().await;
+        seed_lineage(&mut state).await;
+
+        let response = build_lineage_tree_route(
+            axum::extract::State(state),
+            axum::extract::Path("v1".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_build_lineage_tree_route_not_found() {
+        let state = evolve_test_state().await;
+
+        let response = build_lineage_tree_route(
+            axum::extract::State(state),
+            axum::extract::Path("missing".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_lineage_node_count_route() {
+        let mut state = evolve_test_state().await;
+        seed_lineage(&mut state).await;
+
+        let response = lineage_node_count_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_lineage_roots_route() {
+        let mut state = evolve_test_state().await;
+        seed_lineage(&mut state).await;
+
+        let response = lineage_roots_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_has_lineage_version_route() {
+        let mut state = evolve_test_state().await;
+        seed_lineage(&mut state).await;
+
+        let response = has_lineage_version_route(
+            axum::extract::State(state),
+            axum::extract::Path("v1".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
