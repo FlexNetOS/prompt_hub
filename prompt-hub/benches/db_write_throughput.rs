@@ -1,7 +1,8 @@
 use chrono::Utc;
-use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use prompt_hub::models::*;
 use prompt_hub::{HubConfig, PromptHub};
+use std::hint::black_box;
 use tempfile::TempDir;
 use uuid::Uuid;
 

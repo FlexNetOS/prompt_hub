@@ -17,12 +17,19 @@ pub async fn run(cmd: PluginCommand) -> Result<()> {
         PluginCommand::List => {
             info!("Listing plugins");
             let mut registry = PluginRegistry::new();
+            // Runtime-registered plugins (Mutex registry).
             let static_plugins = load_static_plugins();
             for plugin in static_plugins {
                 let name = plugin.name().to_string();
                 if let Err(e) = registry.register(plugin) {
                     warn!("Failed to register plugin '{}': {}", name, e);
                 }
+            }
+            // Compile-time-discovered plugins (inventory registry), when the
+            // `plugins` feature is enabled in the core crate.
+            #[cfg(feature = "plugins")]
+            if let Err(e) = registry.discover() {
+                warn!("Plugin discovery failed: {}", e);
             }
             let plugins = registry.list();
             if plugins.is_empty() {

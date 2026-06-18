@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0010",
+  "title": "Recover feature: `malware-scan`",
+  "status": "done",
+  "priority": "P2",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Heuristic malware detection: magic numbers, shellcode, script injection, encoded-payload entropy, extension/content mismatch. 22 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`malware-scan` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:562c5d763e38f22446f8d89332cd1e6b0230376525a6cf1dda13a216c00e674a",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:d4db17f928c48c4bd8436c9ef6212b7836f2f5348ef5faabdc02803d725d4d01"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "09acfb3",
+  "cycle": 71
+}

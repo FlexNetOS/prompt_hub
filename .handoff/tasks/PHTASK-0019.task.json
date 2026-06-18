@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0019",
+  "title": "Recover feature: `voice`",
+  "status": "done",
+  "priority": "P1",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Voice pipeline orchestration (STT->prompt->TTS): VoicePipelineConfig, output format, interaction transcript, FSM, engine state machine. 18 tests + hub integration.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`voice` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:5c679ffb04d8c23793a0bd096afea905e576cad2d3c64f6915054a36976cd2dd",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:3eac01dad19cba75932e3a4196dcf22e536596aa3f42f4e7ecaa7d16f85de300"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "47f7bb7"
+}

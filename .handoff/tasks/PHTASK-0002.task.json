@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0002",
+  "title": "Feature-gate rollback pub methods (`#[cfg(feature = \"rollback\")]`)",
+  "status": "done",
+  "priority": "P0",
+  "objective": "deploy_with_rollback/restore_snapshot/is_rollback_available at hub.rs referenced a rollback-only struct field; without the cfg gate, building without `rollback` compiled these against a non-existent field -> compile failure. Added the gate.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "Building without `rollback` feature compiles clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:4666120539372c5a16ee05671cfc622877c047dced9024473ed617624eb34290",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:845abce2bd975c312c3464e49e71a12b25cb4da16a5350be13a9e5de8c34ab90"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "7aa2c4e"
+}

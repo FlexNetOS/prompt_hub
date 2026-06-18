@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0003",
+  "title": "Route prompt fetch through hub RBAC (`get_by_id`) in server",
+  "status": "done",
+  "priority": "P0",
+  "objective": "Server GET route bypassed intent/audit/RBAC by calling storage().get_prompt() directly. Changed to the hub's RBAC-gated path so all CRUD routes go through hub methods.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "acceptance_criteria": [
+    "Server GET prompt route calls a hub RBAC method, not storage directly"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:65f3ed7f287d0fa752a509a31ea31b3b4ef96185786da6a79d66e02a7c87c5f6",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135",
+    "acceptance_hash": "blake3:e06d4606a73800732982272bbb3f5b62a3d6df3dd67d8e3d3acd42d3a0bd789d"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "2feb13f"
+}

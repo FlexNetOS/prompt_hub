@@ -72,8 +72,12 @@ async fn test_fast_engine_index_and_remove() {
 #[tokio::test]
 async fn test_smart_engine_index_and_remove() {
     let storage = in_memory_storage().await;
-    let engine = SmartEngine::default_model(storage);
+
+    // FK requires prompt to exist before upserting embedding.
     let prompt = sample_prompt("smart-index");
+    storage.insert_prompt(&prompt).await.unwrap();
+
+    let engine = SmartEngine::default_model(storage);
 
     assert!(engine.index(&prompt).await.is_ok());
     assert!(engine.remove(prompt.id).await.is_ok());
@@ -82,10 +86,42 @@ async fn test_smart_engine_index_and_remove() {
 #[tokio::test]
 async fn test_hybrid_engine_index_and_remove() {
     let storage = in_memory_storage().await;
-    let engine = HybridEngine::default_engines(storage);
+
+    // FK requires prompt to exist before upserting embedding.
     let prompt = sample_prompt("hybrid-index");
+    storage.insert_prompt(&prompt).await.unwrap();
+
+    let engine = HybridEngine::default_engines(storage);
 
     assert!(engine.index(&prompt).await.is_ok());
+    assert!(engine.remove(prompt.id).await.is_ok());
+}
+
+/// Slice 2: end-to-end embed → search → remove.
+/// Verifies SmartEngine::index writes embeddings and search finds them.
+#[tokio::test]
+async fn test_smart_engine_index_writes_embeddings() {
+    let storage = in_memory_storage().await;
+
+    let prompt = sample_prompt("embed-e2e");
+    storage.insert_prompt(&prompt).await.unwrap();
+
+    let engine = SmartEngine::default_model(storage);
+
+    // Index should write the embedding.
+    assert!(engine.index(&prompt).await.is_ok());
+
+    // Search must find the prompt via embedding similarity.
+    let results = engine
+        .search("embed", &SearchFilters::default(), &Pagination::default())
+        .await
+        .unwrap();
+    assert!(
+        results.items.iter().any(|s| s.prompt.name == "embed-e2e"),
+        "Search should find prompt via embedding"
+    );
+
+    // Remove should clear the embedding row.
     assert!(engine.remove(prompt.id).await.is_ok());
 }
 
