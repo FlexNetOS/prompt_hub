@@ -1162,6 +1162,62 @@ impl Storage {
         Ok(())
     }
 
+    /// GDPR **right to erasure** — anonymise every `audit_log` row belonging to
+    /// `agent_id` by redacting its PII columns, returning the number of rows
+    /// affected.
+    ///
+    /// The `agent_id` column is replaced with the well-known anonymisation
+    /// sentinel and `ip_address` is set to `NULL`. The tamper-evident hash chain
+    /// is preserved because `diff_hash` covers `(before_json, after_json,
+    /// timestamp)` — never `agent_id` or `ip_address` — so the rewritten rows
+    /// still verify against [`SqliteAuditLogger::verify_entry_integrity`].
+    ///
+    /// Rows already carrying the sentinel id are not re-counted: the
+    /// `WHERE agent_id = ?` predicate excludes the sentinel itself, so calling
+    /// this twice for the same subject is idempotent (the second call affects
+    /// zero rows).
+    #[instrument(skip(self))]
+    pub async fn anonymize_audit_entries_for_agent(&self, agent_id: Uuid) -> Result<usize> {
+        let conn = self.acquire().await?;
+
+        conn.execute("BEGIN IMMEDIATE;", params!())
+            .await
+            .map_err(|e| HubError::StorageError(format!("GDPR erasure begin: {e}")))?;
+
+        let result: Result<u64> = async {
+            let rows_affected = conn
+                .execute(
+                    "UPDATE audit_log
+                     SET agent_id = ?1, ip_address = NULL
+                     WHERE agent_id = ?2;",
+                    params!(
+                        crate::audit::GDPR_ANONYMIZED_AGENT_ID.to_string(),
+                        agent_id.to_string()
+                    ),
+                )
+                .await
+                .map_err(|e| HubError::StorageError(format!("GDPR erasure update: {e}")))?;
+            Ok(rows_affected)
+        }
+        .await;
+
+        match result {
+            Ok(rows_affected) => {
+                conn.execute("COMMIT;", params!())
+                    .await
+                    .map_err(|e| HubError::StorageError(format!("GDPR erasure commit: {e}")))?;
+                info!(
+                    "GDPR erasure: anonymised {rows_affected} audit entries for agent {agent_id}"
+                );
+                Ok(rows_affected as usize)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK;", params!()).await;
+                Err(e)
+            }
+        }
+    }
+
     /// Fetch paginated audit trail for a specific prompt.
     #[instrument(skip(self))]
     pub async fn fetch_audit_trail(
