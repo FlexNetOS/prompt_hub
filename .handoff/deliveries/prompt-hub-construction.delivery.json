@@ -1,0 +1,10 @@
+{
+  "schema": "handoff.delivery.v1",
+  "correlation_id": "prompt-hub-construction",
+  "task_id": "PHTASK-0048",
+  "pr": "127",
+  "status": "merged",
+  "summary": "PHTASK-0048 completed via PR 127 (status: merged)",
+  "url": "https://github.com/FlexNetOS/handoff/pull/127",
+  "timestamp_ns": 1781777344138406298
+}
