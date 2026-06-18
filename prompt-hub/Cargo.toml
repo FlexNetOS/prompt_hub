@@ -29,7 +29,10 @@ tokenizers = ["dep:tokenizers"]
 # Dynamic plugin loading via libloading/inventory inventory.
 plugins = ["dep:libloading", "dep:inventory"]
 
-chaos-automation = ["chaos"]
+# chaos-automation needs an HTTP client for real webhook-alert POSTs; reqwest is
+# already an optional dependency (shared with local-llm / qdrant), so we enable
+# the existing dep rather than adding a new one.
+chaos-automation = ["chaos", "dep:reqwest"]
 
 # ---------------------------------------------------------------------------
 # Stub features converted to real gated features (Category B): real pub API,
