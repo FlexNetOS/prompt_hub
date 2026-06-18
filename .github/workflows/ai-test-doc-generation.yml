@@ -17,7 +17,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Generate Unit Tests (GitHub Models)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -89,7 +89,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Generate Documentation (Claude)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Extract functions
         id: funcs
@@ -153,7 +153,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Generate Examples (DeepSeek)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Get example prompts
         id: prompts
@@ -215,7 +215,7 @@ jobs:
     needs: [test-generation, documentation-generation, example-generation]
     if: ${{ always() && vars.ENABLE_AI_WORKFLOWS == 'true' && github.event_name == 'pull_request' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8

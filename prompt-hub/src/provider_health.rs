@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio::time::Instant;
@@ -18,11 +19,12 @@ pub struct ProviderHealthMonitor {
 }
 
 /// Health record for a single provider.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderHealthRecord {
     pub name: String,
     pub url: String,
     pub status: HealthStatus,
+    #[serde(skip)]
     pub last_probe: Option<Instant>,
     pub last_latency_ms: u64,
     pub error_count: u32,
@@ -32,7 +34,7 @@ pub struct ProviderHealthRecord {
 }
 
 /// Health status of a provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HealthStatus {
     Healthy,
     Degraded,
@@ -41,7 +43,7 @@ pub enum HealthStatus {
 }
 
 /// Summary of all provider health statuses.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthSummary {
     pub providers: Vec<ProviderHealthRecord>,
     pub healthy_count: usize,

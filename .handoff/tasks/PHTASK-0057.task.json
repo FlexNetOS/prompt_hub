@@ -1,0 +1,34 @@
+{
+  "acceptance_criteria": [
+    "each of the 11 capabilities has a documented route + handler + DTO + test",
+    "RBAC enforced via the hub method (not storage); error map mirrors evolve_prompt"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0057",
+  "intent_lock": {
+    "acceptance_hash": "blake3:a26de5d333d46988a3aa4bb588aff98435bd8be498328b80535d32994981bef9",
+    "objective_hash": "blake3:919747cdc36c7cb62376002c90dbe81efcdc5f2bb6d38a6a528495c4aa24c808",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135"
+  },
+  "objective": "Expose the prompt-lifecycle hub capabilities that have no HTTP route: get, update, rollback, transfer_ownership, seed_defaults, fallback_chain, learn_from_feedback, score_confidence, scan_privacy, estimate_cost, lint_template. Thin handlers + DTOs + RBAC + evolve_prompt-style error map + direct-handler tests.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "priority": "P1",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "done",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Routes: prompt lifecycle (11 capabilities)"
+}

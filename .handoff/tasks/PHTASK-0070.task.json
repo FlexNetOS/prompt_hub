@@ -1,0 +1,39 @@
+{
+  "acceptance_criteria": [
+    "tokens.rs has a real HF-tokenizers counting path behind the tokenizers feature, OR the flag + dep are formally retired with a note",
+    "no declared-but-unused tokenizers feature/dep remains in any crate",
+    "cargo check -F tokenizers (or default, if retired) is clean"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0070",
+  "intent_lock": {
+    "acceptance_hash": "blake3:4c97d5e5aac25059f3eca6edbbb1ec621206e8e230c127eb2c6c750230881410",
+    "objective_hash": "blake3:f2e71410d82f186a87e6e754127c6053651a65c138829244951f3b4fdab89b1f",
+    "path_scope_hash": "blake3:19ec6038b06105dc95d3201ce24513304b9a6fc0a6df398e3d2512dfba864789"
+  },
+  "objective": "The `tokenizers` feature is declared in all three crates and pulls dep:tokenizers (HF tokenizers), but there are ZERO #[cfg(feature=\"tokenizers\")] and ZERO Tokenizer references in src — the dep is dead. SPEC.md lists tokenizers as a token-counting backend alongside tiktoken (which IS real, tokens.rs:41). No-downgrade: wire a real HF-tokenizers counting path into tokens.rs behind the feature (Tokenizer::from_file/pretrained), OR formally retire the tokenizers flag + dep with a rationale.",
+  "path_scope": [
+    "prompt-hub/src/tokens.rs",
+    "prompt-hub/Cargo.toml",
+    "prompthub/Cargo.toml",
+    "prompthub-server/Cargo.toml"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P3",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit handoff 2026-06-18 (completeness reconcile: untracked stubs + hollow features + route gap)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Wire HF tokenizers counting backend or retire the hollow `tokenizers` feature"
+}

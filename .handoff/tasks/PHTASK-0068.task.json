@@ -1,0 +1,38 @@
+{
+  "acceptance_criteria": [
+    "run_tui is a real ratatui app driving the hub, OR the tui feature + its 5 deps are formally retired with a note",
+    "no 'feature stub' placeholder remains",
+    "cargo build --workspace (with -F tui if kept, or without if retired) is clean with no unused deps"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0068",
+  "intent_lock": {
+    "acceptance_hash": "blake3:c78535fa6eaa269f8bc27cd7dae7ec3c6d63994d4f390d2b554d6a649279da58",
+    "objective_hash": "blake3:040a40fec8e9653e8d9e18ff55360d22aa3136ba0458b4d54ba87ce820cc1439",
+    "path_scope_hash": "blake3:47c1b249c62f93960253db6953c2a1caf5e6ecc00b81463c908f4a7e6661e0dc"
+  },
+  "objective": "The prompthub `tui` feature pulls 5 deps (ratatui, dialoguer, console, comfy-table, syntect) but prompthub/src/tui.rs:8 run_tui only prints 'TUI mode activated (feature stub — full implementation requires ratatui integration)'. SPEC.md lists tui as a real subsystem. No-downgrade: build the real ratatui TUI (browse/search/view prompts over the hub) — preferred — OR, if out of scope, formally retire the 5 deps + the tui flag with a recorded rationale so no hollow feature/deps remain.",
+  "path_scope": [
+    "prompthub/src/tui.rs",
+    "prompthub/Cargo.toml",
+    "prompthub/src/cli.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P3",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit handoff 2026-06-18 (completeness reconcile: untracked stubs + hollow features + route gap)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete or formally retire the TUI (run_tui is a stub)"
+}

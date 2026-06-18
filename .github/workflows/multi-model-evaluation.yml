@@ -30,7 +30,7 @@ jobs:
       pr_body: ${{ steps.pr.outputs.body }}
       changed_files: ${{ steps.files.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -57,7 +57,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Review (GitHub Models - GPT-4o)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run review with GitHub Models
         env:
@@ -87,7 +87,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Review (Claude via GitHub Models)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Run review with Claude
         env:
@@ -117,7 +117,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Code Completion (OpenAI via GitHub Models)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Generate code completions
         env:
@@ -147,7 +147,7 @@ jobs:
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     name: Performance Analysis (DeepSeek via GitHub Models)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Analyze performance implications
         env:

@@ -62,6 +62,11 @@ pub mod handlebars_engine {
         fn default() -> Self {
             let mut registry = Handlebars::new();
             registry.set_strict_mode(true);
+            // Prompt content is fed to LLMs (and increasingly IS HTML), never
+            // injected into a browser DOM, so HTML-entity escaping only corrupts
+            // it (`=` -> `&#x3D;`, `"` -> `&quot;`, `<...>` mangled). Disable it so
+            // `{{var}}` substitutes raw content — equivalent to `{{{var}}}` for all.
+            registry.register_escape_fn(handlebars::no_escape);
             Self {
                 registry: Arc::new(registry),
             }
@@ -131,6 +136,73 @@ pub mod tera_engine {
     }
 }
 
+/// Dependency-free fallback template engine.
+///
+/// Performs `{{ var }}` substitution (with or without surrounding spaces) plus the
+/// brace-balance lint. It is the always-available engine when neither the
+/// `handlebars` nor the `tera` feature is enabled, so prompt rendering works in
+/// every feature configuration (an addition, never a downgrade — the richer
+/// engines still take precedence when their features are on).
+#[derive(Debug, Clone, Default)]
+pub struct PlainEngine;
+
+impl PlainEngine {
+    fn brace_lint(template: &str) -> Vec<LintIssue> {
+        let mut issues = Vec::new();
+        let open = template.matches("{{").count();
+        let close = template.matches("}}").count();
+        if open != close {
+            issues.push(LintIssue {
+                severity: LintSeverity::Error,
+                message: format!("Unbalanced braces: {open} open, {close} close"),
+                line: None,
+            });
+        }
+        issues
+    }
+}
+
+impl TemplateEngine for PlainEngine {
+    fn render(&self, template: &str, context: &TemplateContext) -> Result<String> {
+        let mut out = template.to_string();
+        for (key, value) in &context.vars {
+            let replacement = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            // Replace both `{{key}}` and `{{ key }}` (single-space) forms.
+            out = out
+                .replace(&format!("{{{{{key}}}}}"), &replacement)
+                .replace(&format!("{{{{ {key} }}}}"), &replacement);
+        }
+        Ok(out)
+    }
+
+    fn lint(&self, template: &str) -> Vec<LintIssue> {
+        Self::brace_lint(template)
+    }
+}
+
+/// Construct the feature-selected default [`TemplateEngine`].
+///
+/// `handlebars` (the default feature) takes precedence; otherwise `tera` if
+/// enabled; otherwise the built-in [`PlainEngine`]. The result is boxed so the
+/// hub can hold it behind the object-safe [`TemplateEngine`] trait.
+pub fn default_engine() -> Box<dyn TemplateEngine> {
+    #[cfg(feature = "handlebars")]
+    {
+        Box::new(handlebars_engine::HandlebarsEngine::default())
+    }
+    #[cfg(all(not(feature = "handlebars"), feature = "tera"))]
+    {
+        Box::new(tera_engine::TeraEngine::default())
+    }
+    #[cfg(all(not(feature = "handlebars"), not(feature = "tera")))]
+    {
+        Box::new(PlainEngine)
+    }
+}
+
 /// Registry of base templates embedded at compile time
 #[derive(Debug)]
 pub struct TemplateRegistry {
@@ -196,5 +268,51 @@ mod tests {
     fn test_lint_balanced() {
         let issues: Vec<LintIssue> = vec![]; // Balanced template has no issues
         assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn test_plain_engine_render_and_lint() {
+        let engine = PlainEngine;
+        let ctx = TemplateContext::new()
+            .with_var("name", "World")
+            .with_var("count", 3);
+        // Both `{{name}}` and `{{ count }}` (spaced) forms substitute.
+        let out = engine
+            .render("Hi {{name}} x{{ count }}", &ctx)
+            .expect("plain render");
+        assert_eq!(out, "Hi World x3");
+        // Unbalanced braces are flagged as an error.
+        let issues = engine.lint("oops {{name}");
+        assert!(issues.iter().any(|i| i.severity == LintSeverity::Error));
+    }
+
+    #[test]
+    fn test_default_engine_is_constructible() {
+        // Whatever the feature set, the factory yields a working engine.
+        let engine = default_engine();
+        let ctx = TemplateContext::new().with_var("name", "X");
+        let out = engine.render("hello {{name}}", &ctx).expect("render");
+        assert!(out.contains('X'));
+    }
+
+    #[cfg(feature = "handlebars")]
+    #[test]
+    fn test_handlebars_does_not_html_escape_content() {
+        // Prompt content (code, HTML) must render verbatim — no `&#x3D;`/`&quot;`/
+        // `&lt;` mangling. `{{var}}` must behave like `{{{var}}}`.
+        let engine = handlebars_engine::HandlebarsEngine::default();
+        let ctx = TemplateContext::new()
+            .with_var("code", "let x = vec![1]; println!(\"{}\", x);")
+            .with_var("html", "<div class=\"x\">hi</div>");
+        let out = engine
+            .render("code: {{code}}\nhtml: {{html}}", &ctx)
+            .expect("render");
+        assert!(out.contains("let x = vec![1];"), "raw `=` preserved: {out}");
+        assert!(out.contains('"'), "raw quotes preserved: {out}");
+        assert!(
+            out.contains("<div class=\"x\">"),
+            "raw HTML preserved: {out}"
+        );
+        assert!(!out.contains("&#x3D;") && !out.contains("&quot;") && !out.contains("&lt;"));
     }
 }

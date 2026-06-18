@@ -28,7 +28,6 @@ pub mod auth;
 pub mod auto_purge;
 #[cfg(feature = "beta-program")]
 pub mod beta_program;
-#[cfg(feature = "budget")]
 pub mod budget;
 #[cfg(feature = "chaos")]
 pub mod chaos;
@@ -121,6 +120,12 @@ pub mod vibe;
 pub mod voice;
 #[cfg(feature = "voice-anonymize")]
 pub mod voice_anonymize;
+
+// Re-export `inventory` so the `register_plugin!` macro can reference
+// `$crate::inventory` from downstream plugin crates without a direct dependency.
+#[cfg(feature = "plugins")]
+#[doc(hidden)]
+pub use inventory;
 
 // Re-export commonly used types
 pub use config::HubConfig;
