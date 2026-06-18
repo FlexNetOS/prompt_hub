@@ -974,6 +974,308 @@ pub async fn reset_budget_period(State(state): State<Arc<AppState>>) -> Response
     .into_response()
 }
 
+// ── Cost-limits handlers ─────────────────────────────────────────────────
+
+/// Check a cost limit and record spend for an entity-resource pair.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_check_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckCostLimitRequest>,
+) -> Response {
+    if payload.entity_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "entity_id cannot be empty").into_response();
+    }
+    if payload.amount_usd < 0.0 {
+        return error(StatusCode::BAD_REQUEST, "amount_usd cannot be negative").into_response();
+    }
+    let resource = match parse_resource(&payload.resource) {
+        Some(r) => r,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown resource '{}'", payload.resource),
+            )
+            .into_response();
+        }
+    };
+
+    let status = state
+        .hub
+        .check_cost_limits(&payload.entity_id, resource, payload.amount_usd)
+        .await;
+    success(limit_status_to_json(&status)).into_response()
+}
+
+/// Set or update a cost limit for an entity-resource pair.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_set_limit_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SetCostLimitRequest>,
+) -> Response {
+    if payload.entity_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "entity_id cannot be empty").into_response();
+    }
+    if payload.budget_usd < 0.0 {
+        return error(StatusCode::BAD_REQUEST, "budget_usd cannot be negative").into_response();
+    }
+    let resource = match parse_resource(&payload.resource) {
+        Some(r) => r,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown resource '{}'", payload.resource),
+            )
+            .into_response();
+        }
+    };
+    let policy = match parse_overage_policy(&payload.policy) {
+        Some(p) => p,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown overage_policy '{}'", payload.policy),
+            )
+            .into_response();
+        }
+    };
+
+    let entry = state
+        .hub
+        .set_cost_limit(&payload.entity_id, resource, payload.budget_usd, policy);
+    success(json!({ "limit": entry })).into_response()
+}
+
+/// Get utilization percentage for an entity-resource pair.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_utilization_route(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CostUtilizationQuery>,
+) -> Response {
+    if query.entity_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "entity_id cannot be empty").into_response();
+    }
+    let resource = match parse_resource(&query.resource) {
+        Some(r) => r,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown resource '{}'", query.resource),
+            )
+            .into_response();
+        }
+    };
+
+    let utilization = state.hub.cost_utilization(&query.entity_id, resource);
+    success(json!({ "entity_id": query.entity_id, "resource": query.resource, "utilization_percent": utilization })).into_response()
+}
+
+/// Get all tracked cost-limit statuses.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_status_route(State(state): State<Arc<AppState>>) -> Response {
+    let statuses = state
+        .hub
+        .cost_limit_status()
+        .into_iter()
+        .map(|(entity_id, resource, utilization_percent, policy)| {
+            json!({
+                "entity_id": entity_id,
+                "resource": resource,
+                "utilization_percent": utilization_percent,
+                "overage_policy": policy,
+            })
+        })
+        .collect::<Vec<_>>();
+    success(json!({ "statuses": statuses })).into_response()
+}
+
+// ── Beta-program handlers ────────────────────────────────────────────────
+
+/// Create a new beta cohort.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_create_cohort_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateBetaCohortRequest>,
+) -> Response {
+    if payload.id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "id cannot be empty").into_response();
+    }
+    if payload.name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "name cannot be empty").into_response();
+    }
+
+    let cohort = state.hub.create_beta_cohort(&payload.id, &payload.name);
+    success(json!({ "cohort": cohort })).into_response()
+}
+
+/// Enroll a participant in a beta cohort.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_enroll_route(
+    State(state): State<Arc<AppState>>,
+    Path(cohort_id): Path<String>,
+    Json(payload): Json<EnrollBetaRequest>,
+) -> Response {
+    if cohort_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "cohort_id cannot be empty").into_response();
+    }
+    if payload.participant_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "participant_id cannot be empty").into_response();
+    }
+
+    if state.hub.enroll_beta(&cohort_id, &payload.participant_id) {
+        success(json!({ "enrolled": true })).into_response()
+    } else {
+        error(
+            StatusCode::NOT_FOUND,
+            format!("cohort '{}' not found", cohort_id),
+        )
+        .into_response()
+    }
+}
+
+/// Record feedback from a beta participant.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_record_feedback_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordBetaFeedbackRequest>,
+) -> Response {
+    if payload.cohort_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "cohort_id cannot be empty").into_response();
+    }
+    if payload.participant_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "participant_id cannot be empty").into_response();
+    }
+    if payload.score < 1 || payload.score > 5 {
+        return error(StatusCode::BAD_REQUEST, "score must be between 1 and 5").into_response();
+    }
+
+    if state.hub.record_feedback(
+        &payload.cohort_id,
+        &payload.participant_id,
+        payload.score,
+        payload.comment,
+    ) {
+        success(json!({ "recorded": true })).into_response()
+    } else {
+        error(
+            StatusCode::NOT_FOUND,
+            format!("cohort '{}' not found", payload.cohort_id),
+        )
+        .into_response()
+    }
+}
+
+/// Get overall beta program statistics.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_stats_route(State(state): State<Arc<AppState>>) -> Response {
+    let stats = state.hub.beta_stats();
+    success(json!({ "stats": stats })).into_response()
+}
+
+// ── Quota handlers ───────────────────────────────────────────────────────
+
+/// Check and consume tokens against the quota enforcer.
+#[cfg(feature = "quota")]
+#[instrument(skip(state))]
+pub async fn quota_consume_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ConsumeQuotaRequest>,
+) -> Response {
+    match state.hub.check_and_consume(payload.tokens) {
+        Ok(status) => success(quota_status_to_json(&status)).into_response(),
+        Err(e) => map_hub_error("quota consume", e),
+    }
+}
+
+/// Get current quota usage.
+#[cfg(feature = "quota")]
+#[instrument(skip(state))]
+pub async fn quota_usage_route(State(state): State<Arc<AppState>>) -> Response {
+    let usage = state.hub.quota_usage();
+    success(json!({
+        "daily_used": usage.daily_used,
+        "daily_limit": usage.daily_limit,
+        "hourly_used": usage.hourly_used,
+        "hourly_limit": usage.hourly_limit,
+        "burst_used": usage.burst_used,
+        "burst_limit": usage.burst_limit,
+    }))
+    .into_response()
+}
+
+/// Reset all quota counters.
+#[cfg(feature = "quota")]
+#[instrument(skip(state))]
+pub async fn quota_reset_route(State(state): State<Arc<AppState>>) -> Response {
+    state.hub.reset_quota();
+    info!("Quota counters reset");
+    success(json!({ "status": "reset" })).into_response()
+}
+
+// ── Moderation handlers ──────────────────────────────────────────────────
+
+/// Check a prompt for harmful content.
+#[cfg(feature = "moderation")]
+#[instrument(skip(state))]
+pub async fn moderation_check_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckContentRequest>,
+) -> Response {
+    if payload.prompt.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompt cannot be empty").into_response();
+    }
+
+    match state.hub.check_content(&payload.prompt) {
+        Ok(report) => success(moderation_report_to_json(&report)).into_response(),
+        Err(e) => map_hub_error("content moderation", e),
+    }
+}
+
+/// Quick check returning whether content passes moderation.
+#[cfg(feature = "moderation")]
+#[instrument(skip(state))]
+pub async fn moderation_is_safe_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckContentRequest>,
+) -> Response {
+    if payload.prompt.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompt cannot be empty").into_response();
+    }
+
+    let safe = state.hub.is_content_safe(&payload.prompt);
+    success(json!({ "safe": safe })).into_response()
+}
+
+/// Check multiple prompts for harmful content.
+#[cfg(feature = "moderation")]
+#[instrument(skip(state))]
+pub async fn moderation_check_batch_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckContentBatchRequest>,
+) -> Response {
+    if payload.prompts.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompts cannot be empty").into_response();
+    }
+
+    let results = state
+        .hub
+        .check_content_batch(&payload.prompts)
+        .into_iter()
+        .map(|r| match r {
+            Ok(report) => moderation_report_to_json(&report),
+            Err(e) => json!({"error": e.to_string()}),
+        })
+        .collect::<Vec<_>>();
+    success(json!({ "results": results })).into_response()
+}
+
 // ── Load balancer handlers ───────────────────────────────────────────────
 
 /// Register a new LLM provider in the load balancer pool.
@@ -1555,6 +1857,88 @@ pub struct LintTemplateRequest {
     pub template: String,
 }
 
+// ── Cost-limits request DTOs ──────────────────────────────────────────────
+
+/// Request body for checking a cost limit and recording spend.
+#[cfg(feature = "cost-limits")]
+#[derive(Debug, Deserialize)]
+pub struct CheckCostLimitRequest {
+    pub entity_id: String,
+    pub resource: String,
+    pub amount_usd: f64,
+}
+
+/// Request body for setting a cost limit.
+#[cfg(feature = "cost-limits")]
+#[derive(Debug, Deserialize)]
+pub struct SetCostLimitRequest {
+    pub entity_id: String,
+    pub resource: String,
+    pub budget_usd: f64,
+    pub policy: String,
+}
+
+/// Query parameters for cost utilization.
+#[cfg(feature = "cost-limits")]
+#[derive(Debug, Deserialize)]
+pub struct CostUtilizationQuery {
+    pub entity_id: String,
+    pub resource: String,
+}
+
+// ── Beta-program request DTOs ─────────────────────────────────────────────
+
+/// Request body for creating a beta cohort.
+#[cfg(feature = "beta-program")]
+#[derive(Debug, Deserialize)]
+pub struct CreateBetaCohortRequest {
+    pub id: String,
+    pub name: String,
+}
+
+/// Request body for enrolling a participant in a beta cohort.
+#[cfg(feature = "beta-program")]
+#[derive(Debug, Deserialize)]
+pub struct EnrollBetaRequest {
+    pub participant_id: String,
+}
+
+/// Request body for recording beta feedback.
+#[cfg(feature = "beta-program")]
+#[derive(Debug, Deserialize)]
+pub struct RecordBetaFeedbackRequest {
+    pub cohort_id: String,
+    pub participant_id: String,
+    pub score: u8,
+    #[serde(default)]
+    pub comment: String,
+}
+
+// ── Quota request DTOs ────────────────────────────────────────────────────
+
+/// Request body for checking and consuming quota tokens.
+#[cfg(feature = "quota")]
+#[derive(Debug, Deserialize)]
+pub struct ConsumeQuotaRequest {
+    pub tokens: u64,
+}
+
+// ── Moderation request DTOs ───────────────────────────────────────────────
+
+/// Request body for checking content moderation.
+#[cfg(feature = "moderation")]
+#[derive(Debug, Deserialize)]
+pub struct CheckContentRequest {
+    pub prompt: String,
+}
+
+/// Request body for batch moderation checks.
+#[cfg(feature = "moderation")]
+#[derive(Debug, Deserialize)]
+pub struct CheckContentBatchRequest {
+    pub prompts: Vec<String>,
+}
+
 // ── Context gathering request DTOs ────────────────────────────────────────
 
 /// Request body for gathering project context.
@@ -1717,6 +2101,91 @@ fn parse_vendor(vendor: &str) -> Option<Vendor> {
         _ if !vendor.is_empty() => Some(Vendor::Custom(vendor.to_string())),
         _ => None,
     }
+}
+
+/// Parse a cost-limit resource string into a [`Resource`].
+#[cfg(feature = "cost-limits")]
+fn parse_resource(resource: &str) -> Option<prompt_hub::cost_limits::Resource> {
+    match resource.to_lowercase().as_str() {
+        "compute" => Some(prompt_hub::cost_limits::Resource::Compute),
+        "storage" => Some(prompt_hub::cost_limits::Resource::Storage),
+        "api_calls" | "api-calls" | "api calls" => {
+            Some(prompt_hub::cost_limits::Resource::ApiCalls)
+        }
+        _ if !resource.is_empty() => Some(prompt_hub::cost_limits::Resource::Custom(
+            resource.to_string(),
+        )),
+        _ => None,
+    }
+}
+
+/// Parse an overage policy string into an [`OveragePolicy`].
+#[cfg(feature = "cost-limits")]
+fn parse_overage_policy(policy: &str) -> Option<prompt_hub::cost_limits::OveragePolicy> {
+    match policy.to_lowercase().as_str() {
+        "alert" => Some(prompt_hub::cost_limits::OveragePolicy::Alert),
+        "block" => Some(prompt_hub::cost_limits::OveragePolicy::Block),
+        "fail" => Some(prompt_hub::cost_limits::OveragePolicy::Fail),
+        _ => None,
+    }
+}
+
+/// Convert a [`LimitStatus`] to a JSON-friendly representation.
+#[cfg(feature = "cost-limits")]
+fn limit_status_to_json(status: &prompt_hub::cost_limits::LimitStatus) -> Value {
+    match status {
+        prompt_hub::cost_limits::LimitStatus::Ok => json!({"status": "ok"}),
+        prompt_hub::cost_limits::LimitStatus::OverLimit => json!({"status": "over_limit"}),
+        prompt_hub::cost_limits::LimitStatus::Blocked => json!({"status": "blocked"}),
+        prompt_hub::cost_limits::LimitStatus::Failed(msg) => {
+            json!({"status": "failed", "message": msg})
+        }
+    }
+}
+
+/// Convert a [`QuotaStatus`] to a JSON-friendly representation.
+#[cfg(feature = "quota")]
+fn quota_status_to_json(status: &prompt_hub::quota::QuotaStatus) -> Value {
+    let status_str = match status {
+        prompt_hub::quota::QuotaStatus::Allowed => "allowed",
+        prompt_hub::quota::QuotaStatus::DailyExceeded => "daily_exceeded",
+        prompt_hub::quota::QuotaStatus::HourlyExceeded => "hourly_exceeded",
+        prompt_hub::quota::QuotaStatus::BurstExceeded => "burst_exceeded",
+    };
+    json!({"status": status_str})
+}
+
+/// Convert a [`ModerationReport`] to a JSON-friendly representation.
+#[cfg(feature = "moderation")]
+fn moderation_report_to_json(report: &prompt_hub::moderation::ModerationReport) -> Value {
+    let (result, category, matched_term, score) = match &report.result {
+        prompt_hub::moderation::ModerationResult::Allow => {
+            ("allow", None::<String>, None::<String>, None::<u8>)
+        }
+        prompt_hub::moderation::ModerationResult::Block {
+            category,
+            matched_term,
+        } => (
+            "block",
+            Some(format!("{:?}", category)),
+            Some(matched_term.clone()),
+            None::<u8>,
+        ),
+        prompt_hub::moderation::ModerationResult::Flag { category, score } => (
+            "flag",
+            Some(format!("{:?}", category)),
+            None::<String>,
+            Some(*score),
+        ),
+    };
+    json!({
+        "result": result,
+        "category": category,
+        "matched_term": matched_term,
+        "score": score,
+        "highest_score": report.highest_score,
+        "categories_checked": report.categories_checked.iter().map(|c| format!("{:?}", c)).collect::<Vec<_>>(),
+    })
 }
 
 /// Parse a UUID string and map invalid input to a 400 response.
@@ -3760,6 +4229,307 @@ mod tests {
         )
         .await;
 
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Cost-limits route tests ─────────────────────────────────────────────
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_set_and_check() {
+        let state = evolve_test_state().await;
+
+        let response = cost_limits_set_limit_route(
+            axum::extract::State(state.clone()),
+            axum::Json(SetCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "compute".to_string(),
+                budget_usd: 100.0,
+                policy: "block".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = cost_limits_check_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CheckCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "compute".to_string(),
+                amount_usd: 150.0,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_utilization() {
+        let state = evolve_test_state().await;
+
+        cost_limits_set_limit_route(
+            axum::extract::State(state.clone()),
+            axum::Json(SetCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "storage".to_string(),
+                budget_usd: 200.0,
+                policy: "alert".to_string(),
+            }),
+        )
+        .await;
+
+        let response = cost_limits_utilization_route(
+            axum::extract::State(state),
+            axum::extract::Query(CostUtilizationQuery {
+                entity_id: "org-1".to_string(),
+                resource: "storage".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_status() {
+        let state = evolve_test_state().await;
+
+        cost_limits_set_limit_route(
+            axum::extract::State(state.clone()),
+            axum::Json(SetCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "compute".to_string(),
+                budget_usd: 100.0,
+                policy: "alert".to_string(),
+            }),
+        )
+        .await;
+
+        let response = cost_limits_status_route(axum::extract::State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_invalid_resource_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = cost_limits_check_route(
+            axum::extract::State(state),
+            axum::Json(CheckCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "".to_string(),
+                amount_usd: 10.0,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Beta-program route tests ────────────────────────────────────────────
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_create_cohort_and_enroll() {
+        let state = evolve_test_state().await;
+
+        let response = beta_create_cohort_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CreateBetaCohortRequest {
+                id: "beta-1".to_string(),
+                name: "Test Beta".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = beta_enroll_route(
+            axum::extract::State(state.clone()),
+            axum::extract::Path("beta-1".to_string()),
+            axum::Json(EnrollBetaRequest {
+                participant_id: "user-1".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_enroll_missing_cohort_returns_404() {
+        let state = evolve_test_state().await;
+
+        let response = beta_enroll_route(
+            axum::extract::State(state),
+            axum::extract::Path("missing".to_string()),
+            axum::Json(EnrollBetaRequest {
+                participant_id: "user-1".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_record_feedback_and_stats() {
+        let state = evolve_test_state().await;
+
+        beta_create_cohort_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CreateBetaCohortRequest {
+                id: "beta-1".to_string(),
+                name: "Test Beta".to_string(),
+            }),
+        )
+        .await;
+
+        let response = beta_record_feedback_route(
+            axum::extract::State(state.clone()),
+            axum::Json(RecordBetaFeedbackRequest {
+                cohort_id: "beta-1".to_string(),
+                participant_id: "user-1".to_string(),
+                score: 5,
+                comment: "Great!".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = beta_stats_route(axum::extract::State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_feedback_invalid_score_rejected() {
+        let state = evolve_test_state().await;
+
+        beta_create_cohort_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CreateBetaCohortRequest {
+                id: "beta-1".to_string(),
+                name: "Test Beta".to_string(),
+            }),
+        )
+        .await;
+
+        let response = beta_record_feedback_route(
+            axum::extract::State(state),
+            axum::Json(RecordBetaFeedbackRequest {
+                cohort_id: "beta-1".to_string(),
+                participant_id: "user-1".to_string(),
+                score: 10,
+                comment: "".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Quota route tests ───────────────────────────────────────────────────
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_consume_and_usage() {
+        let state = evolve_test_state().await;
+
+        let response = quota_consume_route(
+            axum::extract::State(state.clone()),
+            axum::Json(ConsumeQuotaRequest { tokens: 1 }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = quota_usage_route(axum::extract::State(state.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = quota_reset_route(axum::extract::State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_consume_exceeded() {
+        let state = evolve_test_state().await;
+
+        let response = quota_consume_route(
+            axum::extract::State(state),
+            axum::Json(ConsumeQuotaRequest { tokens: 20_000 }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Moderation route tests ──────────────────────────────────────────────
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_check_safe() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CheckContentRequest {
+                prompt: "What is the weather today?".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = moderation_is_safe_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentRequest {
+                prompt: "What is the weather today?".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_check_blocked() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentRequest {
+                prompt: "How to make a bomb and attack".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_check_batch() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_batch_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentBatchRequest {
+                prompts: vec!["Hello world".to_string(), "how to steal money".to_string()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_empty_prompt_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentRequest {
+                prompt: "".to_string(),
+            }),
+        )
+        .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
