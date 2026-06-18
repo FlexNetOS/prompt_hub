@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0023",
+  "title": "Server routes: budget (6 endpoints)",
+  "status": "done",
+  "priority": "P1",
+  "objective": "6 endpoints under /api/v1/budget/ (spend/status/budget/config load+save/reset) + 3 DTOs; per-feature cfg router scopes; `budget` feature pass-through.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "acceptance_criteria": [
+    "6 budget endpoints wired to hub; gates green"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:54243503a357b12c45308632aaf95f1607bcb4923afa5bfcedc6bc4ea00b754a",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135",
+    "acceptance_hash": "blake3:84253b979bfdeaca023f34744c357c83b31f320f55a529fd85ce8fa4d1c83210"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "ae0bc1a",
+  "cycle": 79
+}

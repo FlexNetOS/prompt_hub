@@ -1,0 +1,38 @@
+{
+  "acceptance_criteria": [
+    "transcribe invokes a real STT backend via a trait (test fake for offline tests); passthrough literal removed",
+    "speak invokes a real TTS backend via a trait; raw-bytes passthrough removed",
+    "process_text routes the transcript through the hub prompt path",
+    "tests cover the wired pipeline with injected backends"
+  ],
+  "allows_dependency_addition": true,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0055",
+  "intent_lock": {
+    "acceptance_hash": "blake3:dfbc5eaaa9ca438860a07bf6449a8786108dfb6fb8edc207d122bc425c1c39ce",
+    "objective_hash": "blake3:76b143dcf7da2312f5187065b20ad109047a904441e638d2c25257bb14b8632e",
+    "path_scope_hash": "blake3:5dab20bb0efc8583de55bbea11439e2f73fd9ecf8b360582372b583c134a15ac"
+  },
+  "objective": "PHTASK-0019 recovered the voice ORCHESTRATION FSM (real), but every I/O is a passthrough: stop_recording returns literal b\"passthrough-audio-buffer\" (:86); transcribe is from_utf8_lossy with no STT (:115); process_text returns a format! string and never calls the hub (:147); speak returns text.as_bytes() with no TTS (:180). Complete the engine boundary: real feature-gated STT and TTS backends (trait-abstracted with a test fake), and route process_text through the hub prompt path.",
+  "path_scope": [
+    "prompt-hub/src/voice.rs",
+    "prompt-hub/src/hub.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete voice STT/TTS backends behind the FSM"
+}

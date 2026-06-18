@@ -1,3 +1,5 @@
+#![cfg(feature = "voice")]
+
 use prompt_hub::PromptHub;
 use prompt_hub::config::HubConfig;
 use prompt_hub::models::{VoiceOutputFormat, VoicePipelineConfig};
@@ -25,6 +27,7 @@ async fn test_voice_engine_wiring_in_hub() {
         tts_enabled: true,
         stt_enabled: true,
         output_format: VoiceOutputFormat::Mp3,
+        ..VoicePipelineConfig::default()
     })
     .expect("configure voice");
 

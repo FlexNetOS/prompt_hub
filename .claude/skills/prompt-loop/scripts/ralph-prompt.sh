@@ -3,7 +3,8 @@
 # Self-restarts /prompt-loop with a FRESH context each iteration (each `claude -p`
 # process is a clean session = the "/new" effect) until a terminal sentinel.
 #
-# Truth lives on disk: _workspace/backlog.md + loop_state.md + commits + HANDOFF.md.
+# Truth lives on disk in .handoff/: tasks/*.task.json (cards) + packets/latest.md
+# (derived via `hf fleet render prompt_hub`) + active.md + commits.
 # Each fresh agent runs up to BUDGET cycles, writes EXACTLY ONE sentinel, and exits.
 #
 # ── Permission model (read this) ──────────────────────────────────────────────
@@ -21,7 +22,7 @@
 #   APPLY (opt-in):  PROMPT_APPLY=1 bash .claude/skills/prompt-loop/scripts/ralph-prompt.sh
 #                    -> push branch -> open PR -> auto-merge ONLY when the full
 #                       DONE-criteria gates are green; fail-closed to NEEDS-HUMAN otherwise.
-#   Kill switch:     touch _workspace/STOP   (halts before the next spawn, any time)
+#   Kill switch:     touch .handoff/STOP   (halts before the next spawn, any time)
 set -euo pipefail
 
 WORKTREE="${PROMPT_WORKTREE:-$(pwd)}"
@@ -29,7 +30,7 @@ BUDGET="${PROMPT_BUDGET:-3}"            # completed cycles per fresh session bef
 MAX_ITERS="${PROMPT_MAX_ITERS:-50}"    # hard backstop on spawns
 SLEEP_BETWEEN="${PROMPT_SLEEP:-5}"
 MODEL="${PROMPT_MODEL:-opus}"
-WS="$WORKTREE/_workspace"; mkdir -p "$WS"
+WS="$WORKTREE/.handoff"; mkdir -p "$WS/work"   # sentinels in .handoff/ (gitignored); run logs in .handoff/work/
 
 log(){ printf '[ralph-prompt %s] %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 command -v claude >/dev/null || { log "FATAL: claude not on PATH"; exit 1; }
@@ -45,20 +46,23 @@ fi
 read -r -d '' PROMPT <<EOF || true
 /prompt-loop resume (external Ralph runner, fresh context). Worktree: $WORKTREE. Cycle budget: $BUDGET.
 Apply mode: ${PROMPT_APPLY:-0} (0 = SAFE local-commits-only; 1 = push -> PR -> auto-merge ONLY on green DONE-gates).
-1. If _workspace/HANDOFF.md exists, follow session-relay RESUME from it (authoritative signal):
-   read it, run the verify-on-resume baseline, reset cycles_this_session=0, continue at the current item.
-   Else if _workspace/backlog.md is missing, run DISCOVER (backlog-curator) to seed it.
-2. Run up to $BUDGET cycles of /prompt-loop Phase 2: one backlog item each via the agent team
+1. State lives in .handoff/ (canonical; the deprecated _workspace/ is archived under
+   .handoff/history/). Follow session-relay RESUME: read .handoff/packets/latest.md (refresh with
+   'cd <meta-root> && hf fleet render prompt_hub', or 'hf resume'), run the verify-on-resume
+   baseline, reset the per-session counter, continue at the top unblocked card in .handoff/tasks/.
+   If .handoff/tasks/ has no cards at all, run DISCOVER (backlog-curator) to author them.
+2. Run up to $BUDGET cycles of /prompt-loop Phase 2: one card each via the agent team
    (feature-architect -> rust-implementer <-> verification-gate -> docs-scribe, all model opus),
    following the feature-build discipline. VERIFY across boundaries in a FRESH shell, both default
-   and --all-features. Commit per cycle (Conventional Commit + Co-Authored-By trailer). Fail-closed;
-   never weaken a guard. Honor the apply mode exactly. If an action is blocked by the permission
-   sandbox, treat it as a human wall: write NEEDS-HUMAN with the blocked command rather than forcing it.
-3. Then write EXACTLY ONE sentinel under _workspace/ and stop (do NOT ScheduleWakeup):
-   - _workspace/DONE        (with evidence)  — backlog empty AND full DONE-gates green
-   - _workspace/NEEDS-HUMAN (with reason)    — a human wall (interactive auth / irreversible op /
-                                               branch-protection blocking self-merge / sandbox denial)
-   - else _workspace/HANDOFF.md              — more work remains (spawn continuity-steward)
+   and --all-features. Per cycle: set the card status:done (+ 'hf fleet render prompt_hub'), commit
+   code + .handoff/ (Conventional Commit + Co-Authored-By trailer). Fail-closed; never weaken a guard.
+   Honor the apply mode exactly. If an action is blocked by the permission sandbox, treat it as a
+   human wall: write .handoff/NEEDS-HUMAN with the blocked command rather than forcing it.
+3. Then write EXACTLY ONE sentinel under .handoff/ and stop (do NOT ScheduleWakeup):
+   - .handoff/DONE        (with evidence)  — no open cards AND full DONE-gates green
+   - .handoff/NEEDS-HUMAN (with reason)    — a human wall (interactive auth / irreversible op /
+                                             branch-protection blocking self-merge / sandbox denial)
+   - else .handoff/HANDOFF               — more work remains (packet rendered; respawn)
 EOF
 
 cd "$WORKTREE"; i=0
@@ -69,7 +73,7 @@ while :; do
   [ -f "$WS/NEEDS-HUMAN" ] && { log "NEEDS-HUMAN: $(cat "$WS/NEEDS-HUMAN")"; exit 2; }
   log "iter $i/$MAX_ITERS — spawning fresh agent (budget=$BUDGET, model=$MODEL)"
   claude -p "$PROMPT" --model "$MODEL" --add-dir "$WORKTREE" \
-    >>"$WS/ralph-run-$i.log" 2>&1 || log "iter $i exited nonzero (continuing from durable state)"
+    >>"$WS/work/ralph-run-$i.log" 2>&1 || log "iter $i exited nonzero (continuing from durable state)"
   [ -f "$WS/DONE" ]        && { log "DONE."; exit 0; }
   [ -f "$WS/NEEDS-HUMAN" ] && { log "NEEDS-HUMAN: $(cat "$WS/NEEDS-HUMAN")"; exit 2; }
   [ -f "$WS/STOP" ]        && { log "STOP — halting."; exit 2; }

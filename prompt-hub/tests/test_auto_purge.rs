@@ -31,6 +31,7 @@ async fn test_purge_now_on_empty_db() {
 }
 
 /// Integration test: archive policy condition construction works.
+#[cfg(feature = "auto-purge")]
 #[test]
 fn test_archive_policy_condition_construction() {
     use prompt_hub::auto_purge::{PolicyCondition, PurgeAction, PurgePolicy};

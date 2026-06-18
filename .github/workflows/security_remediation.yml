@@ -32,7 +32,7 @@ jobs:
       security-events: read   # read Dependabot / code-scanning alerts
       pull-requests: write     # the remediation agent opens the PR
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -64,7 +64,7 @@ jobs:
           } | tee "$GITHUB_STEP_SUMMARY" > alert-inventory.md
 
       - name: Upload inventory
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: security-alert-inventory
           path: alert-inventory.md
