@@ -37,7 +37,6 @@ pub fn create_router(state: AppState) -> Router {
         // Prompt CRUD
         .route("/api/v1/prompts", post(routes::register_prompt))
         .route("/api/v1/prompts", get(routes::list_prompts))
-        .route("/api/v1/prompts/{id}", get(routes::get_prompt))
         .route("/api/v1/prompts/{id}", patch(routes::update_prompt))
         .route("/api/v1/prompts/get", get(routes::get_prompt_route))
         .route("/api/v1/prompts/{id}/evolve", post(routes::evolve_prompt));
