@@ -4493,6 +4493,7 @@ mod tests {
             cost_micros: 500,
             success: true,
             duration_ms: 50,
+            timestamp: chrono::Utc::now(),
         });
 
         let report = hub.get_usage_report();
