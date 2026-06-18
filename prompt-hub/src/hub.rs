@@ -70,13 +70,15 @@ use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
 #[cfg(feature = "voice")]
-use crate::voice::VoicePipelineEngine;
+use crate::voice::{PromptResolver, VoicePipelineEngine};
 #[cfg(feature = "voice-anonymize")]
 use crate::voice_anonymize::Anonymizer;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
 use std::path::Path;
+#[cfg(feature = "voice")]
+use std::pin::Pin;
 use std::sync::Arc;
 #[cfg(feature = "budget")]
 use tracing::debug;
@@ -273,7 +275,7 @@ pub struct PromptHub {
     #[cfg(feature = "sandbox")]
     sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
     #[cfg(feature = "voice")]
-    voice_engine: std::sync::Arc<std::sync::Mutex<VoicePipelineEngine>>,
+    voice_engine: std::sync::Arc<tokio::sync::Mutex<VoicePipelineEngine>>,
     #[cfg(feature = "voice-anonymize")]
     voice_anonymizer: std::sync::Arc<std::sync::Mutex<Anonymizer>>,
     #[cfg(feature = "touch")]
@@ -308,6 +310,51 @@ pub struct PromptHub {
     mobile_engine: std::sync::Arc<std::sync::RwLock<Option<Arc<std::sync::Mutex<MobileEngine>>>>>,
     #[cfg(feature = "gather")]
     smart_gatherer: SmartContextGatherer,
+}
+
+/// Resolver that routes voice transcripts through the hub prompt path.
+///
+/// Converts the transcript to an [`Intent`] via [`PromptHub::process_input`],
+/// then attempts to find a matching prompt via [`PromptHub::get`]. If no
+/// prompt matches, the original transcript is returned unchanged.
+#[cfg(feature = "voice")]
+#[derive(Debug)]
+struct HubPromptResolver<'a> {
+    hub: &'a PromptHub,
+}
+
+#[cfg(feature = "voice")]
+impl PromptResolver for HubPromptResolver<'_> {
+    fn resolve<'b>(
+        &'b self,
+        text: &'b str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'b>> {
+        let hub = self.hub;
+        Box::pin(async move {
+            let input = UserInput {
+                input_type: InputType::Text,
+                raw_data: Vec::new(),
+                extracted_text: text.to_string(),
+            };
+            let intent = hub.process_input(input).await?;
+            let prompt = hub
+                .get(
+                    Role::Orchestrator,
+                    &intent.raw_text,
+                    &AgentIdentity::default(),
+                )
+                .await?;
+            Ok(prompt
+                .map(|p| {
+                    if p.system_prompt.is_empty() {
+                        p.user_template
+                    } else {
+                        p.system_prompt
+                    }
+                })
+                .unwrap_or(intent.raw_text))
+        })
+    }
 }
 
 impl PromptHub {
@@ -397,9 +444,9 @@ impl PromptHub {
             #[cfg(feature = "sandbox")]
             sandbox_engine: std::sync::Arc::new(crate::sandbox::SandboxEngine::default()),
             #[cfg(feature = "voice")]
-            voice_engine: std::sync::Arc::new(
-                std::sync::Mutex::new(VoicePipelineEngine::default()),
-            ),
+            voice_engine: std::sync::Arc::new(tokio::sync::Mutex::new(
+                VoicePipelineEngine::default(),
+            )),
             #[cfg(feature = "voice-anonymize")]
             voice_anonymizer: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::voice_anonymize::Anonymizer::default_with_builtins(),
@@ -2818,11 +2865,8 @@ impl PromptHub {
     /// Configure the voice pipeline with a new [`VoicePipelineConfig`].
     #[cfg(feature = "voice")]
     #[instrument(skip(self), fields(config = ?config))]
-    pub fn configure_voice(&self, config: VoicePipelineConfig) -> Result<()> {
-        let mut engine = self
-            .voice_engine
-            .lock()
-            .map_err(|e| HubError::Internal(format!("voice engine lock poisoned: {}", e)))?;
+    pub async fn configure_voice(&self, config: VoicePipelineConfig) -> Result<()> {
+        let mut engine = self.voice_engine.lock().await;
         engine.configure(config);
         Ok(())
     }
@@ -2830,58 +2874,49 @@ impl PromptHub {
     /// Get the current voice pipeline FSM state.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn get_voice_state(&self) -> Option<VoicePipelineState> {
-        let engine = self.voice_engine.lock().ok()?;
+    pub async fn get_voice_state(&self) -> Option<VoicePipelineState> {
+        let engine = self.voice_engine.lock().await;
         Some(engine.get_state().clone())
     }
 
     /// Get the current voice output format.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn get_voice_output_format(&self) -> Option<VoiceOutputFormat> {
-        let engine = self.voice_engine.lock().ok()?;
+    pub async fn get_voice_output_format(&self) -> Option<VoiceOutputFormat> {
+        let engine = self.voice_engine.lock().await;
         Some(engine.get_output_format().clone())
     }
 
     /// Execute a complete voice turn through the pipeline.
+    ///
+    /// Routes the transcribed text through the hub prompt path via
+    /// [`HubPromptResolver`] before TTS synthesis.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
     pub async fn execute_voice_turn(&self, prompt_text: &str) -> Result<VoiceInteraction> {
-        let prompt_text = prompt_text.to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        // Clone Arc-wrapped engine for the spawn.
+        // Clone the engine Arc so the resolver can borrow `&self` without
+        // conflicting with the mutex guard.
         let engine_arc = self.voice_engine.clone();
-        std::thread::spawn(move || {
-            let mut engine = engine_arc.lock().expect("voice engine lock poisoned");
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .build()
-                .expect("tokio runtime for voice turn");
-            let result = rt.block_on(engine.execute_turn(&prompt_text));
-            let _ = tx.send(result);
-        });
-        rx.await
-            .map_err(|e| HubError::Internal(format!("voice turn panicked: {}", e)))?
+        let mut engine = engine_arc.lock().await;
+        let resolver = HubPromptResolver { hub: self };
+        engine
+            .execute_turn_with_resolver(prompt_text, &resolver)
+            .await
     }
 
     /// Reset the voice pipeline back to Idle.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn reset_voice_pipeline(&self) {
-        let mut engine = self
-            .voice_engine
-            .lock()
-            .expect("voice engine lock poisoned");
+    pub async fn reset_voice_pipeline(&self) {
+        let mut engine = self.voice_engine.lock().await;
         engine.reset();
     }
 
     /// Get the current voice pipeline interaction history.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn get_voice_history(&self) -> Vec<VoiceInteraction> {
-        let engine = self
-            .voice_engine
-            .lock()
-            .expect("voice engine lock poisoned");
+    pub async fn get_voice_history(&self) -> Vec<VoiceInteraction> {
+        let engine = self.voice_engine.lock().await;
         engine.get_history().to_vec()
     }
 
