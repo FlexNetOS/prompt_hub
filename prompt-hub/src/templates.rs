@@ -62,6 +62,11 @@ pub mod handlebars_engine {
         fn default() -> Self {
             let mut registry = Handlebars::new();
             registry.set_strict_mode(true);
+            // Prompt content is fed to LLMs (and increasingly IS HTML), never
+            // injected into a browser DOM, so HTML-entity escaping only corrupts
+            // it (`=` -> `&#x3D;`, `"` -> `&quot;`, `<...>` mangled). Disable it so
+            // `{{var}}` substitutes raw content — equivalent to `{{{var}}}` for all.
+            registry.register_escape_fn(handlebars::no_escape);
             Self {
                 registry: Arc::new(registry),
             }
@@ -288,5 +293,26 @@ mod tests {
         let ctx = TemplateContext::new().with_var("name", "X");
         let out = engine.render("hello {{name}}", &ctx).expect("render");
         assert!(out.contains('X'));
+    }
+
+    #[cfg(feature = "handlebars")]
+    #[test]
+    fn test_handlebars_does_not_html_escape_content() {
+        // Prompt content (code, HTML) must render verbatim — no `&#x3D;`/`&quot;`/
+        // `&lt;` mangling. `{{var}}` must behave like `{{{var}}}`.
+        let engine = handlebars_engine::HandlebarsEngine::default();
+        let ctx = TemplateContext::new()
+            .with_var("code", "let x = vec![1]; println!(\"{}\", x);")
+            .with_var("html", "<div class=\"x\">hi</div>");
+        let out = engine
+            .render("code: {{code}}\nhtml: {{html}}", &ctx)
+            .expect("render");
+        assert!(out.contains("let x = vec![1];"), "raw `=` preserved: {out}");
+        assert!(out.contains('"'), "raw quotes preserved: {out}");
+        assert!(
+            out.contains("<div class=\"x\">"),
+            "raw HTML preserved: {out}"
+        );
+        assert!(!out.contains("&#x3D;") && !out.contains("&quot;") && !out.contains("&lt;"));
     }
 }
