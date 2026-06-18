@@ -19,6 +19,9 @@ use prompt_hub::models::*;
 #[cfg(feature = "budget")]
 use prompt_hub::budget::{BudgetAlert, BudgetConfig};
 
+#[cfg(feature = "multi-provider")]
+use prompt_hub::multi_provider::{ProviderConfig, Vendor};
+
 use crate::responses::{error, success};
 
 // ── Satisfaction request DTOs ─────────────────────────────────────────────
@@ -1578,6 +1581,92 @@ pub struct ExtractPatternsRequest {
     pub project_path: String,
 }
 
+// ── Provider health request DTOs ──────────────────────────────────────────
+
+/// Request body for registering a provider for health monitoring.
+#[derive(Debug, Deserialize)]
+pub struct RegisterProviderRequest {
+    pub name: String,
+    pub url: String,
+}
+
+/// Request body for recording a successful provider probe.
+#[derive(Debug, Deserialize)]
+pub struct RecordProviderSuccessRequest {
+    pub latency_ms: u64,
+}
+
+// ── Multi-provider request DTOs ───────────────────────────────────────────
+
+/// Request body for adding a provider to the multi-provider routing pool.
+#[derive(Debug, Deserialize)]
+pub struct AddMultiProviderRequest {
+    pub name: String,
+    pub vendor: String,
+    pub endpoint: String,
+    pub priority: u32,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+}
+
+fn default_max_retries() -> u32 {
+    3
+}
+
+/// Query parameters for routing to a specific vendor.
+#[derive(Debug, Deserialize)]
+pub struct RouteToVendorQuery {
+    pub vendor: Option<String>,
+}
+
+// ── Rollout request DTOs ──────────────────────────────────────────────────
+
+/// Request body for checking whether a user is included in a canary rollout.
+#[derive(Debug, Deserialize)]
+pub struct CheckRolloutRequest {
+    pub canary: CanaryDeployment,
+    pub user_id: String,
+}
+
+/// Request body for registering a graduated rollout configuration.
+#[derive(Debug, Deserialize)]
+pub struct RegisterRolloutRequest {
+    pub config: GraduatedRolloutConfig,
+}
+
+/// Request body for finding rollout inclusion for a user.
+#[derive(Debug, Deserialize)]
+pub struct FindRolloutInclusionRequest {
+    pub rollout_id: String,
+    pub feature: String,
+    pub user_id: String,
+}
+
+/// Request body for evaluating auto-rollback for a rollout.
+#[derive(Debug, Deserialize)]
+pub struct EvaluateAutoRollbackRequest {
+    pub rollout_id: String,
+    pub error_rate: f64,
+    pub latency_p99_ms: u64,
+}
+
+/// Request body for advancing a rollout segment.
+#[derive(Debug, Deserialize)]
+pub struct AdvanceSegmentRequest {
+    pub rollout_id: String,
+    pub segment_idx: usize,
+}
+
+// ── Rollback / deploy request DTOs ────────────────────────────────────────
+
+/// Request body for deploying an artifact with optional rollback.
+#[derive(Debug, Deserialize)]
+pub struct DeployWithRollbackRequest {
+    pub artifact: Artifact,
+    #[serde(default)]
+    pub rollback_enabled: bool,
+}
+
 // ── Prompt lifecycle handler functions ────────────────────────────────────
 
 /// Build an admin-capable identity for ownership-transfer administration.
@@ -1616,6 +1705,24 @@ fn map_hub_error(context: &str, e: HubError) -> Response {
             error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response()
         }
     }
+}
+
+/// Parse a multi-provider vendor string into a [`Vendor`].
+#[cfg(feature = "multi-provider")]
+fn parse_vendor(vendor: &str) -> Option<Vendor> {
+    match vendor.to_lowercase().as_str() {
+        "openai" => Some(Vendor::OpenAi),
+        "anthropic" => Some(Vendor::Anthropic),
+        "google" => Some(Vendor::Google),
+        _ if !vendor.is_empty() => Some(Vendor::Custom(vendor.to_string())),
+        _ => None,
+    }
+}
+
+/// Parse a UUID string and map invalid input to a 400 response.
+fn parse_uuid_param(uuid_str: &str) -> Result<Uuid, Box<Response>> {
+    Uuid::parse_str(uuid_str)
+        .map_err(|_| Box::new(error(StatusCode::BAD_REQUEST, "invalid uuid").into_response()))
 }
 
 /// Get the best matching prompt for a role + intent.
@@ -2190,6 +2297,270 @@ pub async fn has_lineage_version_route(
     .into_response()
 }
 
+// ── Provider health routes ────────────────────────────────────────────────
+
+/// Register a provider for health monitoring.
+#[instrument(skip(state))]
+pub async fn register_provider_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RegisterProviderRequest>,
+) -> Response {
+    if payload.name.is_empty() || payload.url.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "name and url are required").into_response();
+    }
+
+    state.hub.register_provider(&payload.name, &payload.url);
+    success(json!({ "name": payload.name, "url": payload.url })).into_response()
+}
+
+/// Record a successful provider health probe.
+#[instrument(skip(state))]
+pub async fn record_provider_success_route(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(payload): Json<RecordProviderSuccessRequest>,
+) -> Response {
+    state.hub.record_success(&name, payload.latency_ms);
+    success(json!({ "provider": name, "latency_ms": payload.latency_ms })).into_response()
+}
+
+/// Record a failed provider health probe.
+#[instrument(skip(state))]
+pub async fn record_provider_failure_route(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Response {
+    state.hub.record_failure(&name);
+    success(json!({ "provider": name, "recorded": "failure" })).into_response()
+}
+
+/// Check whether a provider is currently healthy.
+#[instrument(skip(state))]
+pub async fn is_healthy_route(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Response {
+    success(json!({
+        "provider": name,
+        "healthy": state.hub.is_healthy(&name)
+    }))
+    .into_response()
+}
+
+/// Get a summary of all monitored providers.
+#[instrument(skip(state))]
+pub async fn get_health_summary_route(State(state): State<Arc<AppState>>) -> Response {
+    success(json!(state.hub.get_health_summary())).into_response()
+}
+
+// ── Multi-provider routing routes ─────────────────────────────────────────
+
+/// Add a provider to the multi-provider routing pool.
+#[cfg(feature = "multi-provider")]
+#[instrument(skip(state))]
+pub async fn add_multi_provider_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AddMultiProviderRequest>,
+) -> Response {
+    if payload.name.is_empty() || payload.endpoint.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "name and endpoint are required").into_response();
+    }
+
+    let vendor = match parse_vendor(&payload.vendor) {
+        Some(v) => v,
+        None => {
+            return error(StatusCode::BAD_REQUEST, "vendor is required").into_response();
+        }
+    };
+
+    let config = ProviderConfig {
+        name: payload.name,
+        vendor,
+        endpoint: payload.endpoint,
+        priority: payload.priority,
+        max_retries: payload.max_retries,
+    };
+
+    state.hub.add_provider(config);
+    success(json!({ "registered": true })).into_response()
+}
+
+/// Select the best provider for a request, optionally filtering by vendor.
+#[cfg(feature = "multi-provider")]
+#[instrument(skip(state))]
+pub async fn route_to_vendor_route(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<RouteToVendorQuery>,
+) -> Response {
+    let vendor_filter = query.vendor.as_deref().and_then(parse_vendor);
+
+    match state.hub.route_to_vendor(vendor_filter) {
+        Some(decision) => success(json!(decision)).into_response(),
+        None => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no healthy provider available",
+        )
+        .into_response(),
+    }
+}
+
+/// Record a successful request for a multi-provider routing entry.
+#[cfg(feature = "multi-provider")]
+#[instrument(skip(state))]
+pub async fn record_multi_provider_success_route(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Response {
+    state.hub.record_provider_success(&name);
+    success(json!({ "provider": name, "recorded": "success" })).into_response()
+}
+
+/// Record a failed request for a multi-provider routing entry.
+#[cfg(feature = "multi-provider")]
+#[instrument(skip(state))]
+pub async fn record_multi_provider_failure_route(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> Response {
+    state.hub.record_provider_failure(&name);
+    success(json!({ "provider": name, "recorded": "failure" })).into_response()
+}
+
+/// Get health statistics for the multi-provider routing pool.
+#[cfg(feature = "multi-provider")]
+#[instrument(skip(state))]
+pub async fn provider_pool_stats_route(State(state): State<Arc<AppState>>) -> Response {
+    success(json!(state.hub.provider_pool_stats())).into_response()
+}
+
+// ── Gradual rollout routes ────────────────────────────────────────────────
+
+/// Check whether a user should see a canary feature.
+#[cfg(feature = "gradual-rollout")]
+#[instrument(skip(state))]
+pub async fn check_rollout_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckRolloutRequest>,
+) -> Response {
+    let user_id = match parse_uuid_param(&payload.user_id) {
+        Ok(id) => id,
+        Err(resp) => return *resp,
+    };
+
+    let included = state.hub.check_rollout(&payload.canary, user_id);
+    success(json!({ "included": included })).into_response()
+}
+
+/// Register a graduated rollout configuration.
+#[cfg(feature = "gradual-rollout")]
+#[instrument(skip(state))]
+pub async fn register_rollout_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RegisterRolloutRequest>,
+) -> Response {
+    state.hub.register_rollout(payload.config);
+    success(json!({ "registered": true })).into_response()
+}
+
+/// Check rollout inclusion for a specific user.
+#[cfg(feature = "gradual-rollout")]
+#[instrument(skip(state))]
+pub async fn find_rollout_inclusion_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<FindRolloutInclusionRequest>,
+) -> Response {
+    let user_id = match parse_uuid_param(&payload.user_id) {
+        Ok(id) => id,
+        Err(resp) => return *resp,
+    };
+
+    let included = state
+        .hub
+        .find_rollout_inclusion(&payload.rollout_id, &payload.feature, user_id);
+    success(json!({ "included": included })).into_response()
+}
+
+/// Evaluate whether metrics indicate a rollback is needed.
+#[cfg(feature = "gradual-rollout")]
+#[instrument(skip(state))]
+pub async fn evaluate_auto_rollback_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<EvaluateAutoRollbackRequest>,
+) -> Response {
+    match state.hub.evaluate_auto_rollback(
+        &payload.rollout_id,
+        payload.error_rate,
+        payload.latency_p99_ms,
+    ) {
+        Some(should_rollback) => {
+            success(json!({ "should_rollback": should_rollback })).into_response()
+        }
+        None => error(StatusCode::NOT_FOUND, "rollout not found").into_response(),
+    }
+}
+
+/// Advance a rollout segment to the next stage.
+#[cfg(feature = "gradual-rollout")]
+#[instrument(skip(state))]
+pub async fn advance_segment_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AdvanceSegmentRequest>,
+) -> Response {
+    match state
+        .hub
+        .advance_segment(&payload.rollout_id, payload.segment_idx)
+    {
+        Some(stage) => success(json!({ "stage": stage })).into_response(),
+        None => error(StatusCode::NOT_FOUND, "rollout or segment not found").into_response(),
+    }
+}
+
+// ── Safe deployment / rollback routes ─────────────────────────────────────
+
+/// Deploy an artifact with automatic rollback capability.
+#[cfg(feature = "rollback")]
+#[instrument(skip(state))]
+pub async fn deploy_with_rollback_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DeployWithRollbackRequest>,
+) -> Response {
+    match state
+        .hub
+        .deploy_with_rollback(&payload.artifact, payload.rollback_enabled)
+        .await
+    {
+        Ok(result) => success(json!(result)).into_response(),
+        Err(e) => map_hub_error("deploy", e),
+    }
+}
+
+/// Restore a previously saved snapshot by ID.
+#[cfg(feature = "rollback")]
+#[instrument(skip(state))]
+pub async fn restore_snapshot_route(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    match state.hub.restore_snapshot(&id).await {
+        Ok(()) => success(json!({ "restored": true })).into_response(),
+        Err(e) => map_hub_error("restore snapshot", e),
+    }
+}
+
+/// Check whether a rollback snapshot is available.
+#[cfg(feature = "rollback")]
+#[instrument(skip(state))]
+pub async fn is_rollback_available_route(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    success(json!({
+        "snapshot_id": id,
+        "available": state.hub.is_rollback_available(&id)
+    }))
+    .into_response()
+}
+
 // ── Test module below ─────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2205,6 +2576,10 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
     use tower::ServiceExt;
+    use uuid::Uuid;
+
+    #[cfg(feature = "gradual-rollout")]
+    use chrono::Utc;
 
     #[test]
     fn render_metrics_is_valid_exposition() {
@@ -3617,6 +3992,422 @@ axum = "0.8"
         )
         .await;
 
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Provider health route tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_register_provider_route() {
+        let state = evolve_test_state().await;
+
+        let response = register_provider_route(
+            axum::extract::State(state),
+            axum::Json(RegisterProviderRequest {
+                name: "openai".to_string(),
+                url: "https://api.openai.com".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_register_provider_route_empty_name_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = register_provider_route(
+            axum::extract::State(state),
+            axum::Json(RegisterProviderRequest {
+                name: "".to_string(),
+                url: "https://api.openai.com".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_record_provider_success_route() {
+        let state = evolve_test_state().await;
+
+        let response = record_provider_success_route(
+            axum::extract::State(state),
+            axum::extract::Path("openai".to_string()),
+            axum::Json(RecordProviderSuccessRequest { latency_ms: 120 }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_record_provider_failure_route() {
+        let state = evolve_test_state().await;
+
+        let response = record_provider_failure_route(
+            axum::extract::State(state),
+            axum::extract::Path("openai".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_is_healthy_route() {
+        let state = evolve_test_state().await;
+
+        let response = is_healthy_route(
+            axum::extract::State(state),
+            axum::extract::Path("openai".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_get_health_summary_route() {
+        let state = evolve_test_state().await;
+
+        let response = get_health_summary_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Multi-provider routing route tests ──────────────────────────────────
+
+    #[cfg(feature = "multi-provider")]
+    #[tokio::test]
+    async fn test_add_multi_provider_route() {
+        let state = evolve_test_state().await;
+
+        let response = add_multi_provider_route(
+            axum::extract::State(state),
+            axum::Json(AddMultiProviderRequest {
+                name: "openai".to_string(),
+                vendor: "openai".to_string(),
+                endpoint: "https://api.openai.com".to_string(),
+                priority: 1,
+                max_retries: 3,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "multi-provider")]
+    #[tokio::test]
+    async fn test_route_to_vendor_route_no_providers() {
+        let state = evolve_test_state().await;
+
+        let response = route_to_vendor_route(
+            axum::extract::State(state),
+            axum::extract::Query(RouteToVendorQuery { vendor: None }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[cfg(feature = "multi-provider")]
+    #[tokio::test]
+    async fn test_route_to_vendor_route_happy_path() {
+        let state = evolve_test_state().await;
+
+        add_multi_provider_route(
+            axum::extract::State(state.clone()),
+            axum::Json(AddMultiProviderRequest {
+                name: "openai".to_string(),
+                vendor: "openai".to_string(),
+                endpoint: "https://api.openai.com".to_string(),
+                priority: 1,
+                max_retries: 3,
+            }),
+        )
+        .await;
+
+        let response = route_to_vendor_route(
+            axum::extract::State(state),
+            axum::extract::Query(RouteToVendorQuery { vendor: None }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "multi-provider")]
+    #[tokio::test]
+    async fn test_record_multi_provider_success_route() {
+        let state = evolve_test_state().await;
+
+        let response = record_multi_provider_success_route(
+            axum::extract::State(state),
+            axum::extract::Path("openai".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "multi-provider")]
+    #[tokio::test]
+    async fn test_record_multi_provider_failure_route() {
+        let state = evolve_test_state().await;
+
+        let response = record_multi_provider_failure_route(
+            axum::extract::State(state),
+            axum::extract::Path("openai".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "multi-provider")]
+    #[tokio::test]
+    async fn test_provider_pool_stats_route() {
+        let state = evolve_test_state().await;
+
+        let response = provider_pool_stats_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Gradual rollout route tests ─────────────────────────────────────────
+
+    #[cfg(feature = "gradual-rollout")]
+    fn sample_rollout_config() -> GraduatedRolloutConfig {
+        GraduatedRolloutConfig {
+            rollout_id: "rollout-1".to_string(),
+            feature: "new-prompt".to_string(),
+            segments: vec![RolloutSegment {
+                name: "alpha".to_string(),
+                percentage: 10,
+                target_users: vec![],
+                rollout_stage: RolloutStage::Internal,
+                created_at: Utc::now(),
+            }],
+            auto_rollback: AutoRollbackPolicy::OnErrorRate { threshold: 0.05 },
+            active: true,
+        }
+    }
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_check_rollout_route() {
+        let state = evolve_test_state().await;
+        let user_id = Uuid::new_v4();
+
+        let response = check_rollout_route(
+            axum::extract::State(state),
+            axum::Json(CheckRolloutRequest {
+                canary: CanaryDeployment {
+                    feature: "new-prompt".to_string(),
+                    canary_percentage: 100.0,
+                    target_users: vec![],
+                    rollback_threshold: 0.05,
+                },
+                user_id: user_id.to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_check_rollout_route_invalid_user_id() {
+        let state = evolve_test_state().await;
+
+        let response = check_rollout_route(
+            axum::extract::State(state),
+            axum::Json(CheckRolloutRequest {
+                canary: CanaryDeployment {
+                    feature: "new-prompt".to_string(),
+                    canary_percentage: 100.0,
+                    target_users: vec![],
+                    rollback_threshold: 0.05,
+                },
+                user_id: "not-a-uuid".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_register_rollout_route() {
+        let state = evolve_test_state().await;
+
+        let response = register_rollout_route(
+            axum::extract::State(state),
+            axum::Json(RegisterRolloutRequest {
+                config: sample_rollout_config(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_find_rollout_inclusion_route() {
+        let state = evolve_test_state().await;
+        let user_id = Uuid::new_v4();
+
+        register_rollout_route(
+            axum::extract::State(state.clone()),
+            axum::Json(RegisterRolloutRequest {
+                config: sample_rollout_config(),
+            }),
+        )
+        .await;
+
+        let response = find_rollout_inclusion_route(
+            axum::extract::State(state),
+            axum::Json(FindRolloutInclusionRequest {
+                rollout_id: "rollout-1".to_string(),
+                feature: "new-prompt".to_string(),
+                user_id: user_id.to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_evaluate_auto_rollback_route() {
+        let state = evolve_test_state().await;
+
+        register_rollout_route(
+            axum::extract::State(state.clone()),
+            axum::Json(RegisterRolloutRequest {
+                config: sample_rollout_config(),
+            }),
+        )
+        .await;
+
+        let response = evaluate_auto_rollback_route(
+            axum::extract::State(state),
+            axum::Json(EvaluateAutoRollbackRequest {
+                rollout_id: "rollout-1".to_string(),
+                error_rate: 0.10,
+                latency_p99_ms: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_evaluate_auto_rollback_route_not_found() {
+        let state = evolve_test_state().await;
+
+        let response = evaluate_auto_rollback_route(
+            axum::extract::State(state),
+            axum::Json(EvaluateAutoRollbackRequest {
+                rollout_id: "missing".to_string(),
+                error_rate: 0.10,
+                latency_p99_ms: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(feature = "gradual-rollout")]
+    #[tokio::test]
+    async fn test_advance_segment_route() {
+        let state = evolve_test_state().await;
+
+        register_rollout_route(
+            axum::extract::State(state.clone()),
+            axum::Json(RegisterRolloutRequest {
+                config: sample_rollout_config(),
+            }),
+        )
+        .await;
+
+        let response = advance_segment_route(
+            axum::extract::State(state),
+            axum::Json(AdvanceSegmentRequest {
+                rollout_id: "rollout-1".to_string(),
+                segment_idx: 0,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Safe deployment / rollback route tests ──────────────────────────────
+
+    #[cfg(feature = "rollback")]
+    fn sample_artifact() -> Artifact {
+        Artifact::Prompt {
+            system: "You are helpful.".to_string(),
+            user: "Hello.".to_string(),
+        }
+    }
+
+    #[cfg(feature = "rollback")]
+    #[tokio::test]
+    async fn test_deploy_with_rollback_route() {
+        let state = evolve_test_state().await;
+
+        let response = deploy_with_rollback_route(
+            axum::extract::State(state),
+            axum::Json(DeployWithRollbackRequest {
+                artifact: sample_artifact(),
+                rollback_enabled: true,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "rollback")]
+    #[tokio::test]
+    async fn test_is_rollback_available_route() {
+        let state = evolve_test_state().await;
+
+        let response = is_rollback_available_route(
+            axum::extract::State(state),
+            axum::extract::Path("snapshot-1".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "rollback")]
+    #[tokio::test]
+    async fn test_restore_snapshot_route_missing_id_ok() {
+        let state = evolve_test_state().await;
+
+        let response = restore_snapshot_route(
+            axum::extract::State(state),
+            axum::extract::Path("missing".to_string()),
+        )
+        .await;
+
+        // The underlying rollback layer treats a missing snapshot as a no-op,
+        // so the route returns 200 with restored=true.
         assert_eq!(response.status(), StatusCode::OK);
     }
 }
