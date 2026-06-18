@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 
 /// Prompt diff engine for comparing prompt versions.
@@ -10,7 +11,7 @@ use tracing::{info, instrument};
 pub struct PromptDiff;
 
 /// A single line difference.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DiffLine {
     /// Line present in both versions
     Context {
@@ -25,7 +26,7 @@ pub enum DiffLine {
 }
 
 /// Complete diff between two prompt versions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiffResult {
     pub old_version: String,
     pub new_version: String,
@@ -36,7 +37,7 @@ pub struct DiffResult {
 }
 
 /// Change summary for a version transition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeSummary {
     pub total_changes: usize,
     pub is_significant: bool,

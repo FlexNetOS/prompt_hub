@@ -1,0 +1,38 @@
+{
+  "acceptance_criteria": [
+    "spawn_sweep_task starts a real periodic task that DELETEs rows where expires_at < now via the storage handle",
+    "a manual/forced sweep path returns the real count of swept locks",
+    "a test seeds an expired lock, runs the sweep, and asserts the row is gone + count correct",
+    "no commented-out tokio::spawn / log-only stub path remains reachable"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0066",
+  "intent_lock": {
+    "acceptance_hash": "blake3:3f8d121bb66956313a471b36f439cb96295ce4ca39d624f30e2b4d9f177eeecb",
+    "objective_hash": "blake3:65ac2e4e65e1791a6878c69fb39224eff339466c39494946016f7f524e9cbfee",
+    "path_scope_hash": "blake3:4eb213a9b172a77aaf25de651198c107bf897c52c17d2105ddfea443c4f1fdb1"
+  },
+  "objective": "LockManager::spawn_sweep_task (prompt-hub/src/lock.rs:149) is a no-op: it only logs; the tokio::spawn periodic `DELETE FROM locks WHERE expires_at < now` is commented out (lines 155-162), so expired locks are NEVER swept from the store — a silent lock leak. Complete the real background sweep: a tokio interval task that deletes expired lock rows via the storage handle, wired into the daemon/server lifecycle, plus a manual sweep_now path returning the real swept count for tests. No-downgrade: complete, don't gate out.",
+  "path_scope": [
+    "prompt-hub/src/lock.rs",
+    "prompt-hub/src/storage.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P1",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit handoff 2026-06-18 (completeness reconcile: untracked stubs + hollow features + route gap)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete LockManager TTL sweep (expired locks never deleted)"
+}

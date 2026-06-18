@@ -25,6 +25,7 @@ use crate::health::HealthAggregator;
 use crate::hooks::{HookRegistry, JunieHook};
 #[cfg(feature = "i18n")]
 use crate::i18n::I18nEngine;
+use crate::junie::Junie;
 use crate::lineage::{AncestryPath, Fork, LineageTracker, LineageTree};
 use crate::load_balancer::{LoadBalancer, ProviderSelection, ProviderStats, RoutingStrategy};
 #[cfg(feature = "malware-scan")]
@@ -69,14 +70,18 @@ use crate::storage::{Storage, StorageConfig};
 use crate::swarm::{self, SwarmRoleRegistry};
 use crate::sync::{SyncEvent, SyncManager};
 #[cfg(feature = "voice")]
-use crate::voice::VoicePipelineEngine;
+use crate::voice::{PromptResolver, VoicePipelineEngine};
 #[cfg(feature = "voice-anonymize")]
 use crate::voice_anonymize::Anonymizer;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::hash::DefaultHasher;
 use std::path::Path;
+#[cfg(feature = "voice")]
+use std::pin::Pin;
 use std::sync::Arc;
+#[cfg(feature = "retention")]
+use std::sync::RwLock;
 #[cfg(feature = "budget")]
 use tracing::debug;
 use tracing::{info, instrument, warn};
@@ -235,7 +240,13 @@ pub struct PromptHub {
     lock_manager: LockManager,
     metrics: Arc<MetricsCollector>,
     sync: SyncManager,
+    /// Drives orderly shutdown of background daemons and the axum server.
+    shutdown_coordinator: crate::shutdown::ShutdownCoordinator,
     hooks: HookRegistry,
+    /// The in-repo Junie orchestrator agent. The default [`JunieHook`]
+    /// registered in [`HookRegistry`] wraps Junie's orchestration around core
+    /// operations; this field exposes the orchestrator handle directly.
+    junie: Junie,
     quality_gate: Arc<QualityGate>,
     lineage: LineageTracker,
     swarm_registry: Arc<SwarmRoleRegistry>,
@@ -266,7 +277,7 @@ pub struct PromptHub {
     #[cfg(feature = "sandbox")]
     sandbox_engine: std::sync::Arc<crate::sandbox::SandboxEngine>,
     #[cfg(feature = "voice")]
-    voice_engine: std::sync::Arc<std::sync::Mutex<VoicePipelineEngine>>,
+    voice_engine: std::sync::Arc<tokio::sync::Mutex<VoicePipelineEngine>>,
     #[cfg(feature = "voice-anonymize")]
     voice_anonymizer: std::sync::Arc<std::sync::Mutex<Anonymizer>>,
     #[cfg(feature = "touch")]
@@ -284,7 +295,7 @@ pub struct PromptHub {
     diff_engine: PromptDiff,
     health_aggregator: HealthAggregator,
     #[cfg(feature = "retention")]
-    retention_policy: RetentionPolicy,
+    retention_policy: Arc<RwLock<RetentionPolicy>>,
     #[cfg(feature = "retention")]
     garbage_collector: GarbageCollector,
     #[cfg(feature = "rollback")]
@@ -294,13 +305,57 @@ pub struct PromptHub {
     #[cfg(feature = "offline")]
     offlined: std::sync::Arc<std::sync::RwLock<Option<OfflineState>>>,
     #[cfg(feature = "auto-purge")]
-    auto_purge_engine: std::sync::Arc<
-        std::sync::Mutex<Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>>>,
-    >,
+    auto_purge_engine:
+        std::sync::Arc<std::sync::Mutex<Option<Arc<crate::auto_purge::AutoPurgeEngine>>>>,
     #[cfg(feature = "mobile")]
     mobile_engine: std::sync::Arc<std::sync::RwLock<Option<Arc<std::sync::Mutex<MobileEngine>>>>>,
     #[cfg(feature = "gather")]
     smart_gatherer: SmartContextGatherer,
+}
+
+/// Resolver that routes voice transcripts through the hub prompt path.
+///
+/// Converts the transcript to an [`Intent`] via [`PromptHub::process_input`],
+/// then attempts to find a matching prompt via [`PromptHub::get`]. If no
+/// prompt matches, the original transcript is returned unchanged.
+#[cfg(feature = "voice")]
+#[derive(Debug)]
+struct HubPromptResolver<'a> {
+    hub: &'a PromptHub,
+}
+
+#[cfg(feature = "voice")]
+impl PromptResolver for HubPromptResolver<'_> {
+    fn resolve<'b>(
+        &'b self,
+        text: &'b str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'b>> {
+        let hub = self.hub;
+        Box::pin(async move {
+            let input = UserInput {
+                input_type: InputType::Text,
+                raw_data: Vec::new(),
+                extracted_text: text.to_string(),
+            };
+            let intent = hub.process_input(input).await?;
+            let prompt = hub
+                .get(
+                    Role::Orchestrator,
+                    &intent.raw_text,
+                    &AgentIdentity::default(),
+                )
+                .await?;
+            Ok(prompt
+                .map(|p| {
+                    if p.system_prompt.is_empty() {
+                        p.user_template
+                    } else {
+                        p.system_prompt
+                    }
+                })
+                .unwrap_or(intent.raw_text))
+        })
+    }
 }
 
 impl PromptHub {
@@ -353,7 +408,9 @@ impl PromptHub {
             lock_manager: LockManager::new(),
             metrics: metrics.clone(),
             sync: SyncManager::new(),
+            shutdown_coordinator: crate::shutdown::ShutdownCoordinator::new(),
             hooks: HookRegistry::new(),
+            junie: Junie::new(),
             quality_gate: Arc::new(QualityGate::new()),
             lineage: LineageTracker::new(),
             swarm_registry: Arc::new(swarm::SwarmRoleRegistry::default_registry()),
@@ -388,9 +445,9 @@ impl PromptHub {
             #[cfg(feature = "sandbox")]
             sandbox_engine: std::sync::Arc::new(crate::sandbox::SandboxEngine::default()),
             #[cfg(feature = "voice")]
-            voice_engine: std::sync::Arc::new(
-                std::sync::Mutex::new(VoicePipelineEngine::default()),
-            ),
+            voice_engine: std::sync::Arc::new(tokio::sync::Mutex::new(
+                VoicePipelineEngine::default(),
+            )),
             #[cfg(feature = "voice-anonymize")]
             voice_anonymizer: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::voice_anonymize::Anonymizer::default_with_builtins(),
@@ -410,9 +467,9 @@ impl PromptHub {
             diff_engine: PromptDiff::new(),
             health_aggregator: HealthAggregator::new(),
             #[cfg(feature = "retention")]
-            retention_policy: RetentionPolicy::default(),
+            retention_policy: Arc::new(RwLock::new(RetentionPolicy::default())),
             #[cfg(feature = "retention")]
-            garbage_collector: GarbageCollector::new(crate::retention::RetentionPolicy::default()),
+            garbage_collector: GarbageCollector::new(RetentionPolicy::default()),
             safe_deployer: SafeDeployer::new(),
             #[cfg(feature = "malware-scan")]
             malware_scan_config: Arc::new(std::sync::Mutex::new(MalwareScanConfig::default())),
@@ -432,7 +489,7 @@ impl PromptHub {
         {
             let retention = crate::retention::RetentionPolicy::default();
             hub.garbage_collector = GarbageCollector::new(retention.clone());
-            hub.retention_policy = retention;
+            hub.retention_policy = Arc::new(RwLock::new(retention));
         }
 
         // Register default hooks
@@ -576,6 +633,33 @@ impl PromptHub {
         Arc::clone(&self.metrics)
     }
 
+    /// Return a reference to the in-repo Junie orchestrator agent.
+    ///
+    /// Junie is the primary orchestrator for the PromptHub ecosystem; its
+    /// identity, role, and default system prompt are reachable through the
+    /// returned handle. The default [`JunieHook`] is also registered in the
+    /// hook registry so Junie's orchestration wraps core operations — this
+    /// accessor exposes the orchestrator itself as a first-class subsystem.
+    pub fn junie(&self) -> &Junie {
+        &self.junie
+    }
+
+    /// Return a clone of the hub's [`ShutdownCoordinator`](crate::shutdown::ShutdownCoordinator).
+    ///
+    /// Background daemons and the axum server subscribe to the returned handle
+    /// (via [`subscribe`](crate::shutdown::ShutdownCoordinator::subscribe)) so
+    /// they all unwind on a single signal. The signal is fired by
+    /// [`PromptHub::shutdown`] or, for signal-driven exit, by
+    /// [`ShutdownCoordinator::wait_for_signal`](crate::shutdown::ShutdownCoordinator::wait_for_signal).
+    pub fn shutdown_coordinator(&self) -> crate::shutdown::ShutdownCoordinator {
+        self.shutdown_coordinator.clone()
+    }
+
+    /// Whether [`shutdown`](Self::shutdown) has already been initiated.
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutdown_coordinator.is_shutting_down()
+    }
+
     // ── Chaos engineering ─────────────────────────────────────────────────
 
     /// Return a handle to the chaos evaluation engine.
@@ -655,34 +739,33 @@ impl PromptHub {
 
     /// Return a handle to the auto-purge engine, if enabled.
     #[cfg(feature = "auto-purge")]
-    pub fn auto_purge_engine(
-        &self,
-    ) -> Option<Arc<std::sync::Mutex<crate::auto_purge::AutoPurgeEngine>>> {
+    pub fn auto_purge_engine(&self) -> Option<Arc<crate::auto_purge::AutoPurgeEngine>> {
         let outer = self.auto_purge_engine.lock().unwrap();
         outer.clone()
     }
 
     /// Run a single purge cycle synchronously (blocking on storage).
     #[cfg(feature = "auto-purge")]
-    #[allow(clippy::await_holding_lock)]
     pub async fn purge_now(&self) -> Result<crate::auto_purge::PurgeStats> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
-        let guard = engine.lock().unwrap();
-        guard.run_purge(self).await
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        engine.run_purge(self).await
     }
 
     /// Get a snapshot of current purge statistics.
     #[cfg(feature = "auto-purge")]
     pub fn get_purge_stats(&self) -> Result<crate::auto_purge::PurgeStats> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
-        let guard = engine.lock().unwrap();
-        Ok(guard.stats())
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        Ok(engine.stats())
     }
 
     /// Update the auto-purge configuration.
@@ -691,37 +774,34 @@ impl PromptHub {
         &self,
         updater: impl FnOnce(&mut crate::auto_purge::AutoPurgeConfig),
     ) -> Result<()> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
-        let guard = engine.lock().unwrap();
-        guard.update_config(updater);
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
+        engine.update_config(updater);
         Ok(())
     }
 
     /// Start the auto-purge daemon with the given *config*.
     #[cfg(feature = "auto-purge")]
-    #[allow(clippy::await_holding_lock)]
     pub async fn start_purge_daemon(
         &self,
         config: crate::auto_purge::AutoPurgeConfig,
     ) -> Result<Option<tokio::task::JoinHandle<()>>> {
-        let mut outer = self.auto_purge_engine.lock().unwrap();
-        if outer.is_none() {
-            *outer = Some(Arc::new(std::sync::Mutex::new(
-                crate::auto_purge::AutoPurgeEngine::new(config),
-            )));
-        }
-
-        let engine = outer.clone().unwrap();
-        let handle = {
-            let inner_guard = engine.lock().unwrap();
-            inner_guard.update_config(|c| {
-                c.enabled = true;
-            });
-            inner_guard.spawn_daemon_task().await?
+        let engine = {
+            let mut outer = self.auto_purge_engine.lock().unwrap();
+            if outer.is_none() {
+                *outer = Some(Arc::new(crate::auto_purge::AutoPurgeEngine::new(config)));
+            }
+            outer.clone().unwrap()
         };
+
+        engine.update_config(|c| {
+            c.enabled = true;
+        });
+        let handle = engine.spawn_daemon_task().await?;
 
         Ok(Some(handle))
     }
@@ -729,13 +809,14 @@ impl PromptHub {
     /// Stop the auto-purge daemon (sends shutdown signal to the loop).
     #[cfg(feature = "auto-purge")]
     pub fn stop_purge_daemon(&self) -> Result<()> {
-        let outer = self.auto_purge_engine.lock().unwrap();
-        let engine = outer
-            .clone()
-            .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?;
+        let engine = {
+            let outer = self.auto_purge_engine.lock().unwrap();
+            outer
+                .clone()
+                .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
+        };
 
-        let guard = engine.lock().unwrap();
-        guard.shutdown();
+        engine.shutdown();
         Ok(())
     }
 
@@ -940,7 +1021,7 @@ impl PromptHub {
     /// Fetches the prompt by UUID (gated by [`RbacAuthManager`] Read
     /// authorization via [`PromptHub::get_by_id`]) and counts the tokens of its
     /// `system_prompt` and `user_template` under the named `model` using
-    /// [`TokenCounter`]. With the `tiktoken` feature this uses `tiktoken-rs`;
+    /// [`TokenCounter`](crate::tokens::TokenCounter). With the `tiktoken` feature this uses `tiktoken-rs`;
     /// otherwise a character/word heuristic is applied.
     ///
     /// # Arguments
@@ -979,7 +1060,7 @@ impl PromptHub {
     /// authorization via [`PromptHub::get_by_id`]), counts the input tokens of
     /// its `system_prompt` and `user_template`, and combines them with
     /// `expected_output_tokens` to produce a cost estimate via
-    /// [`TokenCounter::estimate_prompt_cost`]. Pricing is approximate and based
+    /// [`TokenCounter::estimate_prompt_cost`](crate::tokens::TokenCounter::estimate_prompt_cost). Pricing is approximate and based
     /// on common provider tiers.
     ///
     /// # Arguments
@@ -1072,6 +1153,29 @@ impl PromptHub {
             page: pagination.page,
             per_page: pagination.per_page,
         })
+    }
+
+    /// Seed the store with the built-in base role templates (idempotent).
+    ///
+    /// Registers the default Orchestrator/Architect/Implementer/Critic/Reviewer
+    /// templates and the standard handoff template for any that are not already
+    /// present (matched by name), each through the normal RBAC + sanitize +
+    /// audit [`PromptHub::register`] path. Safe to call on every startup: a
+    /// second call inserts nothing.
+    ///
+    /// # Arguments
+    /// * `identity` — caller's [`AgentIdentity`]; must hold the `Write`
+    ///   capability (enforced by the underlying registrations).
+    ///
+    /// # Returns
+    /// The number of templates newly inserted by this call.
+    ///
+    /// # Errors
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Write`.
+    /// - any storage/sanitize error surfaced by [`PromptHub::register`].
+    #[instrument(skip(self))]
+    pub async fn seed_defaults(&self, identity: &AgentIdentity) -> Result<usize> {
+        crate::defaults::seed_database(self, identity).await
     }
 
     // ── Lock management ───────────────────────────────────────────────────
@@ -1278,6 +1382,87 @@ impl PromptHub {
         Ok(result)
     }
 
+    /// Convert a multi-modal [`UserInput`] into a structured [`Intent`].
+    ///
+    /// Delegates to [`MultiModalInput`](crate::multimodal_input::MultiModalInput),
+    /// which handles every `InputType` — text, voice, screenshot, sketch, file,
+    /// and URL — inferring the domain, role, task type, and complexity of the
+    /// request. This is the front-door normalizer that turns any input modality
+    /// into the `Intent` consumed by the vibe/orchestration path.
+    ///
+    /// Always available (not feature-gated); the processor is stateless.
+    ///
+    /// # Arguments
+    /// * `input` — The [`UserInput`] to normalize (its `input_type` + `extracted_text`).
+    ///
+    /// # Returns
+    /// A structured [`Intent`] suitable for downstream classification or routing.
+    #[instrument(skip(self))]
+    pub async fn process_input(&self, input: UserInput) -> Result<Intent> {
+        use crate::multimodal_input::MultiModalInput;
+        MultiModalInput.process(input).await
+    }
+
+    // ── Template rendering ────────────────────────────────────────────────
+
+    /// Render a stored prompt's `user_template` with the supplied variables.
+    ///
+    /// Resolves the prompt via RBAC-gated lookup, verifies every entry in the
+    /// prompt's `required_vars` is supplied, then renders the template through the
+    /// feature-selected [`TemplateEngine`](crate::templates::TemplateEngine)
+    /// (Handlebars by default, Tera under its feature, or the built-in fallback).
+    ///
+    /// # Arguments
+    /// * `id` — The prompt to render.
+    /// * `vars` — Variable name → JSON value bindings for the template.
+    /// * `identity` — Caller identity; requires `Read` capability.
+    ///
+    /// # Errors
+    /// - [`HubError::NotFound`] if no prompt with *id* exists.
+    /// - [`HubError::Unauthorized`] if *identity* lacks `Read`.
+    /// - [`HubError::ValidationError`] if a `required_vars` entry is missing or the
+    ///   template fails to render.
+    #[instrument(skip(self, vars))]
+    pub async fn render_prompt(
+        &self,
+        id: Uuid,
+        vars: std::collections::HashMap<String, serde_json::Value>,
+        identity: &AgentIdentity,
+    ) -> Result<String> {
+        let prompt = self
+            .get_by_id(id, identity)
+            .await?
+            .ok_or(HubError::NotFound(id.to_string()))?;
+
+        let missing: Vec<String> = prompt
+            .required_vars
+            .iter()
+            .filter(|v| !vars.contains_key(*v))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(HubError::ValidationError(format!(
+                "Missing required template variables: {}",
+                missing.join(", ")
+            )));
+        }
+
+        let mut ctx = crate::templates::TemplateContext::new();
+        ctx.vars = vars;
+        let engine = crate::templates::default_engine();
+        let rendered = engine.render(&prompt.user_template, &ctx)?;
+        info!(prompt_id = %id, "Rendered prompt template");
+        Ok(rendered)
+    }
+
+    /// Lint a raw template string through the feature-selected
+    /// [`TemplateEngine`](crate::templates::TemplateEngine), returning any
+    /// structural issues (e.g. unbalanced `{{ }}` braces). Does not require a
+    /// stored prompt or authorization — it inspects the supplied text only.
+    pub fn lint_template(&self, template: &str) -> Vec<crate::templates::LintIssue> {
+        crate::templates::default_engine().lint(template)
+    }
+
     // ── Context gathering ─────────────────────────────────────────────────
 
     /// Gather project context from the filesystem at *project_path*.
@@ -1427,19 +1612,62 @@ impl PromptHub {
 
     // ── Graceful shutdown helper ──────────────────────────────────────────
 
-    /// Gracefully shut down the hub: optimize storage, drain metrics.
+    /// Gracefully shut down the hub in an orderly sequence.
     ///
-    /// Flushes pending WAL checkpoints to disk (via `optimize_on_close`),
-    /// stops metric collection, and releases background resources. Intended
-    /// for use at process exit or during hot-reload cycles.
+    /// Drives the [`ShutdownCoordinator`](crate::shutdown::ShutdownCoordinator)
+    /// and unwinds resources in dependency order:
+    ///
+    /// 1. **Broadcast** the shutdown signal so every subscriber (the axum
+    ///    server, spawned daemons) begins to unwind. Idempotent — calling
+    ///    `shutdown` twice fires the signal once.
+    /// 2. **Stop background daemons** that own their own scheduler loops: the
+    ///    auto-purge daemon and the chaos-automation scheduler (feature-gated).
+    /// 3. **Flush storage** — checkpoint the WAL to disk via
+    ///    [`optimize_on_close`](crate::storage::Storage::optimize_on_close) so
+    ///    no committed data is left only in the write-ahead log.
+    ///
+    /// Daemon-stop steps are best-effort and logged on failure (e.g. a daemon
+    /// that was never started): they must not abort the storage flush, which is
+    /// the data-safety-critical step. Only a WAL-flush failure is returned as an
+    /// error.
+    ///
+    /// Intended for use at process exit or during hot-reload cycles.
     ///
     /// # Returns
     /// `Ok(())` on success, or a [`HubError::StorageError`] if the WAL flush
     /// fails (which would indicate potential data loss).
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
-        info!("Shutting down PromptHub storage...");
+        info!("PromptHub shutdown initiated");
+
+        // 1. Broadcast the shutdown signal to all subscribers. Idempotent.
+        let fired = self.shutdown_coordinator.shutdown();
+        if !fired {
+            info!("PromptHub shutdown already in progress");
+        }
+
+        // 2. Stop background daemons that run their own scheduler loops.
+        #[cfg(feature = "auto-purge")]
+        {
+            // Best-effort: the daemon may never have been started.
+            if let Err(e) = self.stop_purge_daemon() {
+                tracing::debug!("auto-purge daemon not stopped during shutdown: {e}");
+            }
+        }
+        #[cfg(feature = "chaos-automation")]
+        {
+            if let Some(auto) = self.chaos_auto.as_ref()
+                && let Ok(guard) = auto.lock()
+            {
+                guard.shutdown();
+                info!("chaos-automation scheduler signalled to stop");
+            }
+        }
+
+        // 3. Flush storage last so committed data survives the WAL checkpoint.
+        info!("Flushing PromptHub storage...");
         self.storage.optimize_on_close().await?;
+
         info!("PromptHub shutdown complete");
         Ok(())
     }
@@ -2247,7 +2475,14 @@ impl PromptHub {
 
     /// Get all tracked entities and their limit statuses.
     #[cfg(feature = "cost-limits")]
-    pub fn cost_limit_status(&self) -> Vec<(String, f64, crate::cost_limits::OveragePolicy)> {
+    pub fn cost_limit_status(
+        &self,
+    ) -> Vec<(
+        String,
+        crate::cost_limits::Resource,
+        f64,
+        crate::cost_limits::OveragePolicy,
+    )> {
         self.cost_limiter
             .entity_ids()
             .into_iter()
@@ -2255,7 +2490,7 @@ impl PromptHub {
                 self.cost_limiter
                     .entity_status(&id)
                     .into_iter()
-                    .map(move |(_res, util, pol)| (id.clone(), util, pol))
+                    .map(move |(res, util, pol)| (id.clone(), res, util, pol))
             })
             .collect()
     }
@@ -2635,11 +2870,8 @@ impl PromptHub {
     /// Configure the voice pipeline with a new [`VoicePipelineConfig`].
     #[cfg(feature = "voice")]
     #[instrument(skip(self), fields(config = ?config))]
-    pub fn configure_voice(&self, config: VoicePipelineConfig) -> Result<()> {
-        let mut engine = self
-            .voice_engine
-            .lock()
-            .map_err(|e| HubError::Internal(format!("voice engine lock poisoned: {}", e)))?;
+    pub async fn configure_voice(&self, config: VoicePipelineConfig) -> Result<()> {
+        let mut engine = self.voice_engine.lock().await;
         engine.configure(config);
         Ok(())
     }
@@ -2647,58 +2879,49 @@ impl PromptHub {
     /// Get the current voice pipeline FSM state.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn get_voice_state(&self) -> Option<VoicePipelineState> {
-        let engine = self.voice_engine.lock().ok()?;
+    pub async fn get_voice_state(&self) -> Option<VoicePipelineState> {
+        let engine = self.voice_engine.lock().await;
         Some(engine.get_state().clone())
     }
 
     /// Get the current voice output format.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn get_voice_output_format(&self) -> Option<VoiceOutputFormat> {
-        let engine = self.voice_engine.lock().ok()?;
+    pub async fn get_voice_output_format(&self) -> Option<VoiceOutputFormat> {
+        let engine = self.voice_engine.lock().await;
         Some(engine.get_output_format().clone())
     }
 
     /// Execute a complete voice turn through the pipeline.
+    ///
+    /// Routes the transcribed text through the hub prompt path via
+    /// [`HubPromptResolver`] before TTS synthesis.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
     pub async fn execute_voice_turn(&self, prompt_text: &str) -> Result<VoiceInteraction> {
-        let prompt_text = prompt_text.to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        // Clone Arc-wrapped engine for the spawn.
+        // Clone the engine Arc so the resolver can borrow `&self` without
+        // conflicting with the mutex guard.
         let engine_arc = self.voice_engine.clone();
-        std::thread::spawn(move || {
-            let mut engine = engine_arc.lock().expect("voice engine lock poisoned");
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .build()
-                .expect("tokio runtime for voice turn");
-            let result = rt.block_on(engine.execute_turn(&prompt_text));
-            let _ = tx.send(result);
-        });
-        rx.await
-            .map_err(|e| HubError::Internal(format!("voice turn panicked: {}", e)))?
+        let mut engine = engine_arc.lock().await;
+        let resolver = HubPromptResolver { hub: self };
+        engine
+            .execute_turn_with_resolver(prompt_text, &resolver)
+            .await
     }
 
     /// Reset the voice pipeline back to Idle.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn reset_voice_pipeline(&self) {
-        let mut engine = self
-            .voice_engine
-            .lock()
-            .expect("voice engine lock poisoned");
+    pub async fn reset_voice_pipeline(&self) {
+        let mut engine = self.voice_engine.lock().await;
         engine.reset();
     }
 
     /// Get the current voice pipeline interaction history.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
-    pub fn get_voice_history(&self) -> Vec<VoiceInteraction> {
-        let engine = self
-            .voice_engine
-            .lock()
-            .expect("voice engine lock poisoned");
+    pub async fn get_voice_history(&self) -> Vec<VoiceInteraction> {
+        let engine = self.voice_engine.lock().await;
         engine.get_history().to_vec()
     }
 
@@ -2838,38 +3061,49 @@ impl PromptHub {
 
     /// Set a retention period for a data type.
     #[cfg(feature = "retention")]
-    pub fn set_retention_period(&mut self, data_type: DataType, days: u32) {
-        self.retention_policy.set_period(data_type, days);
+    pub fn set_retention_period(&self, data_type: DataType, days: u32) {
+        let mut policy = self.retention_policy.write().unwrap();
+        policy.set_period(data_type.clone(), days);
+        drop(policy);
+        self.garbage_collector.set_retention_period(data_type, days);
     }
 
     /// Get the retention period (in days) for a data type.
     #[cfg(feature = "retention")]
     pub fn get_retention_period(&self, data_type: &DataType) -> u32 {
-        self.retention_policy.get_period(data_type)
+        let policy = self.retention_policy.read().unwrap();
+        policy.get_period(data_type)
     }
 
     /// Check if data of a given type has expired based on its retention policy.
     #[cfg(feature = "retention")]
     pub fn is_data_expired(&self, data_type: &DataType, age_days: u32) -> bool {
-        self.retention_policy.is_expired(data_type, age_days)
+        let policy = self.retention_policy.read().unwrap();
+        policy.is_expired(data_type, age_days)
     }
 
     /// Run scheduled cleanup and return results for expired items.
     #[cfg(feature = "retention")]
     pub fn run_retention_cleanup(&self) -> Vec<crate::retention::CleanupResult> {
-        self.retention_policy.run_cleanup()
+        let policy = self.retention_policy.read().unwrap();
+        policy.run_cleanup()
     }
 
     /// Execute garbage collection across all configured types.
+    ///
+    /// Runs the real, transactional purge against the live storage handle —
+    /// the same handle and delete idiom the auto-purge path uses.
     #[cfg(feature = "retention")]
-    pub fn run_garbage_collection(&self) -> Result<crate::garbage_collector::GcReport> {
-        self.garbage_collector.collect()
+    pub async fn run_garbage_collection(&self) -> Result<crate::garbage_collector::GcReport> {
+        self.garbage_collector.collect(&self.storage).await
     }
 
     /// Purge soft-deleted items and return count of purged rows.
     #[cfg(feature = "retention")]
-    pub fn purge_soft_deleted(&self) -> Result<u64> {
-        self.garbage_collector.purge_soft_deleted()
+    pub async fn purge_soft_deleted(&self) -> Result<u64> {
+        self.garbage_collector
+            .purge_soft_deleted(&self.storage)
+            .await
     }
 
     /// Get garbage collection statistics.
@@ -3270,6 +3504,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_hub_exposes_junie_accessor() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // The accessor returns a usable handle to the orchestrator agent.
+        let junie = hub.junie();
+        assert_eq!(junie.identity.name, "Junie");
+        assert_eq!(junie.role(), Role::Junie);
+        assert!(junie.system_prompt().contains("Junie"));
+        // Junie is initialized with the orchestration capabilities.
+        assert!(junie.identity.capabilities.contains(&Capability::Execute));
+
+        // Calling it twice yields the same stable identity (it is a real field,
+        // not a freshly-constructed value each call).
+        assert_eq!(hub.junie().identity.id, junie.identity.id);
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_runs_cleanly() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        assert!(!hub.is_shutting_down());
+
+        // A subscriber should observe the shutdown signal driven by shutdown().
+        let mut rx = hub.shutdown_coordinator().subscribe();
+
+        hub.shutdown().await.expect("shutdown should run cleanly");
+        assert!(hub.is_shutting_down());
+        assert!(
+            rx.try_recv().is_ok(),
+            "shutdown() should broadcast to subscribers"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_is_idempotent() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        // Two shutdowns must both succeed (the second is a no-op broadcast plus
+        // an idempotent storage flush).
+        hub.shutdown().await.expect("first shutdown");
+        hub.shutdown().await.expect("second shutdown");
+        assert!(hub.is_shutting_down());
+    }
+
+    #[tokio::test]
+    async fn test_hub_shutdown_coordinator_is_shared() {
+        let hub = PromptHub::new(std::path::Path::new(":memory:"), test_config())
+            .await
+            .unwrap();
+        let coordinator = hub.shutdown_coordinator();
+        // Firing the cloned coordinator must be visible through the hub.
+        assert!(coordinator.shutdown());
+        assert!(hub.is_shutting_down());
+    }
+
+    #[tokio::test]
     async fn test_register_and_get() {
         let dir = TempDir::new().unwrap();
         let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
@@ -3285,6 +3580,42 @@ mod tests {
 
         let fetched = hub.get(Role::Developer, "greet", &agent).await;
         assert!(fetched.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_render_prompt_and_missing_var() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+        let agent = test_agent();
+        let prompt = test_prompt(); // user_template "Hello, {{name}}!", required_vars ["name"]
+        let id = prompt.id;
+        hub.register(prompt, &agent).await.unwrap();
+
+        // Happy path: the template is rendered through the wired TemplateEngine.
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("name".to_string(), serde_json::json!("World"));
+        let rendered = hub
+            .render_prompt(id, vars, &agent)
+            .await
+            .expect("rendering with all required vars should succeed");
+        assert_eq!(rendered, "Hello, World!");
+
+        // Missing a required var → ValidationError (not a silent partial render).
+        let err = hub
+            .render_prompt(id, std::collections::HashMap::new(), &agent)
+            .await
+            .expect_err("missing required var should error");
+        assert!(matches!(err, HubError::ValidationError(_)));
+
+        // Lint surfaces unbalanced braces through the engine.
+        let issues = hub.lint_template("Hello, {{name}!");
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.severity == crate::templates::LintSeverity::Error)
+        );
     }
 
     #[tokio::test]
@@ -3304,6 +3635,41 @@ mod tests {
             .expect("counting tokens for a stored prompt should succeed");
         assert_eq!(count.model, "gpt-4");
         assert!(count.tokens >= 1, "expected at least 1 token");
+    }
+
+    #[tokio::test]
+    async fn test_process_input_text_and_screenshot() {
+        let dir = TempDir::new().unwrap();
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), test_config())
+            .await
+            .unwrap();
+
+        // Text modality → coding-domain Create intent (full normalization runs).
+        let text_intent = hub
+            .process_input(UserInput {
+                input_type: InputType::Text,
+                raw_data: vec![],
+                extracted_text: "Create a REST API with user authentication".to_string(),
+            })
+            .await
+            .expect("processing text input through the hub should succeed");
+        assert_eq!(text_intent.domain, Domain::Coding);
+        assert_eq!(text_intent.task_type, TaskType::Create);
+        assert_eq!(text_intent.role, Role::Orchestrator);
+
+        // A non-text modality the vibe text-classifier can't handle on its own:
+        // a screenshot routes to the design domain via the architect role.
+        let shot_intent = hub
+            .process_input(UserInput {
+                input_type: InputType::Screenshot,
+                raw_data: vec![1, 2, 3],
+                extracted_text: "Login page with dark mode".to_string(),
+            })
+            .await
+            .expect("processing screenshot input through the hub should succeed");
+        assert_eq!(shot_intent.domain, Domain::Design);
+        assert_eq!(shot_intent.role, Role::Architect);
+        assert!(shot_intent.raw_text.contains("Build UI like screenshot"));
     }
 
     #[tokio::test]
@@ -4178,6 +4544,7 @@ mod tests {
             cost_micros: 500,
             success: true,
             duration_ms: 50,
+            timestamp: chrono::Utc::now(),
         });
 
         let report = hub.get_usage_report();
@@ -4238,10 +4605,11 @@ mod tests {
 
     // ── Retention + GC integration test ────────────────────────────────
 
+    #[cfg(feature = "retention")]
     #[tokio::test]
     async fn test_retention_gc_accessible() {
         let dir = tempfile::tempdir().unwrap();
-        let mut hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
+        let hub = PromptHub::new(&dir.path().join("prompthub.db"), HubConfig::default())
             .await
             .unwrap();
 
@@ -4266,6 +4634,7 @@ mod tests {
         assert!(hub.gc_enabled());
     }
 
+    #[cfg(feature = "multimodal")]
     #[tokio::test]
     async fn test_multimodal_accessible() {
         let dir = tempfile::tempdir().unwrap();

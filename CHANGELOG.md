@@ -35,6 +35,7 @@ by [Conventional Commits](https://www.conventionalcommits.org).
 - Adopt junie orchestration + audit/qodana tooling (re-anchored on main)
 - *(otel)* Wire Prometheus text exposition; drop vulnerable protobuf path
 - *(cli)* Add `prompthub metrics` subcommand (Prometheus exposition) (#31)
+- *(voice)* Real STT/TTS backends behind the FSM with OpenAI-compatible providers (PHTASK-0055)
 
 ### Miscellaneous
 

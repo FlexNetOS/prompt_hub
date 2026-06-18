@@ -53,7 +53,7 @@ impl ProviderConfig {
 }
 
 /// Health status for a provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HealthStatus {
     Healthy,
     Degraded,  // accepting some traffic
@@ -68,7 +68,7 @@ impl HealthStatus {
 }
 
 /// A tracked provider instance (config + live health state).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TrackedProvider {
     pub config: ProviderConfig,
     pub health: HealthStatus,
@@ -123,7 +123,7 @@ impl TrackedProvider {
 }
 
 /// A request routing decision.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingDecision {
     /// The selected provider for this request.
     pub provider_name: String,
@@ -134,7 +134,7 @@ pub struct RoutingDecision {
 }
 
 /// How the routing decision was made.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RoutingStrategy {
     /// Auto-selected from healthiest provider by priority.
     HealthBased,

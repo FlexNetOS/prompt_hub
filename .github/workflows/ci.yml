@@ -24,6 +24,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-features
 
+  # Default-features build guard. Every other job uses --all-features, which
+  # masked a default-features-only break (argon2 OsRng needs password-hash's
+  # `getrandom`; a version-mismatched dep meant it only resolved under
+  # --all-features). This job builds each crate with DEFAULT features so an
+  # isolated `cargo build -p prompt-hub` / `cargo publish` can never silently
+  # regress again. PHTASK-0028.
+  default-build:
+    name: Default-Features Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p prompt-hub
+      - run: cargo build -p prompthub
+      - run: cargo build -p prompthub-server
+
+  # Default-features TEST-compile + clippy guard. Every test/clippy job above
+  # uses --all-features, so a feature-specific test that isn't `#[cfg(feature)]`-
+  # gated compiles there but breaks an isolated `cargo test -p prompt-hub`
+  # (E0432/E0433/E0599) — exactly the regression PHTASK-0041 fixed and that went
+  # unnoticed because no CI job exercised the test suite under DEFAULT features.
+  # `--no-run` compiles the tests without running them (fast, deterministic), and
+  # `clippy --all-targets` lints the test code too. PHTASK-0043.
+  default-test:
+    name: Default-Features Test Compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p prompt-hub --no-run
+      - run: cargo clippy -p prompt-hub --all-targets -- -D warnings
+
   test:
     name: Test
     strategy:
@@ -81,7 +115,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-tarpaulin
-      - run: cargo tarpaulin --workspace --all-features --out xml
+      # --timeout guards tarpaulin's ptrace engine against "Timed out waiting for
+      # test response": under instrumentation a large async suite can exceed the
+      # 60s default per-test ceiling even though every test passes in milliseconds
+      # uninstrumented. 300s is generous headroom; it does not slow healthy runs.
+      - run: cargo tarpaulin --workspace --all-features --timeout 300 --out xml
       - uses: codecov/codecov-action@v7
         with:
           files: ./cobertura.xml

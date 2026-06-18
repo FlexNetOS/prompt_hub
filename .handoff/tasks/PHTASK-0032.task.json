@@ -1,15 +1,18 @@
 {
   "schema": "handoff.task.v1",
   "id": "PHTASK-0032",
-  "title": "Safe plugin discovery for `plugins.rs`",
-  "status": "backlog",
+  "title": "Complete `plugins.rs` \u2014 safe plugin discovery + load",
+  "status": "done",
+  "resolution": "Completed safe, compile-time plugin discovery in prompt-hub/src/plugins.rs WITHOUT unsafe — #![forbid(unsafe_code)] preserved crate-wide, no libloading/dlopen. Mechanism (behind the existing `plugins` feature, which provides the `inventory` dep): added `PluginDescriptor { name, constructor }` collected via `inventory::collect!(PluginDescriptor)`; a `#[macro_export] register_plugin!(name, ctor)` declarative macro that does `inventory::submit!` (re-exported `inventory` from lib.rs as `$crate::inventory` so downstream plugin crates need no direct dep); `discover_plugins() -> Vec<Box<dyn Plugin>>` that iterates `inventory::iter::<PluginDescriptor>` and constructs each; and `PluginRegistry::discover(&mut self) -> Result<usize>` that discovers, registers (calls initialize), and returns the count. Wired/reachable: the prompthub CLI `plugin list` command now calls `registry.discover()` (cfg(feature=plugins)) alongside the existing runtime `load_static_plugins()` path — both kept (NO-DOWNGRADE: the prior Mutex-based runtime registry and register_from_path static fallback are untouched). True dynamic .so loading documented as intentionally out of scope under forbid(unsafe_code); the inventory link-time registry IS the safe discovery path. Tests added in plugins.rs: a DiscoveredPlugin submitted via register_plugin! at crate scope; test_discover_plugins_finds_submitted_descriptor (discovery surfaces the descriptor) and test_registry_discover_registers_and_invokes (discover registers+initializes, list reflects it, health invoked, all_healthy true). Gates all green: cargo build -p prompt-hub (default) OK; cargo test -p prompt-hub --all-features plugins = 7 passed; cargo clippy -p prompt-hub --all-features --all-targets -- -D warnings = clean; cargo clippy -p prompt-hub --all-targets -- -D warnings (default) = clean; cargo fmt -p prompt-hub --check = clean; cargo build --workspace --all-features OK (181 crates).",
   "priority": "P2",
-  "objective": "plugins.rs (306 lines): PluginRegistry has list/register but dynamic loading is disabled by #![forbid(unsafe_code)]. Implement safe inventory-based discovery or gate behind an unsafe-compatible feature.",
+  "objective": "INCOMPLETE FEATURE (not dead code): plugins.rs (306 lines) has a PluginRegistry with list/register, but discovery/loading is unfinished under #![forbid(unsafe_code)]. COMPLETE it: implement SAFE, compile-time plugin discovery (e.g. the `inventory` crate / linkme-style registration already hinted by the `plugins` feature) so registered plugins are discovered and invoked through the registry \u2014 no unsafe dynamic loading. Upgrade only \u2014 finish safe plugin support; do not gate the feature out.",
   "path_scope": [
     "prompt-hub/**"
   ],
   "acceptance_criteria": [
-    "plugins.rs offers a safe discovery path or is explicitly feature-gated"
+    "PluginRegistry discovers compile-time-registered plugins via a safe mechanism (no unsafe)",
+    "a registered plugin can be looked up and invoked through the registry",
+    "a test registers + discovers + invokes a sample plugin"
   ],
   "test_commands": [
     "cargo check --workspace --all-features",
@@ -23,9 +26,10 @@
   "correlation_id": "prompt-hub-construction",
   "role": "implementer",
   "intent_lock": {
-    "objective_hash": "blake3:cf3a834869d95ecf78239dd13a6cc89287b8843b1128fa9b4378f4b8f478eb6d",
+    "objective_hash": "blake3:3df29ca8b318f3e33fa34ab1bc7eac49a68daeb2573b330774ceb908df4f4787",
     "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
-    "acceptance_hash": "blake3:26ab4075af48d2018c43b52df70d6873b4629ad44281f0f4ab06a09944c938be"
+    "acceptance_hash": "blake3:8e4b992512a0eea26213d3648765dad1513db4a32b4c71c28415f32b62509764"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
 }

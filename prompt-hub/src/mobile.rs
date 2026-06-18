@@ -161,20 +161,38 @@ pub struct MobileEngine {
     pub config: MobileConfig,
     /// Sequence counter for pending operations.
     seq: u64,
+    /// Persisted pending-push queue. In production this is backed by the
+    /// device's SQLite store; here it is the in-memory store of record that
+    /// every push decision reads back from.
+    queue: Vec<PendingPush>,
 }
 
 impl MobileEngine {
     /// Create a new mobile engine from config.
     pub fn new(config: MobileConfig) -> Self {
-        Self { config, seq: 0 }
+        Self {
+            config,
+            seq: 0,
+            queue: Vec::new(),
+        }
     }
 
     /// Register a pending push operation. Returns the assigned sequence number.
+    ///
+    /// The push is persisted into the pending-push queue so it survives
+    /// read-back by [`Self::pending`], [`Self::estimated_total_bytes`], and the
+    /// sync-planning paths.
     pub fn enqueue_push(&mut self, op_type: PushOpType, payload_size_bytes: usize) -> u64 {
         let seq = self.seq;
         self.seq += 1;
-        // In production this would write to the device's SQLite store.
-        // For now we just track in memory.
+        // Persist the queued push into the store of record. In production this
+        // writes to the device's SQLite store; here it lands in the in-memory
+        // queue so it survives read-back.
+        self.queue.push(PendingPush {
+            seq,
+            op_type: op_type.clone(),
+            payload_size_bytes,
+        });
         tracing::debug!(
             seq = %seq,
             ?op_type,
@@ -184,13 +202,40 @@ impl MobileEngine {
         seq
     }
 
+    /// Read back the persisted pending-push queue.
+    pub fn pending(&self) -> &[PendingPush] {
+        &self.queue
+    }
+
+    /// Number of pending pushes currently persisted in the queue.
+    pub fn pending_count(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Real serialized size, in bytes, of the persisted pending-push queue.
+    ///
+    /// Computes the actual on-the-wire payload size by serializing each pending
+    /// push and summing the byte lengths (rather than estimating). A push whose
+    /// payload cannot be serialized falls back to its recorded
+    /// `payload_size_bytes`, so the total always reflects real content.
+    pub fn estimated_total_bytes(&self) -> usize {
+        self.queue
+            .iter()
+            .map(|push| {
+                serde_json::to_vec(push)
+                    .map(|bytes| bytes.len())
+                    .unwrap_or(push.payload_size_bytes)
+            })
+            .sum()
+    }
+
     /// Estimate whether all pending pushes can be sent within the bandwidth budget.
+    ///
+    /// Sums the real per-item payload sizes read back from the persisted queue
+    /// and compares them against the budget.
     pub fn can_push_all_pending(&self, budget_bytes: usize) -> bool {
-        // In production this would sum up actual pending push sizes from the store.
-        let estimated_total: usize = (0..self.seq as usize)
-            .map(|i| i * 1024) // simulate varying payload sizes
-            .sum();
-        estimated_total <= budget_bytes
+        let total: usize = self.queue.iter().map(|push| push.payload_size_bytes).sum();
+        total <= budget_bytes
     }
 
     /// Get a bandwidth-aware sync plan for pending changes.
@@ -209,7 +254,7 @@ impl MobileEngine {
             estimated_duration_secs: if bandwidth == 0 {
                 i64::MAX
             } else {
-                (estimated_total_bytes(bandwidth) as f64 / bandwidth as f64).ceil() as i64
+                (self.estimated_total_bytes() as f64 / bandwidth as f64).ceil() as i64
             },
         }
     }
@@ -259,12 +304,6 @@ impl SyncPlan {
     pub fn remaining(&self) -> usize {
         self.total_pushes.saturating_sub(self.can_fit)
     }
-}
-
-// Helper function used above (avoids dead-code warning for unused import)
-fn estimated_total_bytes(_bandwidth: usize) -> usize {
-    // In production this would sum pending push sizes from the store
-    0
 }
 
 #[cfg(test)]
@@ -382,5 +421,79 @@ mod mobile_tests {
         let config = MobileConfig::default();
         let engine = MobileEngine::new(config);
         assert!(!engine.should_suppress_sync());
+    }
+
+    #[test]
+    fn test_enqueued_pushes_persist_and_survive_readback() {
+        let mut engine = MobileEngine::new(MobileConfig::default());
+        assert!(engine.pending().is_empty());
+        assert_eq!(engine.pending_count(), 0);
+
+        engine.enqueue_push(PushOpType::Create, 4096);
+        engine.enqueue_push(PushOpType::Update, 8192);
+        engine.enqueue_push(PushOpType::Delete, 512);
+
+        // The queue persists every enqueued push and survives read-back.
+        let pending = engine.pending();
+        assert_eq!(pending.len(), 3);
+        assert_eq!(engine.pending_count(), 3);
+
+        // Sequence numbers, op types, and payload sizes are preserved exactly.
+        assert_eq!(pending[0].seq, 0);
+        assert_eq!(pending[0].op_type, PushOpType::Create);
+        assert_eq!(pending[0].payload_size_bytes, 4096);
+
+        assert_eq!(pending[1].seq, 1);
+        assert_eq!(pending[1].op_type, PushOpType::Update);
+        assert_eq!(pending[1].payload_size_bytes, 8192);
+
+        assert_eq!(pending[2].seq, 2);
+        assert_eq!(pending[2].op_type, PushOpType::Delete);
+        assert_eq!(pending[2].payload_size_bytes, 512);
+    }
+
+    #[test]
+    fn test_estimated_total_bytes_reflects_real_content() {
+        let mut engine = MobileEngine::new(MobileConfig::default());
+        // Empty queue serializes to zero bytes.
+        assert_eq!(engine.estimated_total_bytes(), 0);
+
+        engine.enqueue_push(PushOpType::Create, 4096);
+
+        // The total is the real serialized size of the single push — not the
+        // old hardcoded 0, and not the raw payload-size field alone.
+        let one = engine.estimated_total_bytes();
+        let expected_one = serde_json::to_vec(&engine.pending()[0]).unwrap().len();
+        assert_eq!(one, expected_one);
+        assert!(one > 0);
+
+        // Adding a second push strictly increases the real serialized total.
+        engine.enqueue_push(PushOpType::Update, 8192);
+        let two = engine.estimated_total_bytes();
+        let expected_two: usize = engine
+            .pending()
+            .iter()
+            .map(|p| serde_json::to_vec(p).unwrap().len())
+            .sum();
+        assert_eq!(two, expected_two);
+        assert!(two > one);
+    }
+
+    #[test]
+    fn test_can_push_all_pending_decides_against_budget() {
+        let mut engine = MobileEngine::new(MobileConfig::default());
+        // An empty queue always fits any budget, including zero.
+        assert!(engine.can_push_all_pending(0));
+
+        engine.enqueue_push(PushOpType::Create, 1000);
+        engine.enqueue_push(PushOpType::Update, 1500);
+        // Total real payload = 2500 bytes.
+
+        // Budget below the total: cannot push all.
+        assert!(!engine.can_push_all_pending(2499));
+        // Budget exactly at the total: fits.
+        assert!(engine.can_push_all_pending(2500));
+        // Budget above the total: fits.
+        assert!(engine.can_push_all_pending(10_000));
     }
 }

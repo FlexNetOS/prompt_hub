@@ -1,15 +1,17 @@
 {
   "schema": "handoff.task.v1",
   "id": "PHTASK-0029",
-  "title": "Decide `defaults.rs` (seed_database no-op)",
-  "status": "backlog",
+  "title": "Complete `defaults.rs` \u2014 real database seeding",
+  "status": "done",
   "priority": "P2",
-  "objective": "defaults.rs (117 lines): seed_database() is Ok(()) no-op; template constants duplicated. Decision: implement real seeding or remove the pub mod.",
+  "objective": "INCOMPLETE FEATURE (not dead code): defaults.rs (117 lines) defines default/template prompt constants but seed_database() is an Ok(()) no-op. COMPLETE it: implement seed_database() to insert the documented default prompts into storage idempotently, de-duplicate the template constants to a single source, and wire seeding into the init path (e.g. `prompthub init --seed` / PromptHub bootstrap). Upgrade only \u2014 finish the seeding feature; do not remove the module.",
   "path_scope": [
     "prompt-hub/**"
   ],
   "acceptance_criteria": [
-    "defaults.rs either seeds for real or is removed; no dead pub surface"
+    "seed_database() actually inserts the default prompts into storage (idempotent on re-run)",
+    "seeding is reachable from a real entry point (init/bootstrap)",
+    "a test seeds then reads the defaults back"
   ],
   "test_commands": [
     "cargo check --workspace --all-features",
@@ -23,9 +25,11 @@
   "correlation_id": "prompt-hub-construction",
   "role": "implementer",
   "intent_lock": {
-    "objective_hash": "blake3:cc20f7dd325d72b91c9fb396bdc1f38dbe4e92734dec1e1e3ead700c5d9f2d98",
+    "objective_hash": "blake3:852e3c45b8dc8fc8e413efcbbd763fdeb6974508d20c4876f324bcc82614fe01",
     "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
-    "acceptance_hash": "blake3:f8c0d09eed2515709884313a20cc6042c9290b413c5f08b38e9322f299be18b3"
+    "acceptance_hash": "blake3:f4c2daf207089fb8995a5fd0db18703d201a84beaeca99189384d685306fb291"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "COMPLETED the seeding feature in defaults.rs (NO removal): seed_database() is no longer a no-op \u2014 it now takes (&PromptHub, &AgentIdentity), builds the six base role templates via new default_prompts() (each a Prompt tagged default/base-template with its primary role in target_roles), and registers any not-already-present (matched by name via hub.list) through the normal RBAC+sanitize+audit register() path. Idempotent: a second call inserts 0. Template constants kept as the single source (templates mod); base_template_specs() maps name->role->const so there is no duplication. Wired into a real core entry point: added pub PromptHub::seed_defaults(identity) fa\u00e7ade method delegating to defaults::seed_database. Tests (in defaults.rs): default_prompts_cover_all_base_templates; seed_database_inserts_all_base_templates (seeds 6, reads back via list); seed_database_is_idempotent (6 then 0); seed_database_requires_write (anonymous -> Unauthorized). seed_database had ZERO external callers, so the signature change broke nothing. Gates: cargo test -p prompt-hub defaults => 9 passed (--all-features); clippy --all-features --all-targets -D warnings clean; default clippy (lib) clean; default-features library build (CI default-build gate) green; cargo fmt --check clean. CLI `init --seed` shell wiring is prompthub/** scope (out of this card's prompt-hub/** path_scope) -> filed PHTASK-0042. Done via worktree loop/phtask-0039-get-rbac-test (cycle 90)."
 }

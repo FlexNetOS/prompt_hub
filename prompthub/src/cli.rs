@@ -32,7 +32,12 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Initialize a new prompt hub
-    Init { path: Option<PathBuf> },
+    Init {
+        path: Option<PathBuf>,
+        /// Seed the store with the built-in base role templates (idempotent)
+        #[arg(long)]
+        seed: bool,
+    },
 
     /// Add a new prompt
     Add {
@@ -333,7 +338,13 @@ mod tests {
     #[test]
     fn test_cli_parse_init() {
         let args = Cli::parse_from(["prompthub", "init"]);
-        assert!(matches!(args.command, Commands::Init { .. }));
+        assert!(matches!(args.command, Commands::Init { seed: false, .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_init_seed() {
+        let args = Cli::parse_from(["prompthub", "init", "--seed"]);
+        assert!(matches!(args.command, Commands::Init { seed: true, .. }));
     }
 
     #[test]

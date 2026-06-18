@@ -2,7 +2,8 @@
   "schema": "handoff.task.v1",
   "id": "PHTASK-0036",
   "title": "Move inline CLI commands to dedicated files",
-  "status": "backlog",
+  "status": "done",
+  "resolution": "Extracted all 8 genuinely-inline CLI command handlers from prompthub/src/main.rs into dedicated commands/*.rs files (matching the existing add.rs/metrics.rs pattern) and registered each in commands/mod.rs: rollback.rs, evolve.rs, vibe.rs, gather.rs, preview.rs, cost.rs, deploy.rs, feedback.rs. Pure refactor — exact behavior/flags/output/error handling preserved (cost's request.clone() became request.to_string() on the &str param, same value; no command/flag/branch dropped). Verified against the code: NONE of these match arms were #[cfg]-gated in main.rs today (the hub methods vibe_code/estimate_cost/rollback/learn_from_feedback are gated by prompt-hub features vibe/cost/rollback/learn, but those are enabled transitively via prompt-hub's own default features through the path dependency, so main.rs compiled them ungated) — extracted functions therefore mirror that exactly with no cfg gates. Added #[cfg(test)] smoke tests to the two non-hub placeholder commands (preview, deploy), mirroring metrics.rs's test precedent; hub-backed commands follow the existing no-inline-test convention of the other hub commands. Commands already in commands/ (add/budget/cache/export/import/init/junie/list/metrics/plugin/search) were left untouched. Gates green: cargo build -p prompthub (default + --all-features), cargo test -p prompthub (16 default / 19 all-features passed), cargo clippy -p prompthub --all-targets -- -D warnings (default + --all-features: clean), cargo fmt -p prompthub --check (clean), cargo build --workspace --all-features (clean).",
   "priority": "P2",
   "objective": "rollback/evolve/vibe/gather/preview/cost/deploy/feedback are dispatched inline in main.rs with no dedicated command files -> test/maintenance gap. Extract to commands/*.rs.",
   "path_scope": [
@@ -27,5 +28,6 @@
     "path_scope_hash": "blake3:6be561b2fe59dedf307317a0ace5ff90247a383d55afb92d8183438a3ba01286",
     "acceptance_hash": "blake3:ad0d70baa1f755cf36ba804a6ca11cb36542ad6c2761183068114e7defbe9e40"
   },
-  "source": "migrated from _workspace/backlog.md (2026-06-13)"
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
 }
