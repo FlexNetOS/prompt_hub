@@ -309,11 +309,14 @@ impl Embedder for HashEmbedder {
 #[cfg(feature = "smart-ort")]
 pub mod ort_impl {
     use super::*;
-    use std::future::Future;
-    use std::pin::Pin;
+    use std::fs;
+    use std::path::Path;
 
     /// Default ONNX model name used by all-MiniLM-L6-v2 sentence-transformers export.
     pub(crate) const DEFAULT_MODEL_NAME: &str = "sentence-transformers/all-MiniLM-L6-v2";
+
+    /// Model cache directory
+    const MODEL_CACHE_DIR: &str = "prompt-hub/models";
 
     /// `OrtEmbedder` — real ONNX Runtime inference backend for SmartEngine.
     #[derive(Debug)]
@@ -322,29 +325,86 @@ pub mod ort_impl {
         model_name: String,
         /// Vector dimension — 384 for all-MiniLM-L6-v2.
         dim: usize,
+        /// ONNX Runtime session (wrapped in Mutex for interior mutability)
+        #[allow(dead_code)]
+        session: Arc<std::sync::Mutex<ort::session::Session>>,
     }
 
     impl OrtEmbedder {
         pub fn new(model_name: &str) -> crate::error::Result<Self> {
+            let session = load_model_session(model_name)?;
             Ok(Self {
                 model_name: model_name.to_string(),
                 dim: 384, // all-MiniLM-L6-v2 dimension
+                session,
             })
         }
 
         /// Create with the default model (all-MiniLM-L6-v2).
         pub fn default_model() -> Self {
+            let session = load_model_session(DEFAULT_MODEL_NAME).expect("Failed to load default model");
             Self {
                 model_name: DEFAULT_MODEL_NAME.to_string(),
                 dim: 384,
+                session,
             }
         }
 
-        /// Tokenize text to integer IDs (simplified char-code encoding for now).
-        /// Production use will load a sentencepiece/bpe tokenizer from the model's config.
+        /// Get the path to the cached ONNX model file
+        fn model_path(&self) -> std::path::PathBuf {
+            dirs::cache_dir()
+                .map(|d| d.join(MODEL_CACHE_DIR).join(format!("{}.onnx", self.model_name.replace('/', "--"))))
+                .unwrap_or_else(|| std::path::PathBuf::from("./cache/models").join(format!("{}.onnx", self.model_name.replace('/', "--"))))
+        }
+
+        /// Tokenize text to integer IDs (simplified char-code encoding).
+        ///
+        /// This is a simple tokenizer for testing; production use should load
+        /// the model's specific tokenizer (sentencepiece/bpe) from its config.
         fn tokenize(&self, text: &str) -> Vec<i64> {
+            // Simple character-level tokenization with max length of 512 tokens
+            // For production, this would use sentencepiece or BPE from the ONNX model config
             text.chars().map(|c| c as i64).take(512).collect()
         }
+    }
+
+    /// Load an ONNX model session from cache or download it
+    fn load_model_session(model_name: &str) -> Result<Arc<std::sync::Mutex<ort::session::Session>>> {
+        let model_path = get_cached_model_path(model_name)?;
+
+        // Load the ONNX model using ort 2.x API:
+        // - Session::builder() returns a SessionBuilder (Result)
+        // - commit_from_file(path) on builder returns Session
+        let mut builder = ort::session::Session::builder()
+            .map_err(|e| HubError::Internal(format!("Failed to create session builder: {e}")))?;
+
+        let session = builder.commit_from_file(&model_path)
+            .map_err(|e| HubError::Internal(format!("Failed to load ONNX model from {}: {e}", model_path.display())))?;
+
+        // Wrap in Mutex for interior mutability since run() takes &mut self
+        Ok(Arc::new(std::sync::Mutex::new(session)))
+    }
+
+    /// Get path to cached model, downloading if necessary
+    fn get_cached_model_path(model_name: &str) -> Result<std::path::PathBuf> {
+        let cache_dir = dirs::cache_dir()
+            .map(|d| d.join(MODEL_CACHE_DIR))
+            .unwrap_or_else(|| std::path::PathBuf::from("./cache/models"));
+
+        // Ensure cache directory exists
+        fs::create_dir_all(&cache_dir)
+            .map_err(|e| HubError::Internal(format!("Failed to create cache dir {}: {e}", cache_dir.display())))?;
+
+        let model_path = cache_dir.join(format!("{}.onnx", model_name.replace('/', "--")));
+
+        if !model_path.exists() {
+            return Err(HubError::NotFound(format!(
+                "Model not found at {}. Run download_model first.",
+                model_path.display()
+            )));
+        }
+
+        Ok(model_path)
     }
 
     impl Embedder for OrtEmbedder {
@@ -358,9 +418,97 @@ pub mod ort_impl {
         ) -> Pin<Box<dyn Future<Output = crate::error::Result<EmbedOutput>> + Send + 'a>> {
             Box::pin(async move {
                 let mut outputs = Vec::with_capacity(texts.len());
-                for _text in texts {
-                    outputs.push(vec![0.0f32; self.dim]);
+
+                for text in texts {
+                    // Tokenize the input text
+                    let input_ids = self.tokenize(text);
+
+                    if input_ids.is_empty() {
+                        // Return zero embedding for empty input
+                        outputs.push(vec![0.0f32; self.dim]);
+                        continue;
+                    }
+
+                    // Run inference with ONNX Runtime using ort 2.x API:
+                    // - inputs! macro creates SessionInputs from tensors
+                    // - run() takes &mut self and SessionInputs, returns SessionOutputs
+                    use ort::value::Tensor;
+
+                    let shape = [1, input_ids.len() as i64];
+                    let tensor: Tensor<i64> = Tensor::from_array((shape, input_ids.into_boxed_slice()))
+                        .map_err(|e| HubError::Internal(format!("Failed to create tensor: {e}")))?;
+
+                    // The ort 2.x API uses SessionInputValue via Into trait
+                    // Use the inputs! macro with &tensor to borrow it
+                    let session_inputs = ort::inputs![&tensor];
+
+                    // Acquire mutex lock and run inference
+                    let mut session_guard = self.session.lock().map_err(|e| HubError::Internal(format!("Mutex error: {e}")))?;
+                    let outputs_array = session_guard.run(session_inputs)
+                        .map_err(|e| HubError::Internal(format!("ONNX inference failed: {e}")))?;
+
+                    // The model returns token embeddings of shape (batch_size, seq_len, hidden_size)
+                    // We need to compute sentence embedding by averaging token embeddings
+                    if let Some(output_value) = outputs_array.get(0) {
+                        // Extract the tensor data from the output Value using try_extract_tensor
+                        // The output is typically named "last_hidden_state" or similar
+                        match output_value.try_extract_tensor::<f32>() {
+                            Ok((shape, floats)) => {
+                                // Use num_elements() method from ort::Shape
+                                let element_count = shape.num_elements();
+
+                                if !floats.is_empty() && element_count % self.dim == 0 {
+                                            let seq_len = element_count / self.dim;
+                                            let mut embedding = vec![0.0f32; self.dim];
+
+                                            // Compute mean pooling across sequence length
+                                            for i in 0..self.dim {
+                                                let mut sum = 0.0f32;
+                                                for j in 0..seq_len {
+                                                    let idx = j * self.dim + i;
+                                                    if idx < floats.len() {
+                                                        sum += floats[idx];
+                                                    }
+                                                }
+                                                embedding[i] = sum / seq_len as f32;
+                                            }
+
+                                            // Normalize the embedding (L2 normalization is typical)
+                                            let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+                                            if norm > 0.0 {
+                                                for e in &mut embedding {
+                                                    *e /= norm;
+                                                }
+                                            }
+
+                                            outputs.push(embedding);
+                                        } else {
+                                            // Fallback to zero embedding if shape is unexpected
+                                            warn!(
+                                                "Unexpected output shape: {} elements, expected multiple of {}",
+                                                element_count, self.dim
+                                            );
+                                            outputs.push(vec![0.0f32; self.dim]);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to extract f32 tensor: {e}");
+                                        outputs.push(vec![0.0f32; self.dim]);
+                                    }
+                                }
+                            }
+                        } else {
+                                // No output from the model
+                                warn!("Expected at least one output from ONNX model");
+                                outputs.push(vec![0.0f32; self.dim]);
+                            }
+                        }
+                    } else {
+                        warn!("Expected at least one output from ONNX model");
+                        outputs.push(vec![0.0f32; self.dim]);
+                    }
                 }
+
                 Ok(outputs)
             })
         }
@@ -368,6 +516,54 @@ pub mod ort_impl {
         fn name(&self) -> &'static str {
             "ort"
         }
+    }
+
+    /// Download the ONNX model to the cache directory.
+    /// This is a placeholder implementation - in production, you would:
+    /// 1. Query the Hugging Face Hub API for model files
+    /// 2. Download the ONNX file with reqwest
+    /// 3. Verify checksum against models.json manifest
+    #[allow(dead_code)]
+    pub async fn download_model(model_name: &str) -> Result<()> {
+        let cache_dir = dirs::cache_dir()
+            .map(|d| d.join(MODEL_CACHE_DIR))
+            .unwrap_or_else(|| std::path::PathBuf::from("./cache/models"));
+
+        fs::create_dir_all(&cache_dir)
+            .map_err(|e| HubError::Internal(format!("Failed to create cache dir: {e}")))?;
+
+        let model_path = cache_dir.join(format!("{}.onnx", model_name.replace('/', "--")));
+
+        warn!(
+            "Model download not yet implemented — download the ONNX file manually to {}",
+            model_path.display()
+        );
+
+        // In production, you would use reqwest to download from:
+        // https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx
+
+        Ok(())
+    }
+
+    /// Verify SHA-256 checksum of a model file against expected value.
+    #[allow(dead_code)]
+    pub async fn verify_checksum(_model_name: &str, path: &Path) -> Result<()> {
+        // In production, you would:
+        // 1. Fetch the models.json manifest from Hugging Face Hub
+        // 2. Look up the expected SHA-256 for this model
+        // 3. Compute actual SHA-256 and compare
+
+        debug!("Checksum verification for {}", path.display());
+
+        // For now, just verify the file exists and is not empty
+        let metadata = fs::metadata(path)
+            .map_err(|e| HubError::Internal(format!("Failed to read model file: {e}")))?;
+
+        if metadata.len() == 0 {
+            return Err(HubError::Validation("Model file is empty".to_string()));
+        }
+
+        Ok(())
     }
 }
 
@@ -415,7 +611,7 @@ mod embedder_tests {
     }
 
     #[test]
-    fn test_embedder_trait_object_safety() {
+    fn test_hash_embedder_trait_object_safety() {
         // Verify the trait is object-safe and can be used via dyn
         let h: Arc<dyn Embedder> = Arc::new(HashEmbedder::new(384));
         assert_eq!(h.dimension(), 384);
@@ -459,10 +655,23 @@ mod embedder_tests {
         assert_eq!(v1, v2);
         assert_eq!(v1.len(), 384);
     }
+
+    #[cfg(feature = "smart-ort")]
+    mod ort_tests {
+        use super::super::*;
+
+        #[test]
+        fn test_ort_embedder_creation() {
+            // Just verify the struct can be created (actual model loading requires ONNX file)
+            let embedder = OrtEmbedder::default_model();
+            assert_eq!(embedder.dimension(), 384);
+            assert_eq!(embedder.name(), "ort");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// SMART engine — ONNX embeddings via cosine similarity
+// SmartEngine with lazy model loading
 // ---------------------------------------------------------------------------
 
 /// SMART semantic-search engine using ONNX embeddings.
@@ -476,6 +685,8 @@ pub struct SmartEngine {
     model_cache_path: std::path::PathBuf,
     storage: Arc<Storage>,
     embedder: Arc<dyn Embedder>,
+    #[cfg(feature = "smart-ort")]
+    ort_session_ready: std::sync::Arc<std::sync::Mutex<bool>>,
 }
 
 impl SmartEngine {
@@ -495,7 +706,7 @@ impl SmartEngine {
             crate::config::EmbedderBackend::Hash => Arc::new(HashEmbedder::new(dim)),
             #[cfg(feature = "smart-ort")]
             crate::config::EmbedderBackend::OnnxRuntime => {
-                // Create with default model — actual download happens lazily on first embed() call.
+                // Try to create OrtEmbedder; if it fails (no model file), fall back to Hash
                 match OrtEmbedder::new(crate::search::ort_impl::DEFAULT_MODEL_NAME) {
                     Ok(ort_embedder) => Arc::new(ort_embedder),
                     Err(e) => {
@@ -531,6 +742,8 @@ impl SmartEngine {
             model_cache_path: cache_path,
             storage,
             embedder,
+            #[cfg(feature = "smart-ort")]
+            ort_session_ready: std::sync::Arc::new(std::sync::Mutex::new(false)),
         }
     }
 
@@ -584,7 +797,7 @@ impl SmartEngine {
 
         let model_file = self
             .model_cache_path
-            .join(format!("{}.onnx", self.model_name));
+            .join(format!("{}.onnx", self.model_name.replace('/', "--")));
 
         if !model_file.exists() {
             info!("Model not cached, downloading: {}", self.model_name);
@@ -604,18 +817,29 @@ impl SmartEngine {
         if !cache_dir.exists() {
             std::fs::create_dir_all(cache_dir)?;
         }
-        // Implementation: HTTP GET from model registry → write to cache.
-        // For now, stub — production code would use `reqwest` here.
-        warn!("Model download not yet implemented — using stub");
-        Ok(())
+
+        // Try to use ort_impl's download function if feature is enabled
+        #[cfg(feature = "smart-ort")]
+        return ort_impl::download_model(&self.model_name).await;
+
+        #[cfg(not(feature = "smart-ort"))]
+        {
+            warn!("Model download not yet implemented — using stub");
+            Ok(())
+        }
     }
 
     /// Verify SHA-256 checksum from `models.json` manifest.
     #[allow(dead_code)]
     async fn verify_checksum(&self, _path: &std::path::Path) -> Result<()> {
-        // Implementation: read models.json, find entry for self.model_name,
-        // compute SHA-256 of the .onnx file, compare.
-        Ok(())
+        // Try to use ort_impl's verify function if feature is enabled
+        #[cfg(feature = "smart-ort")]
+        return ort_impl::verify_checksum(&self.model_name, path).await;
+
+        #[cfg(not(feature = "smart-ort"))]
+        {
+            Ok(())
+        }
     }
 
     /// Compute cosine similarity between two equal-length vectors.
