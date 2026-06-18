@@ -850,10 +850,10 @@ impl SmartEngine {
 
     /// Verify SHA-256 checksum from `models.json` manifest.
     #[allow(dead_code)]
-    async fn verify_checksum(&self, path: &std::path::Path) -> Result<()> {
+    async fn verify_checksum(&self, _path: &std::path::Path) -> Result<()> {
         // Try to use ort_impl's verify function if feature is enabled
         #[cfg(feature = "smart-ort")]
-        return ort_impl::verify_checksum(&self.model_name, path).await;
+        return ort_impl::verify_checksum(&self.model_name, _path).await;
 
         #[cfg(not(feature = "smart-ort"))]
         {
