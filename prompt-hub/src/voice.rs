@@ -13,7 +13,23 @@ use crate::models::{
     VoicePipelineState, VoicePlaybackStatus, VoiceSttBackend, VoiceTtsBackend,
 };
 use chrono::Utc;
+use std::future::Future;
+use std::pin::Pin;
 use uuid::Uuid;
+
+/// Resolves prompt text for a voice turn.
+pub trait PromptResolver {
+    fn resolve<'a>(&'a self, text: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+}
+
+#[derive(Debug, Default)]
+struct IdentityPromptResolver;
+
+impl PromptResolver for IdentityPromptResolver {
+    fn resolve<'a>(&'a self, text: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move { Ok(text.to_string()) })
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Backend implementations
@@ -339,6 +355,16 @@ impl VoicePipelineEngine {
     /// # Errors
     /// Returns `HubError` at the first failure in the pipeline chain.
     pub async fn execute_turn(&mut self, prompt_text: &str) -> Result<VoiceInteraction> {
+        let resolver = IdentityPromptResolver;
+        self.execute_turn_with_resolver(prompt_text, &resolver).await
+    }
+
+    /// Execute a complete voice turn while resolving the prompt through a resolver.
+    pub async fn execute_turn_with_resolver(
+        &mut self,
+        prompt_text: &str,
+        resolver: &dyn PromptResolver,
+    ) -> Result<VoiceInteraction> {
         // Phase 1: recording (skip if STT is disabled — passthrough mode)
         let stt_text = if self.config.stt_enabled {
             self.start_recording()?;
@@ -362,7 +388,8 @@ impl VoicePipelineEngine {
 
         // Phase 2: process & TTS
         let (tts_output, playback_status) = if self.config.tts_enabled {
-            let response = self.process_text(&stt_text).await?;
+            let response = resolver.resolve(&stt_text).await?;
+            self.current_state = VoicePipelineState::TtsComplete;
             let _audio = self.speak(&response).await?;
             (Some(response), VoicePlaybackStatus::Playing)
         } else {
