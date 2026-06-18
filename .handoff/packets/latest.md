@@ -9,17 +9,25 @@ A non-technical user makes any request; prompt_hub transforms, communicates, and
 Git > FLEET ledger (meta/.handoff/ledger.db) > tasks/*.task.json > this packet.
 
 ## 3. Progress
-Done: 30/40.  FLEET tamper-evident events verified: 20.
+Done: 53/71.  FLEET tamper-evident events verified: 732.
 
 ## 4. Remaining
-- [P2] **PHTASK-0029** — Complete `defaults.rs` — real database seeding
-- [P3] **PHTASK-0030** — Complete `shutdown.rs` — graceful PromptHub shutdown
-- [P2] **PHTASK-0032** — Complete `plugins.rs` — safe plugin discovery + load
-- [P3] **PHTASK-0034** — Make Junie a first-class PromptHub field
-- [P1] **PHTASK-0035** — Cover remaining hub methods with server routes
-- [P2] **PHTASK-0036** — Move inline CLI commands to dedicated files
-- [P2] **PHTASK-0037** — Write real DDL for migration 0008_generation_params
-- [P1] **PHTASK-0038** — Add tests to `hooks.rs` (orchestrator path)
-- [P1] **PHTASK-0039** — Integration test for hub.get() RBAC+intent flow
-- [P3] **PHTASK-0040** — Default identity lacks Write for non-operator callers
+- [P2] **PHTASK-0048** — Complete search ONNX embedder real inference + model fetch/verify
+- [P2] **PHTASK-0055** — Complete voice STT/TTS backends behind the FSM
+- [P1] **PHTASK-0056** — EPIC — expose remaining ~125 hub capabilities over HTTP
+- [P1] **PHTASK-0057** — Routes: prompt lifecycle (11 capabilities)
+- [P2] **PHTASK-0058** — Routes: context gathering + lineage (11 capabilities)
+- [P1] **PHTASK-0059** — Routes: provider health/multi-provider + rollout/deploy/rollback (18)
+- [P2] **PHTASK-0060** — Routes: cost-limits + beta + quota + moderation (14)
+- [P2] **PHTASK-0061** — Routes: audit/SOC2/diff + retention/GC + auto-purge (23)
+- [P3] **PHTASK-0062** — Routes: voice + local-llm + analytics + accessibility (16)
+- [P3] **PHTASK-0063** — Routes: sandbox + malware + offline/sync/mobile + chaos + multimodal/i18n + preview + pollination + quality-gate (remaining ~32)
+- [P1] **PHTASK-0064** — CI: add Default-Features Build + Test-Compile to branch-protection required checks
+- [P3] **PHTASK-0065** — Hygiene: retire Python drift (generate_cards.py) + resolve unused libloading dep
+- [P1] **PHTASK-0066** — Complete LockManager TTL sweep (expired locks never deleted)
+- [P2] **PHTASK-0067** — Complete CLI JunieCommand::Task execution (print-only stub)
+- [P3] **PHTASK-0068** — Complete or formally retire the TUI (run_tui is a stub)
+- [P2] **PHTASK-0069** — Wire TLS/mTLS server path or retire the hollow `tls` feature
+- [P3] **PHTASK-0070** — Wire HF tokenizers counting backend or retire the hollow `tokenizers` feature
+- [P3] **PHTASK-0071** — Reconcile SPEC-promised but absent feature flags: sqlcipher + ffi
 

@@ -5,6 +5,16 @@ updates:
     schedule:
       interval: "daily"
     open-pull-requests-limit: 10
+    ignore:
+      # password-hash is pinned to whatever argon2 (0.5.3) re-exports (0.5.0).
+      # auth.rs uses argon2::password_hash::rand_core::OsRng, which works only
+      # because the direct password-hash 0.5.0 dep carries `getrandom` and
+      # feature-unifies onto argon2's transitive 0.5.0 crate. A standalone bump
+      # to 0.6.x splits the version and breaks the default-features build
+      # (see closed PR #109). It can only move in lockstep with an argon2 0.6.x
+      # upgrade, so ignore standalone version bumps here.
+      - dependency-name: "password-hash"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

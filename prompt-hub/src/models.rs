@@ -1173,6 +1173,115 @@ pub enum VoiceOutputFormat {
     Raw,
 }
 
+/// Configuration for the OpenAI-compatible STT backend (Whisper).
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenAiSttConfig {
+    /// API key used in the `Authorization: Bearer` header.
+    pub api_key: String,
+    /// Base URL for the OpenAI-compatible API.
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+    /// Model name, e.g. `whisper-1`.
+    #[serde(default = "default_whisper_model")]
+    pub model: String,
+}
+
+impl std::fmt::Debug for OpenAiSttConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiSttConfig")
+            .field("api_key", &"***")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .finish()
+    }
+}
+
+impl Default for OpenAiSttConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: default_openai_base_url(),
+            model: default_whisper_model(),
+        }
+    }
+}
+
+fn default_openai_base_url() -> String {
+    "https://api.openai.com/v1".to_string()
+}
+
+fn default_whisper_model() -> String {
+    "whisper-1".to_string()
+}
+
+/// STT backend selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "provider")]
+pub enum VoiceSttBackend {
+    /// Local passthrough / deterministic backend for tests and offline use.
+    #[default]
+    Mock,
+    /// OpenAI-compatible transcription endpoint.
+    OpenAi(OpenAiSttConfig),
+}
+
+/// Configuration for the OpenAI-compatible TTS backend.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenAiTtsConfig {
+    /// API key used in the `Authorization: Bearer` header.
+    pub api_key: String,
+    /// Base URL for the OpenAI-compatible API.
+    #[serde(default = "default_openai_base_url")]
+    pub base_url: String,
+    /// Model name, e.g. `tts-1`.
+    #[serde(default = "default_tts_model")]
+    pub model: String,
+    /// Voice identifier, e.g. `alloy`.
+    #[serde(default = "default_tts_voice")]
+    pub voice: String,
+}
+
+impl std::fmt::Debug for OpenAiTtsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiTtsConfig")
+            .field("api_key", &"***")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("voice", &self.voice)
+            .finish()
+    }
+}
+
+impl Default for OpenAiTtsConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            base_url: default_openai_base_url(),
+            model: default_tts_model(),
+            voice: default_tts_voice(),
+        }
+    }
+}
+
+fn default_tts_model() -> String {
+    "tts-1".to_string()
+}
+
+fn default_tts_voice() -> String {
+    "alloy".to_string()
+}
+
+/// TTS backend selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "provider")]
+pub enum VoiceTtsBackend {
+    /// Local passthrough / deterministic backend for tests and offline use.
+    #[default]
+    Mock,
+    /// OpenAI-compatible speech endpoint.
+    OpenAi(OpenAiTtsConfig),
+}
+
 /// Voice pipeline configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoicePipelineConfig {
@@ -1188,6 +1297,12 @@ pub struct VoicePipelineConfig {
     pub stt_enabled: bool,
     /// Output audio format.
     pub output_format: VoiceOutputFormat,
+    /// STT backend provider.
+    #[serde(default)]
+    pub stt_backend: VoiceSttBackend,
+    /// TTS backend provider.
+    #[serde(default)]
+    pub tts_backend: VoiceTtsBackend,
 }
 
 impl Default for VoicePipelineConfig {
@@ -1199,6 +1314,8 @@ impl Default for VoicePipelineConfig {
             tts_enabled: true,
             stt_enabled: true,
             output_format: VoiceOutputFormat::Wav,
+            stt_backend: VoiceSttBackend::default(),
+            tts_backend: VoiceTtsBackend::default(),
         }
     }
 }

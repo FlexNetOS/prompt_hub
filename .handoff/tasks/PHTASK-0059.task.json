@@ -1,0 +1,34 @@
+{
+  "acceptance_criteria": [
+    "each capability has a route + handler + DTO + test",
+    "RBAC + evolve_prompt-style error map applied"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0059",
+  "intent_lock": {
+    "acceptance_hash": "blake3:46c9052c155c2b59640970dc6597d6c8a4ec635b72ecb5279abcf369661e8076",
+    "objective_hash": "blake3:ca0590afe01394fb514565e22ff3eeb56d24390c7c704a7d9bda17948237838f",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135"
+  },
+  "objective": "Expose provider: register_provider, record_success, record_failure, is_healthy, get_health_summary, add_provider, route_to_vendor, record_provider_success, record_provider_failure, provider_pool_stats; rollout: check_rollout, register_rollout, find_rollout_inclusion, evaluate_auto_rollback, advance_segment, deploy_with_rollback, restore_snapshot, is_rollback_available. Handlers + DTOs + RBAC + error map + tests.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "priority": "P1",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Routes: provider health/multi-provider + rollout/deploy/rollback (18)"
+}

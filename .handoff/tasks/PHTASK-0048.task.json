@@ -1,0 +1,37 @@
+{
+  "acceptance_criteria": [
+    "OrtEmbedder::embed runs a real ONNX session and returns non-zero embeddings of the correct dimension for a known input",
+    "download_model fetches and caches the model file; verify_checksum validates a real digest and rejects a mismatch",
+    "feature-gated tests cover embed determinism on a fixture model (no network in tests)"
+  ],
+  "allows_dependency_addition": true,
+  "allows_network": true,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0048",
+  "intent_lock": {
+    "acceptance_hash": "blake3:2c8d88e31165aebebfbba6c7f3ea874944468b73319a1c6b81739c7f1ed533e4",
+    "objective_hash": "blake3:d6f4c71912544a90300862f8a84b3112a7218d7ddaa5602ea758d8962d173c57",
+    "path_scope_hash": "blake3:e6d9ddedd33a0b0d7bd85203cbc9ae565fa180b743444a817038207d1f612aed"
+  },
+  "objective": "search.rs OrtEmbedder::embed (:355) returns vec![0.0f32; dim] zeros — no inference, tokenize output unused; download_model (:601) and verify_checksum (:614) are Ok(()) no-ops. The 'smart-ort'/ONNX embedding backend is a hollow stub. Complete: real ORT session inference producing embeddings from tokenized input; real model download + checksum verification. Feature-gated; network only for fetch (tests offline via fixture).",
+  "path_scope": [
+    "prompt-hub/src/search.rs",
+    "prompt-hub/Cargo.toml"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete search ONNX embedder real inference + model fetch/verify"
+}

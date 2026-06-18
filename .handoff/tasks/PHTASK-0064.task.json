@@ -1,0 +1,30 @@
+{
+  "acceptance_criteria": [
+    "branch protection required_status_checks for main include 'Default-Features Build' and 'Default-Features Test Compile'",
+    "a PR that breaks the default-features build is blocked from merge"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": true,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0064",
+  "intent_lock": {
+    "acceptance_hash": "blake3:eef5eac7a6dd22b5d652c5cfba03ad5b006819f2662b08f3811ede1f6c22f505",
+    "objective_hash": "blake3:759ffe5da9f438be156020bf1a3ed530fcc8a74876e4a700a4ae21e977cf96df",
+    "path_scope_hash": "blake3:b1090caed8118f73b8e649146158e82db2a17ddf2d68762d4f20205b89022035"
+  },
+  "objective": "The Default-Features Build / Default-Features Test Compile jobs exist (PHTASK-0043) but are NOT in branch-protection required_status_checks. So a PR that breaks the default-features build is technically mergeable (dependabot #109 password-hash 0.6 was — closed manually). Add both jobs to the required-checks set so the regression gate actually blocks.",
+  "path_scope": [
+    ".github/**"
+  ],
+  "priority": "P1",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "gh api repos/FlexNetOS/prompt_hub/branches/main/protection --jq '.required_status_checks.checks[].context'"
+  ],
+  "title": "CI: add Default-Features Build + Test-Compile to branch-protection required checks"
+}
