@@ -342,7 +342,8 @@ pub mod ort_impl {
 
         /// Create with the default model (all-MiniLM-L6-v2).
         pub fn default_model() -> Self {
-            let session = load_model_session(DEFAULT_MODEL_NAME).expect("Failed to load default model");
+            let session =
+                load_model_session(DEFAULT_MODEL_NAME).expect("Failed to load default model");
             Self {
                 model_name: DEFAULT_MODEL_NAME.to_string(),
                 dim: 384,
@@ -353,8 +354,14 @@ pub mod ort_impl {
         /// Get the path to the cached ONNX model file
         fn model_path(&self) -> std::path::PathBuf {
             dirs::cache_dir()
-                .map(|d| d.join(MODEL_CACHE_DIR).join(format!("{}.onnx", self.model_name.replace('/', "--"))))
-                .unwrap_or_else(|| std::path::PathBuf::from("./cache/models").join(format!("{}.onnx", self.model_name.replace('/', "--"))))
+                .map(|d| {
+                    d.join(MODEL_CACHE_DIR)
+                        .join(format!("{}.onnx", self.model_name.replace('/', "--")))
+                })
+                .unwrap_or_else(|| {
+                    std::path::PathBuf::from("./cache/models")
+                        .join(format!("{}.onnx", self.model_name.replace('/', "--")))
+                })
         }
 
         /// Tokenize text to integer IDs (simplified char-code encoding).
@@ -369,7 +376,9 @@ pub mod ort_impl {
     }
 
     /// Load an ONNX model session from cache or download it
-    fn load_model_session(model_name: &str) -> Result<Arc<std::sync::Mutex<ort::session::Session>>> {
+    fn load_model_session(
+        model_name: &str,
+    ) -> Result<Arc<std::sync::Mutex<ort::session::Session>>> {
         let model_path = get_cached_model_path(model_name)?;
 
         // Load the ONNX model using ort 2.x API:
@@ -378,8 +387,12 @@ pub mod ort_impl {
         let mut builder = ort::session::Session::builder()
             .map_err(|e| HubError::Internal(format!("Failed to create session builder: {e}")))?;
 
-        let session = builder.commit_from_file(&model_path)
-            .map_err(|e| HubError::Internal(format!("Failed to load ONNX model from {}: {e}", model_path.display())))?;
+        let session = builder.commit_from_file(&model_path).map_err(|e| {
+            HubError::Internal(format!(
+                "Failed to load ONNX model from {}: {e}",
+                model_path.display()
+            ))
+        })?;
 
         // Wrap in Mutex for interior mutability since run() takes &mut self
         Ok(Arc::new(std::sync::Mutex::new(session)))
@@ -392,8 +405,12 @@ pub mod ort_impl {
             .unwrap_or_else(|| std::path::PathBuf::from("./cache/models"));
 
         // Ensure cache directory exists
-        fs::create_dir_all(&cache_dir)
-            .map_err(|e| HubError::Internal(format!("Failed to create cache dir {}: {e}", cache_dir.display())))?;
+        fs::create_dir_all(&cache_dir).map_err(|e| {
+            HubError::Internal(format!(
+                "Failed to create cache dir {}: {e}",
+                cache_dir.display()
+            ))
+        })?;
 
         let model_path = cache_dir.join(format!("{}.onnx", model_name.replace('/', "--")));
 
@@ -435,21 +452,28 @@ pub mod ort_impl {
                     use ort::value::Tensor;
 
                     let shape = [1, input_ids.len() as i64];
-                    let tensor: Tensor<i64> = Tensor::from_array((shape, input_ids.into_boxed_slice()))
-                        .map_err(|e| HubError::Internal(format!("Failed to create tensor: {e}")))?;
+                    let tensor: Tensor<i64> =
+                        Tensor::from_array((shape, input_ids.into_boxed_slice())).map_err(|e| {
+                            HubError::Internal(format!("Failed to create tensor: {e}"))
+                        })?;
 
                     // The ort 2.x API uses SessionInputValue via Into trait
                     // Use the inputs! macro with &tensor to borrow it
                     let session_inputs = ort::inputs![&tensor];
 
                     // Acquire mutex lock and run inference
-                    let mut session_guard = self.session.lock().map_err(|e| HubError::Internal(format!("Mutex error: {e}")))?;
-                    let outputs_array = session_guard.run(session_inputs)
+                    let mut session_guard = self
+                        .session
+                        .lock()
+                        .map_err(|e| HubError::Internal(format!("Mutex error: {e}")))?;
+                    let outputs_array = session_guard
+                        .run(session_inputs)
                         .map_err(|e| HubError::Internal(format!("ONNX inference failed: {e}")))?;
 
                     // The model returns token embeddings of shape (batch_size, seq_len, hidden_size)
                     // We need to compute sentence embedding by averaging token embeddings
-                    if let Some(output_value) = outputs_array.get(0) {
+                    // In ort 2.x, SessionOutputs is keyed by string names; iterate to get first output
+                    if let Some((_name, output_value)) = outputs_array.iter().next() {
                         // Extract the tensor data from the output Value using try_extract_tensor
                         // The output is typically named "last_hidden_state" or similar
                         match output_value.try_extract_tensor::<f32>() {
@@ -458,52 +482,47 @@ pub mod ort_impl {
                                 let element_count = shape.num_elements();
 
                                 if !floats.is_empty() && element_count % self.dim == 0 {
-                                            let seq_len = element_count / self.dim;
-                                            let mut embedding = vec![0.0f32; self.dim];
+                                    let seq_len = element_count / self.dim;
+                                    let mut embedding = vec![0.0f32; self.dim];
 
-                                            // Compute mean pooling across sequence length
-                                            for i in 0..self.dim {
-                                                let mut sum = 0.0f32;
-                                                for j in 0..seq_len {
-                                                    let idx = j * self.dim + i;
-                                                    if idx < floats.len() {
-                                                        sum += floats[idx];
-                                                    }
-                                                }
-                                                embedding[i] = sum / seq_len as f32;
+                                    // Compute mean pooling across sequence length
+                                    for (i, e) in embedding.iter_mut().enumerate().take(self.dim) {
+                                        let mut sum = 0.0f32;
+                                        for j in 0..seq_len {
+                                            let idx = j * self.dim + i;
+                                            if idx < floats.len() {
+                                                sum += floats[idx];
                                             }
+                                        }
+                                        *e = sum / seq_len as f32;
+                                    }
 
-                                            // Normalize the embedding (L2 normalization is typical)
-                                            let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
-                                            if norm > 0.0 {
-                                                for e in &mut embedding {
-                                                    *e /= norm;
-                                                }
-                                            }
-
-                                            outputs.push(embedding);
-                                        } else {
-                                            // Fallback to zero embedding if shape is unexpected
-                                            warn!(
-                                                "Unexpected output shape: {} elements, expected multiple of {}",
-                                                element_count, self.dim
-                                            );
-                                            outputs.push(vec![0.0f32; self.dim]);
+                                    // Normalize the embedding (L2 normalization is typical)
+                                    let norm: f32 =
+                                        embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+                                    if norm > 0.0 {
+                                        for e in &mut embedding {
+                                            *e /= norm;
                                         }
                                     }
-                                    Err(e) => {
-                                        warn!("Failed to extract f32 tensor: {e}");
-                                        outputs.push(vec![0.0f32; self.dim]);
-                                    }
+
+                                    outputs.push(embedding);
+                                } else {
+                                    // Fallback to zero embedding if shape is unexpected
+                                    warn!(
+                                        "Unexpected output shape: {} elements, expected multiple of {}",
+                                        element_count, self.dim
+                                    );
+                                    outputs.push(vec![0.0f32; self.dim]);
                                 }
                             }
-                        } else {
-                                // No output from the model
-                                warn!("Expected at least one output from ONNX model");
+                            Err(e) => {
+                                warn!("Failed to extract f32 tensor: {e}");
                                 outputs.push(vec![0.0f32; self.dim]);
                             }
                         }
                     } else {
+                        // No output from the model
                         warn!("Expected at least one output from ONNX model");
                         outputs.push(vec![0.0f32; self.dim]);
                     }
@@ -831,7 +850,7 @@ impl SmartEngine {
 
     /// Verify SHA-256 checksum from `models.json` manifest.
     #[allow(dead_code)]
-    async fn verify_checksum(&self, _path: &std::path::Path) -> Result<()> {
+    async fn verify_checksum(&self, path: &std::path::Path) -> Result<()> {
         // Try to use ort_impl's verify function if feature is enabled
         #[cfg(feature = "smart-ort")]
         return ort_impl::verify_checksum(&self.model_name, path).await;
