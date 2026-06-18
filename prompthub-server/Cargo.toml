@@ -28,6 +28,16 @@ tera = ["prompt-hub/tera"]
 tiktoken = ["prompt-hub/tiktoken"]
 tokenizers = ["prompt-hub/tokenizers"]
 plugins = ["prompt-hub/plugins"]
+# Re-export hub features for route gate configuration
+multi-provider = ["prompt-hub/multi-provider"]
+rollback = ["prompt-hub/rollback"]
+fallback = ["prompt-hub/fallback"]
+learn = ["prompt-hub/learn"]
+confidence = ["prompt-hub/confidence"]
+privacy = ["prompt-hub/privacy"]
+cost = ["prompt-hub/cost"]
+gather = ["prompt-hub/gather"]
+gradual-rollout = ["prompt-hub/gradual-rollout"]
 
 [dependencies]
 prompt-hub = { path = "../prompt-hub" }

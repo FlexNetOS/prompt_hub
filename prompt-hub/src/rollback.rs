@@ -2,11 +2,12 @@
 
 use crate::error::Result;
 use crate::models::*;
+use serde::Serialize;
 use std::collections::HashMap;
 use tracing::{info, instrument, warn};
 
 /// Snapshot of state before deployment for rollback.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DeploymentSnapshot {
     pub id: String,
     pub artifact_label: String,
@@ -16,7 +17,7 @@ pub struct DeploymentSnapshot {
 }
 
 /// Outcome of a safe deployment attempt.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum DeployResult {
     /// Deployment succeeded and is live at `url`.
     Success { url: String },
