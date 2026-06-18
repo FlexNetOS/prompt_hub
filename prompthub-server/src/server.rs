@@ -251,6 +251,66 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/v1/budget/reset", post(routes::reset_budget_period));
 
+    // Cost-limits tracking (feature: cost-limits)
+    #[cfg(feature = "cost-limits")]
+    let router = router
+        .route(
+            "/api/v1/cost-limits/check",
+            post(routes::cost_limits_check_route),
+        )
+        .route(
+            "/api/v1/cost-limits/limits",
+            post(routes::cost_limits_set_limit_route),
+        )
+        .route(
+            "/api/v1/cost-limits/utilization",
+            get(routes::cost_limits_utilization_route),
+        )
+        .route(
+            "/api/v1/cost-limits/status",
+            get(routes::cost_limits_status_route),
+        );
+
+    // Beta-program management (feature: beta-program)
+    #[cfg(feature = "beta-program")]
+    let router = router
+        .route(
+            "/api/v1/beta/cohorts",
+            post(routes::beta_create_cohort_route),
+        )
+        .route(
+            "/api/v1/beta/cohorts/{cohort_id}/enroll",
+            post(routes::beta_enroll_route),
+        )
+        .route(
+            "/api/v1/beta/feedback",
+            post(routes::beta_record_feedback_route),
+        )
+        .route("/api/v1/beta/stats", get(routes::beta_stats_route));
+
+    // Token quota enforcement (feature: quota)
+    #[cfg(feature = "quota")]
+    let router = router
+        .route("/api/v1/quota/consume", post(routes::quota_consume_route))
+        .route("/api/v1/quota/usage", get(routes::quota_usage_route))
+        .route("/api/v1/quota/reset", post(routes::quota_reset_route));
+
+    // Content moderation (feature: moderation)
+    #[cfg(feature = "moderation")]
+    let router = router
+        .route(
+            "/api/v1/moderation/check",
+            post(routes::moderation_check_route),
+        )
+        .route(
+            "/api/v1/moderation/safe",
+            post(routes::moderation_is_safe_route),
+        )
+        .route(
+            "/api/v1/moderation/check-batch",
+            post(routes::moderation_check_batch_route),
+        );
+
     // Load balancer routes (always-on)
     let router = router
         .route("/api/v1/lb/providers", post(routes::add_lb_provider))

@@ -317,6 +317,211 @@ fn fallback_spec() -> Value {
                     }
                 }
             },
+            "/api/v1/cost-limits/check": {
+                "post": {
+                    "summary": "Check a cost limit and record spend",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckCostLimitRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Limit status" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost-limits/limits": {
+                "post": {
+                    "summary": "Set or update a cost limit",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SetCostLimitRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Limit entry" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost-limits/utilization": {
+                "get": {
+                    "summary": "Get cost utilization for an entity-resource pair",
+                    "parameters": [
+                        { "name": "entity_id", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "resource", "in": "query", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Utilization percentage" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost-limits/status": {
+                "get": {
+                    "summary": "Get all tracked cost-limit statuses",
+                    "responses": {
+                        "200": { "description": "Status list" }
+                    }
+                }
+            },
+            "/api/v1/beta/cohorts": {
+                "post": {
+                    "summary": "Create a beta cohort",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CreateBetaCohortRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Beta cohort" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/beta/cohorts/{cohort_id}/enroll": {
+                "post": {
+                    "summary": "Enroll a participant in a beta cohort",
+                    "parameters": [
+                        { "name": "cohort_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/EnrollBetaRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Enrollment result" },
+                        "400": { "description": "Bad request" },
+                        "404": { "description": "Cohort not found" }
+                    }
+                }
+            },
+            "/api/v1/beta/feedback": {
+                "post": {
+                    "summary": "Record beta participant feedback",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/RecordBetaFeedbackRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Feedback recorded" },
+                        "400": { "description": "Bad request" },
+                        "404": { "description": "Cohort not found" }
+                    }
+                }
+            },
+            "/api/v1/beta/stats": {
+                "get": {
+                    "summary": "Get beta program statistics",
+                    "responses": {
+                        "200": { "description": "Program stats" }
+                    }
+                }
+            },
+            "/api/v1/quota/consume": {
+                "post": {
+                    "summary": "Check and consume quota tokens",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ConsumeQuotaRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Quota status" },
+                        "400": { "description": "Bad request" },
+                        "500": { "description": "Internal error" }
+                    }
+                }
+            },
+            "/api/v1/quota/usage": {
+                "get": {
+                    "summary": "Get current quota usage",
+                    "responses": {
+                        "200": { "description": "Quota usage" }
+                    }
+                }
+            },
+            "/api/v1/quota/reset": {
+                "post": {
+                    "summary": "Reset all quota counters",
+                    "responses": {
+                        "200": { "description": "Counters reset" }
+                    }
+                }
+            },
+            "/api/v1/moderation/check": {
+                "post": {
+                    "summary": "Check content for harmful material",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckContentRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Moderation report" },
+                        "400": { "description": "Bad request" },
+                        "500": { "description": "Internal error" }
+                    }
+                }
+            },
+            "/api/v1/moderation/safe": {
+                "post": {
+                    "summary": "Check whether content passes moderation",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckContentRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Safety result" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/moderation/check-batch": {
+                "post": {
+                    "summary": "Check multiple prompts for harmful content",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckContentBatchRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Batch moderation results" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
             "/api/v1/context/gather": {
                 "post": {
                     "summary": "Gather full project context",
@@ -995,6 +1200,74 @@ fn fallback_spec() -> Value {
                         "rollback_enabled": { "type": "boolean", "default": false }
                     },
                     "required": ["artifact"]
+                },
+                "CheckCostLimitRequest": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": { "type": "string" },
+                        "resource": { "type": "string" },
+                        "amount_usd": { "type": "number", "minimum": 0 }
+                    },
+                    "required": ["entity_id", "resource", "amount_usd"]
+                },
+                "SetCostLimitRequest": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": { "type": "string" },
+                        "resource": { "type": "string" },
+                        "budget_usd": { "type": "number", "minimum": 0 },
+                        "policy": { "type": "string", "enum": ["alert", "block", "fail"] }
+                    },
+                    "required": ["entity_id", "resource", "budget_usd", "policy"]
+                },
+                "CreateBetaCohortRequest": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" }
+                    },
+                    "required": ["id", "name"]
+                },
+                "EnrollBetaRequest": {
+                    "type": "object",
+                    "properties": {
+                        "participant_id": { "type": "string" }
+                    },
+                    "required": ["participant_id"]
+                },
+                "RecordBetaFeedbackRequest": {
+                    "type": "object",
+                    "properties": {
+                        "cohort_id": { "type": "string" },
+                        "participant_id": { "type": "string" },
+                        "score": { "type": "integer", "minimum": 1, "maximum": 5 },
+                        "comment": { "type": "string" }
+                    },
+                    "required": ["cohort_id", "participant_id", "score"]
+                },
+                "ConsumeQuotaRequest": {
+                    "type": "object",
+                    "properties": {
+                        "tokens": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["tokens"]
+                },
+                "CheckContentRequest": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": { "type": "string" }
+                    },
+                    "required": ["prompt"]
+                },
+                "CheckContentBatchRequest": {
+                    "type": "object",
+                    "properties": {
+                        "prompts": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    },
+                    "required": ["prompts"]
                 }
             }
         }

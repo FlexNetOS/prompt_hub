@@ -2430,7 +2430,14 @@ impl PromptHub {
 
     /// Get all tracked entities and their limit statuses.
     #[cfg(feature = "cost-limits")]
-    pub fn cost_limit_status(&self) -> Vec<(String, f64, crate::cost_limits::OveragePolicy)> {
+    pub fn cost_limit_status(
+        &self,
+    ) -> Vec<(
+        String,
+        crate::cost_limits::Resource,
+        f64,
+        crate::cost_limits::OveragePolicy,
+    )> {
         self.cost_limiter
             .entity_ids()
             .into_iter()
@@ -2438,7 +2445,7 @@ impl PromptHub {
                 self.cost_limiter
                     .entity_status(&id)
                     .into_iter()
-                    .map(move |(_res, util, pol)| (id.clone(), util, pol))
+                    .map(move |(res, util, pol)| (id.clone(), res, util, pol))
             })
             .collect()
     }
