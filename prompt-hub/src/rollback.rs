@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::models::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, instrument, warn};
 
@@ -17,7 +17,7 @@ pub struct DeploymentSnapshot {
 }
 
 /// Outcome of a safe deployment attempt.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DeployResult {
     /// Deployment succeeded and is live at `url`.
     Success { url: String },

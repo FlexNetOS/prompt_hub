@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::error::{HubError, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{info, instrument, warn};
 
@@ -18,7 +18,7 @@ pub struct LineageTracker {
 }
 
 /// A node in the version lineage graph.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineageNode {
     pub version_id: String,
     pub prompt_id: String,
@@ -30,14 +30,14 @@ pub struct LineageNode {
 }
 
 /// A fork in the version history.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Fork {
     pub fork_point_version: String,
     pub branches: Vec<String>,
 }
 
 /// Version ancestry path from a node to the root.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AncestryPath {
     pub version_id: String,
     pub path: Vec<String>,
@@ -45,7 +45,7 @@ pub struct AncestryPath {
 }
 
 /// Full lineage tree view.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LineageTree {
     pub root: String,
     pub nodes: Vec<LineageNode>,

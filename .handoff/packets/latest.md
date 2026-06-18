@@ -9,7 +9,7 @@ A non-technical user makes any request; prompt_hub transforms, communicates, and
 Git > FLEET ledger (meta/.handoff/ledger.db) > tasks/*.task.json > this packet.
 
 ## 3. Progress
-Done: 57/71.  FLEET tamper-evident events verified: 840.
+Done: 57/71.  FLEET tamper-evident events verified: 845.
 
 ## 4. Remaining
 - [P1] **PHTASK-0056** — EPIC — expose remaining ~125 hub capabilities over HTTP
