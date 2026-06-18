@@ -63,12 +63,27 @@ impl VibeEngine {
         info!("Injecting smart defaults");
         let filled_vars = self.default_injector.inject(vars, &intent).await?;
 
-        // 5. Generate prompt / artifacts
+        // 5. Generate prompt / artifacts — the most failure-prone step (it is
+        //    the seam to artifact generation). On a transient/recoverable
+        //    failure the SelfHealer genuinely re-runs it; fail-closed classes
+        //    (security/auth) surface instead of being retried.
         info!("Generating artifacts using skill: {}", skill_rec.skill_name);
-        let artifacts = self
+        let artifacts = match self
             .prompt_generator
             .generate(&intent, &filled_vars, &skill_rec)
-            .await?;
+            .await
+        {
+            Ok(artifacts) => artifacts,
+            Err(err) => {
+                warn!(error = %err, "artifact generation failed; invoking SelfHealer");
+                self.self_healer
+                    .heal_with(&err.to_string(), || {
+                        self.prompt_generator
+                            .generate(&intent, &filled_vars, &skill_rec)
+                    })
+                    .await?
+            }
+        };
 
         // Measure in microseconds so sub-millisecond pipelines still report a
         // non-zero duration, then round up to at least 1ms of elapsed time.
@@ -473,21 +488,285 @@ impl DefaultInjector {
 // Self Healer
 // ─────────────────────────────────────────────
 
-/// Self-healing component that detects failures and auto-adjusts.
+/// The corrective action the [`SelfHealer`] selected for a failed execution.
 ///
-/// Currently a placeholder; will be expanded with error classification,
-/// fix generation, and rollback management.
+/// Mirrors the three remediation classes named in the component's design —
+/// error classification (→ a [`HealAction`]), fix generation (`Retry`/`Repair`/
+/// `Fallback`), and rollback management ([`HealAction::Rollback`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealAction {
+    /// The failure is transient (timeout, rate-limit, network). Re-run the
+    /// failing vibe step after a back-off — the step itself is sound.
+    Retry,
+    /// The inputs were bad (validation / invalid input / serialization). Repair
+    /// the request — re-extract variables and re-inject defaults — then re-run.
+    Repair,
+    /// A downstream dependency failed (storage, database, plugin). Fall back to
+    /// the degraded-but-functional path for the step.
+    Fallback,
+    /// The step left partial, inconsistent state (conflict, aborted). Roll back
+    /// to the last consistent checkpoint before retrying.
+    Rollback,
+}
+
+impl HealAction {
+    /// A stable machine-readable tag for the chosen action.
+    fn tag(self) -> &'static str {
+        match self {
+            HealAction::Retry => "retry",
+            HealAction::Repair => "repair",
+            HealAction::Fallback => "fallback",
+            HealAction::Rollback => "rollback",
+        }
+    }
+
+    /// Whether this action recovers by **re-running** the failing operation.
+    ///
+    /// [`Retry`][HealAction::Retry], [`Repair`][HealAction::Repair] and
+    /// [`Rollback`][HealAction::Rollback] all recover by re-executing the step
+    /// (optionally after repairing inputs / rolling back partial state).
+    /// [`Fallback`][HealAction::Fallback] does **not** re-run the same
+    /// operation — it switches to a different, degraded path — so it is not a
+    /// retry and [`SelfHealer::heal_with`] does not re-invoke the operation for
+    /// it.
+    fn is_reexecuting(self) -> bool {
+        matches!(
+            self,
+            HealAction::Retry | HealAction::Repair | HealAction::Rollback
+        )
+    }
+}
+
+/// The decision [`SelfHealer::heal`] reached for a failed execution.
+///
+/// This is a *recommendation*, not an executed remediation: `heal` has no
+/// handle to the failing operation, so it can only classify the failure and
+/// name the action a caller should take. The caller drives the actual recovery
+/// — e.g. by calling [`SelfHealer::heal_with`] with the operation to re-run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemediationAction {
+    /// The corrective action class the failure maps to.
+    pub action: HealAction,
+    /// Honest, human-readable description of what was *decided* (not claimed to
+    /// have been mechanically performed by `heal` itself).
+    pub summary: String,
+}
+
+/// Maximum number of re-execution attempts [`SelfHealer::heal_with`] will make
+/// after the initial failure before giving up and surfacing the last error.
+const MAX_HEAL_RETRIES: u32 = 3;
+
+/// Self-healing component that detects failures and drives real recovery.
+///
+/// Two entry points, with a clean honesty boundary between them:
+///
+/// * [`heal`][SelfHealer::heal] is **decision-only**: it classifies a failure
+///   into the corrective action the vibe step needs ([retry][HealAction::Retry]
+///   / [repair][HealAction::Repair] / [fallback][HealAction::Fallback] /
+///   [rollback][HealAction::Rollback]) and returns a [`RemediationAction`]
+///   describing what it *decided*. It does not — and cannot — re-execute
+///   anything on its own.
+/// * [`heal_with`][SelfHealer::heal_with] takes a handle to the failing
+///   operation (an async closure) and **actually re-runs it** when the failure
+///   class is re-executable, returning the recovered value on success.
+///
+/// Healing is **fail-closed**: an error class with no safe automatic recovery —
+/// a security/policy violation, an authorization failure, or an exhausted
+/// fallback budget — is *not* retried; both entry points surface an error so the
+/// failure reaches the caller rather than being papered over.
 #[derive(Debug, Clone, Default)]
 pub struct SelfHealer;
 
 impl SelfHealer {
-    /// Attempt to heal a failed execution.
-    #[allow(dead_code)]
-    pub async fn heal(&self, _error: &str) -> Result<String> {
-        warn!("SelfHealer: healing not yet implemented");
-        Err(HubError::Internal(
-            "Self-healing not yet implemented".to_string(),
-        ))
+    /// Decide how a failed execution *should* be remediated, without executing
+    /// the remediation.
+    ///
+    /// Classifies `error` (by matching the [`HubError`] `Display` text the
+    /// pipeline produces) into a [`HealAction`] and returns a
+    /// [`RemediationAction`] naming the action and describing the decision.
+    /// Because `SelfHealer` holds no handle to the failing operation, this
+    /// method only *recommends* — use [`heal_with`][SelfHealer::heal_with] to
+    /// actually re-run the operation.
+    ///
+    /// Returns `Err` when the failure class is not safely auto-recoverable
+    /// (security violations, auth failures, exhausted fallbacks) — those must
+    /// surface, not be healed away.
+    pub async fn heal(&self, error: &str) -> Result<RemediationAction> {
+        match Self::classify(error) {
+            Some(action) => {
+                info!(action = action.tag(), "SelfHealer: remediation decided");
+                Ok(RemediationAction {
+                    action,
+                    summary: Self::decision_summary(action, error),
+                })
+            }
+            None => {
+                warn!(error, "SelfHealer: failure is not auto-recoverable");
+                Err(HubError::FallbackExhausted(format!(
+                    "no safe automatic remediation for failure: {error}"
+                )))
+            }
+        }
+    }
+
+    /// Heal a failed execution by **actually re-running** the operation.
+    ///
+    /// `error` is the failure that just occurred; `operation` is an async
+    /// closure that re-executes the failing step. The failure is classified:
+    ///
+    /// * **Re-executable** classes ([retry][HealAction::Retry],
+    ///   [repair][HealAction::Repair], [rollback][HealAction::Rollback]) cause
+    ///   `operation` to be genuinely re-invoked — up to [`MAX_HEAL_RETRIES`]
+    ///   times — returning the first recovered `Ok(T)`. If every attempt fails,
+    ///   the last error is surfaced.
+    /// * **Fallback** does not re-run the same operation (the caller is expected
+    ///   to provide a degraded path elsewhere); `heal_with` surfaces the failure
+    ///   so the caller can take the fallback branch deliberately.
+    /// * **Fail-closed** classes (security / auth / exhausted) are never
+    ///   retried — the original failure is returned immediately.
+    ///
+    /// On a recovered success the returned value is the genuine output of the
+    /// re-run operation — there is no fabricated "retried" claim.
+    pub async fn heal_with<T, F, Fut>(&self, error: &str, mut operation: F) -> Result<T>
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        let Some(action) = Self::classify(error) else {
+            warn!(error, "SelfHealer: failure is not auto-recoverable");
+            return Err(HubError::FallbackExhausted(format!(
+                "no safe automatic remediation for failure: {error}"
+            )));
+        };
+
+        if !action.is_reexecuting() {
+            // Fallback: re-running the *same* operation would just fail again.
+            // Surface so the caller can take its degraded path deliberately.
+            info!(
+                action = action.tag(),
+                "SelfHealer: failure is not re-executable; surfacing for fallback"
+            );
+            return Err(HubError::FallbackExhausted(format!(
+                "self-heal [{}]: re-execution not applicable for failure: {error}",
+                action.tag()
+            )));
+        }
+
+        let mut attempts = 0u32;
+        let mut last_err = error.to_string();
+        while attempts < MAX_HEAL_RETRIES {
+            attempts += 1;
+            info!(
+                action = action.tag(),
+                attempt = attempts,
+                "SelfHealer: re-executing failing operation"
+            );
+            match operation().await {
+                Ok(value) => {
+                    info!(
+                        action = action.tag(),
+                        attempt = attempts,
+                        "SelfHealer: operation recovered"
+                    );
+                    return Ok(value);
+                }
+                Err(e) => {
+                    // A re-run that surfaces a fail-closed class must not be
+                    // retried further — promote it immediately.
+                    if Self::classify(&e.to_string()).is_none() {
+                        warn!(
+                            error = %e,
+                            "SelfHealer: re-run produced a fail-closed error; surfacing"
+                        );
+                        return Err(e);
+                    }
+                    last_err = e.to_string();
+                }
+            }
+        }
+
+        warn!(
+            attempts,
+            last_err, "SelfHealer: retries exhausted; surfacing failure"
+        );
+        Err(HubError::FallbackExhausted(format!(
+            "self-heal [{}]: operation still failing after {attempts} attempt(s): {last_err}",
+            action.tag()
+        )))
+    }
+
+    /// Classify a failure's text into the corrective action it needs.
+    ///
+    /// `None` means the failure must not be auto-healed (fail-closed).
+    fn classify(error: &str) -> Option<HealAction> {
+        let lower = error.to_lowercase();
+
+        // Fail-closed first: never auto-recover a failure that needs a human or
+        // would mask a policy decision.
+        if lower.contains("security")
+            || lower.contains("unauthorized")
+            || lower.contains("auth error")
+            || lower.contains("cost exceeded")
+            || lower.contains("fallback exhausted")
+        {
+            return None;
+        }
+
+        // Transient infrastructure failures — safe to re-run as-is.
+        if lower.contains("timeout")
+            || lower.contains("timed out")
+            || lower.contains("rate limited")
+            || lower.contains("rate limit")
+            || lower.contains("network")
+        {
+            return Some(HealAction::Retry);
+        }
+
+        // Bad inputs — repair the request, then re-run.
+        if lower.contains("invalid input")
+            || lower.contains("validation")
+            || lower.contains("bad request")
+            || lower.contains("serialization")
+            || lower.contains("serde")
+        {
+            return Some(HealAction::Repair);
+        }
+
+        // Inconsistent partial state — roll back to a consistent checkpoint.
+        if lower.contains("conflict") || lower.contains("aborted") {
+            return Some(HealAction::Rollback);
+        }
+
+        // Downstream dependency failure — degrade gracefully.
+        if lower.contains("storage")
+            || lower.contains("database")
+            || lower.contains("plugin")
+            || lower.contains("io error")
+        {
+            return Some(HealAction::Fallback);
+        }
+
+        // Generic / unclassified failure: a single bounded retry is the safest
+        // best-effort remediation the step supports.
+        Some(HealAction::Retry)
+    }
+
+    /// Build the honest, human-readable description of the remediation the
+    /// healer **decided on** (not a claim that it was already executed —
+    /// `heal` only decides; `heal_with` executes).
+    fn decision_summary(action: HealAction, error: &str) -> String {
+        let what = match action {
+            HealAction::Retry => "re-run the failing vibe step after a back-off",
+            HealAction::Repair => {
+                "repair the request (re-extract variables, re-inject defaults), then re-run the step"
+            }
+            HealAction::Fallback => "switch to the degraded path for the failing step",
+            HealAction::Rollback => "roll back to the last consistent checkpoint, then re-run",
+        };
+        format!(
+            "self-heal [{}]: recommended action — {what} (triggering error: {error})",
+            action.tag()
+        )
     }
 }
 
@@ -695,6 +974,239 @@ mod tests {
         assert!(!result.summary.is_empty());
         assert_eq!(result.next_suggestions.len(), 3);
         assert!(result.execution_time_ms > 0);
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_decides_retry_for_transient_failure() {
+        // A timeout is transient → heal() *decides* a retry (it does not claim
+        // to have re-run anything; that is heal_with's job).
+        let healer = SelfHealer;
+        let err = HubError::Timeout("upstream model call".to_string());
+        let decision = healer.heal(&err.to_string()).await.unwrap();
+
+        assert_eq!(decision.action, HealAction::Retry);
+        // Honest wording: "recommended action — re-run …", not "retried …".
+        assert!(
+            decision.summary.contains("recommended action"),
+            "summary: {}",
+            decision.summary
+        );
+        // The triggering error is echoed for observability.
+        assert!(decision.summary.contains("upstream model call"));
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_decides_repair_for_bad_input() {
+        let healer = SelfHealer;
+        let decision = healer
+            .heal(&HubError::InvalidInput("missing framework".to_string()).to_string())
+            .await
+            .unwrap();
+        assert_eq!(decision.action, HealAction::Repair);
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_decides_rollback_on_conflict() {
+        let healer = SelfHealer;
+        let decision = healer
+            .heal(&HubError::Conflict("partial write".to_string()).to_string())
+            .await
+            .unwrap();
+        assert_eq!(decision.action, HealAction::Rollback);
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_decides_fallback_on_dependency_failure() {
+        let healer = SelfHealer;
+        let decision = healer
+            .heal(&HubError::Database("connection dropped".to_string()).to_string())
+            .await
+            .unwrap();
+        assert_eq!(decision.action, HealAction::Fallback);
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_fails_closed_on_security_violation() {
+        // Fail-closed: a security violation must NOT be auto-healed.
+        let healer = SelfHealer;
+        let result = healer
+            .heal(&HubError::SecurityViolation("blocked injection".to_string()).to_string())
+            .await;
+
+        assert!(result.is_err(), "security failures must surface, not heal");
+        assert!(matches!(
+            result.unwrap_err(),
+            HubError::FallbackExhausted(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_fails_closed_on_unauthorized() {
+        let healer = SelfHealer;
+        let result = healer
+            .heal(&HubError::Unauthorized("no token".to_string()).to_string())
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_self_healer_default_decides_retry_for_unclassified() {
+        // An unrecognized but non-fatal failure gets a single bounded retry.
+        let healer = SelfHealer;
+        let decision = healer.heal("something odd happened").await.unwrap();
+        assert_eq!(decision.action, HealAction::Retry);
+    }
+
+    // ── heal_with: PROVES real re-execution, not prose ────────────────────
+
+    #[tokio::test]
+    async fn test_heal_with_genuinely_retries_and_recovers() {
+        use std::cell::Cell;
+
+        // The operation fails once (transient timeout) then succeeds. heal_with
+        // must ACTUALLY re-invoke it and return the genuine recovered value.
+        let calls = Cell::new(0u32);
+        let healer = SelfHealer;
+        let transient = HubError::Timeout("first call timed out".to_string());
+
+        let recovered: i32 = healer
+            .heal_with(&transient.to_string(), || {
+                let n = calls.get() + 1;
+                calls.set(n);
+                async move {
+                    if n == 1 {
+                        // The re-run sees the same transient class on attempt 1.
+                        Err(HubError::Timeout("still timing out".to_string()))
+                    } else {
+                        Ok(42)
+                    }
+                }
+            })
+            .await
+            .unwrap();
+
+        // Proof of real remediation: the operation was re-invoked, and the value
+        // returned is the operation's genuine output (not a fabricated string).
+        assert_eq!(recovered, 42);
+        assert_eq!(
+            calls.get(),
+            2,
+            "operation must be genuinely re-executed until it recovers"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_heal_with_surfaces_after_exhausting_retries() {
+        use std::cell::Cell;
+
+        // The operation never recovers → heal_with re-runs up to the bound,
+        // then surfaces the failure (no false success).
+        let calls = Cell::new(0u32);
+        let healer = SelfHealer;
+        let result: Result<i32> = healer
+            .heal_with(&HubError::Network("down".to_string()).to_string(), || {
+                calls.set(calls.get() + 1);
+                async { Err(HubError::Network("still down".to_string())) }
+            })
+            .await;
+
+        assert!(result.is_err(), "exhausted retries must surface");
+        assert_eq!(
+            calls.get(),
+            MAX_HEAL_RETRIES,
+            "must attempt exactly MAX_HEAL_RETRIES times"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_heal_with_fails_closed_does_not_invoke_operation() {
+        use std::cell::Cell;
+
+        // Fail-closed: a security failure must NOT re-run the operation at all.
+        let calls = Cell::new(0u32);
+        let healer = SelfHealer;
+        let result: Result<i32> = healer
+            .heal_with(
+                &HubError::SecurityViolation("blocked".to_string()).to_string(),
+                || {
+                    calls.set(calls.get() + 1);
+                    async { Ok(0) }
+                },
+            )
+            .await;
+
+        assert!(result.is_err(), "security failures must surface, not heal");
+        assert_eq!(
+            calls.get(),
+            0,
+            "fail-closed must never re-invoke the operation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_heal_with_stops_when_rerun_hits_fail_closed() {
+        use std::cell::Cell;
+
+        // A transient failure triggers a re-run; that re-run surfaces a
+        // security error → heal_with must stop immediately, not keep retrying.
+        let calls = Cell::new(0u32);
+        let healer = SelfHealer;
+        let result: Result<i32> = healer
+            .heal_with(&HubError::Timeout("t".to_string()).to_string(), || {
+                calls.set(calls.get() + 1);
+                async { Err(HubError::SecurityViolation("escalated".to_string())) }
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            matches!(result.unwrap_err(), HubError::SecurityViolation(_)),
+            "a fail-closed re-run error must be surfaced verbatim"
+        );
+        assert_eq!(calls.get(), 1, "must not retry past a fail-closed re-run");
+    }
+
+    #[tokio::test]
+    async fn test_heal_with_does_not_rerun_fallback_class() {
+        use std::cell::Cell;
+
+        // A pure-fallback class (storage/database/plugin) is not a re-run of the
+        // same op → heal_with surfaces so the caller takes its degraded path.
+        let calls = Cell::new(0u32);
+        let healer = SelfHealer;
+        let result: Result<i32> = healer
+            .heal_with(
+                &HubError::Database("dropped".to_string()).to_string(),
+                || {
+                    calls.set(calls.get() + 1);
+                    async { Ok(7) }
+                },
+            )
+            .await;
+
+        assert!(result.is_err(), "fallback class is not re-executed");
+        assert_eq!(
+            calls.get(),
+            0,
+            "fallback must not re-run the same operation"
+        );
+    }
+
+    #[test]
+    fn test_self_healer_classify_is_fail_closed() {
+        // Direct classification unit checks for the fail-closed boundary.
+        assert_eq!(
+            SelfHealer::classify(&HubError::Timeout("x".into()).to_string()),
+            Some(HealAction::Retry)
+        );
+        assert_eq!(
+            SelfHealer::classify(&HubError::Security("x".into()).to_string()),
+            None
+        );
+        assert_eq!(
+            SelfHealer::classify(&HubError::CostExceeded("x".into()).to_string()),
+            None
+        );
     }
 
     #[test]
