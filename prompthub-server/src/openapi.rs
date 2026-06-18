@@ -74,6 +74,346 @@ pub fn build_openapi_spec() -> Value {
     fallback_spec()
 }
 
+/// Merge PHTASK-0061 paths and schemas into the base fallback spec.
+fn merge_extra_paths_and_schemas(spec: &mut Value) {
+    let extra = serde_json::json!({
+        "paths": {
+            "/api/v1/audit/hash": {
+                "post": {
+                    "summary": "Compute an audit diff hash",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditHashRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Computed hash" } }
+                }
+            },
+            "/api/v1/audit/verify": {
+                "post": {
+                    "summary": "Verify an audit entry integrity hash",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Verification result" } }
+                }
+            },
+            "/api/v1/audit/soc2/summary": {
+                "post": {
+                    "summary": "Generate SOC2 evidence summary",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "SOC2 evidence summary" } }
+                }
+            },
+            "/api/v1/audit/soc2/validate": {
+                "post": {
+                    "summary": "Validate an audit entry against SOC2 schema",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Validation result" } }
+                }
+            },
+            "/api/v1/audit/anonymize": {
+                "post": {
+                    "summary": "Anonymize an audit entry",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/AuditEntryRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Anonymized entry" } }
+                }
+            },
+            "/api/v1/diff/compute": {
+                "post": {
+                    "summary": "Compute a text diff",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffComputeRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Diff result" } }
+                }
+            },
+            "/api/v1/diff/summarize": {
+                "post": {
+                    "summary": "Summarize a diff",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffResultRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Diff summary" } }
+                }
+            },
+            "/api/v1/diff/identical": {
+                "post": {
+                    "summary": "Check whether two texts are identical",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffComputeRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Identical flag" } }
+                }
+            },
+            "/api/v1/diff/unified": {
+                "post": {
+                    "summary": "Format a diff as unified patch text",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/DiffResultRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Unified diff text" } }
+                }
+            },
+            "/api/v1/retention/period": {
+                "post": {
+                    "summary": "Set retention period for a data type",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SetRetentionRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Retention period set" } }
+                }
+            },
+            "/api/v1/retention/period/{data_type}": {
+                "get": {
+                    "summary": "Get retention period for a data type",
+                    "parameters": [
+                        { "name": "data_type", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": { "200": { "description": "Retention period" } }
+                }
+            },
+            "/api/v1/retention/expired": {
+                "get": {
+                    "summary": "Check whether data of a type is expired",
+                    "parameters": [
+                        { "name": "data_type", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "age_days", "in": "query", "required": true, "schema": { "type": "integer" } }
+                    ],
+                    "responses": { "200": { "description": "Expiration flag" } }
+                }
+            },
+            "/api/v1/retention/cleanup": {
+                "post": {
+                    "summary": "Run retention cleanup",
+                    "responses": { "200": { "description": "Cleanup results" } }
+                }
+            },
+            "/api/v1/gc/run": {
+                "post": {
+                    "summary": "Run garbage collection",
+                    "responses": { "200": { "description": "GC report" } }
+                }
+            },
+            "/api/v1/gc/purge-soft-deleted": {
+                "post": {
+                    "summary": "Purge soft-deleted prompts",
+                    "responses": { "200": { "description": "Purge count" } }
+                }
+            },
+            "/api/v1/gc/stats": {
+                "get": {
+                    "summary": "Get GC statistics",
+                    "responses": { "200": { "description": "GC stats" } }
+                }
+            },
+            "/api/v1/gc/enabled": {
+                "get": {
+                    "summary": "Check whether GC is enabled",
+                    "responses": { "200": { "description": "GC enabled flag" } }
+                },
+                "post": {
+                    "summary": "Enable or disable GC",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SetGcEnabledRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "GC enabled flag" } }
+                }
+            },
+            "/api/v1/auto-purge/purge": {
+                "post": {
+                    "summary": "Run a single auto-purge cycle",
+                    "responses": { "200": { "description": "Purge stats" } }
+                }
+            },
+            "/api/v1/auto-purge/stats": {
+                "get": {
+                    "summary": "Get auto-purge statistics",
+                    "responses": { "200": { "description": "Purge stats" } }
+                }
+            },
+            "/api/v1/auto-purge/config": {
+                "post": {
+                    "summary": "Update auto-purge configuration",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/PurgeConfigRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Config updated" } }
+                }
+            },
+            "/api/v1/auto-purge/daemon/start": {
+                "post": {
+                    "summary": "Start the auto-purge daemon",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/PurgeConfigRequest" }
+                            }
+                        }
+                    },
+                    "responses": { "200": { "description": "Daemon started" } }
+                }
+            },
+            "/api/v1/auto-purge/daemon/stop": {
+                "post": {
+                    "summary": "Stop the auto-purge daemon",
+                    "responses": { "200": { "description": "Daemon stopped" } }
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "AuditHashRequest": {
+                    "type": "object",
+                    "properties": {
+                        "before": { "type": ["string", "null"] },
+                        "after": { "type": ["string", "null"] },
+                        "timestamp": { "type": "string" }
+                    },
+                    "required": ["timestamp"]
+                },
+                "AuditEntryRequest": {
+                    "type": "object",
+                    "properties": {
+                        "entry": { "type": "object" }
+                    },
+                    "required": ["entry"]
+                },
+                "DiffComputeRequest": {
+                    "type": "object",
+                    "properties": {
+                        "old": { "type": "string" },
+                        "new": { "type": "string" }
+                    },
+                    "required": ["old", "new"]
+                },
+                "DiffResultRequest": {
+                    "type": "object",
+                    "properties": {
+                        "diff": { "type": "object" }
+                    },
+                    "required": ["diff"]
+                },
+                "SetRetentionRequest": {
+                    "type": "object",
+                    "properties": {
+                        "data_type": { "type": "string" },
+                        "days": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["data_type", "days"]
+                },
+                "SetGcEnabledRequest": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": { "type": "boolean" }
+                    },
+                    "required": ["enabled"]
+                },
+                "PurgeConfigRequest": {
+                    "type": "object",
+                    "properties": {
+                        "config": { "type": "object" }
+                    },
+                    "required": ["config"]
+                }
+            }
+        }
+    });
+
+    let Some(spec_paths) = spec.get_mut("paths").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    if let Some(extra_paths) = extra.get("paths").and_then(|v| v.as_object()) {
+        for (k, v) in extra_paths {
+            spec_paths.insert(k.clone(), v.clone());
+        }
+    }
+
+    let Some(components) = spec.get_mut("components").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let Some(schemas) = components
+        .get_mut("schemas")
+        .and_then(|v| v.as_object_mut())
+    else {
+        return;
+    };
+    if let Some(extra_schemas) = extra
+        .get("components")
+        .and_then(|v| v.get("schemas"))
+        .and_then(|v| v.as_object())
+    {
+        for (k, v) in extra_schemas {
+            schemas.insert(k.clone(), v.clone());
+        }
+    }
+}
+
 /// Shared fallback / base OpenAPI 3.0.3 specification.
 fn fallback_spec() -> Value {
     const FALLBACK_SPEC_JSON: &str = r##"""
@@ -313,6 +653,211 @@ fn fallback_spec() -> Value {
                     },
                     "responses": {
                         "200": { "description": "Fallback artifact" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost-limits/check": {
+                "post": {
+                    "summary": "Check a cost limit and record spend",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckCostLimitRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Limit status" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost-limits/limits": {
+                "post": {
+                    "summary": "Set or update a cost limit",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/SetCostLimitRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Limit entry" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost-limits/utilization": {
+                "get": {
+                    "summary": "Get cost utilization for an entity-resource pair",
+                    "parameters": [
+                        { "name": "entity_id", "in": "query", "required": true, "schema": { "type": "string" } },
+                        { "name": "resource", "in": "query", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "responses": {
+                        "200": { "description": "Utilization percentage" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/cost-limits/status": {
+                "get": {
+                    "summary": "Get all tracked cost-limit statuses",
+                    "responses": {
+                        "200": { "description": "Status list" }
+                    }
+                }
+            },
+            "/api/v1/beta/cohorts": {
+                "post": {
+                    "summary": "Create a beta cohort",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CreateBetaCohortRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Beta cohort" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/beta/cohorts/{cohort_id}/enroll": {
+                "post": {
+                    "summary": "Enroll a participant in a beta cohort",
+                    "parameters": [
+                        { "name": "cohort_id", "in": "path", "required": true, "schema": { "type": "string" } }
+                    ],
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/EnrollBetaRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Enrollment result" },
+                        "400": { "description": "Bad request" },
+                        "404": { "description": "Cohort not found" }
+                    }
+                }
+            },
+            "/api/v1/beta/feedback": {
+                "post": {
+                    "summary": "Record beta participant feedback",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/RecordBetaFeedbackRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Feedback recorded" },
+                        "400": { "description": "Bad request" },
+                        "404": { "description": "Cohort not found" }
+                    }
+                }
+            },
+            "/api/v1/beta/stats": {
+                "get": {
+                    "summary": "Get beta program statistics",
+                    "responses": {
+                        "200": { "description": "Program stats" }
+                    }
+                }
+            },
+            "/api/v1/quota/consume": {
+                "post": {
+                    "summary": "Check and consume quota tokens",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/ConsumeQuotaRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Quota status" },
+                        "400": { "description": "Bad request" },
+                        "500": { "description": "Internal error" }
+                    }
+                }
+            },
+            "/api/v1/quota/usage": {
+                "get": {
+                    "summary": "Get current quota usage",
+                    "responses": {
+                        "200": { "description": "Quota usage" }
+                    }
+                }
+            },
+            "/api/v1/quota/reset": {
+                "post": {
+                    "summary": "Reset all quota counters",
+                    "responses": {
+                        "200": { "description": "Counters reset" }
+                    }
+                }
+            },
+            "/api/v1/moderation/check": {
+                "post": {
+                    "summary": "Check content for harmful material",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckContentRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Moderation report" },
+                        "400": { "description": "Bad request" },
+                        "500": { "description": "Internal error" }
+                    }
+                }
+            },
+            "/api/v1/moderation/safe": {
+                "post": {
+                    "summary": "Check whether content passes moderation",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckContentRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Safety result" },
+                        "400": { "description": "Bad request" }
+                    }
+                }
+            },
+            "/api/v1/moderation/check-batch": {
+                "post": {
+                    "summary": "Check multiple prompts for harmful content",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/CheckContentBatchRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": { "description": "Batch moderation results" },
                         "400": { "description": "Bad request" }
                     }
                 }
@@ -995,6 +1540,74 @@ fn fallback_spec() -> Value {
                         "rollback_enabled": { "type": "boolean", "default": false }
                     },
                     "required": ["artifact"]
+                },
+                "CheckCostLimitRequest": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": { "type": "string" },
+                        "resource": { "type": "string" },
+                        "amount_usd": { "type": "number", "minimum": 0 }
+                    },
+                    "required": ["entity_id", "resource", "amount_usd"]
+                },
+                "SetCostLimitRequest": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": { "type": "string" },
+                        "resource": { "type": "string" },
+                        "budget_usd": { "type": "number", "minimum": 0 },
+                        "policy": { "type": "string", "enum": ["alert", "block", "fail"] }
+                    },
+                    "required": ["entity_id", "resource", "budget_usd", "policy"]
+                },
+                "CreateBetaCohortRequest": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" }
+                    },
+                    "required": ["id", "name"]
+                },
+                "EnrollBetaRequest": {
+                    "type": "object",
+                    "properties": {
+                        "participant_id": { "type": "string" }
+                    },
+                    "required": ["participant_id"]
+                },
+                "RecordBetaFeedbackRequest": {
+                    "type": "object",
+                    "properties": {
+                        "cohort_id": { "type": "string" },
+                        "participant_id": { "type": "string" },
+                        "score": { "type": "integer", "minimum": 1, "maximum": 5 },
+                        "comment": { "type": "string" }
+                    },
+                    "required": ["cohort_id", "participant_id", "score"]
+                },
+                "ConsumeQuotaRequest": {
+                    "type": "object",
+                    "properties": {
+                        "tokens": { "type": "integer", "minimum": 0 }
+                    },
+                    "required": ["tokens"]
+                },
+                "CheckContentRequest": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": { "type": "string" }
+                    },
+                    "required": ["prompt"]
+                },
+                "CheckContentBatchRequest": {
+                    "type": "object",
+                    "properties": {
+                        "prompts": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        }
+                    },
+                    "required": ["prompts"]
                 }
             }
         }
@@ -1002,7 +1615,9 @@ fn fallback_spec() -> Value {
 """##;
 
     let json = FALLBACK_SPEC_JSON.replace("{VERSION}", env!("CARGO_PKG_VERSION"));
-    serde_json::from_str(&json).expect("fallback spec JSON must be valid")
+    let mut spec: Value = serde_json::from_str(&json).expect("fallback spec JSON must be valid");
+    merge_extra_paths_and_schemas(&mut spec);
+    spec
 }
 
 /// Static OpenAPI JSON string embedded at compile time.
