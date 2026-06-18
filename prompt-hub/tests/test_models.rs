@@ -106,7 +106,11 @@ fn test_evolution_strategy_variants() {
 fn test_agent_identity_default() {
     let identity = AgentIdentity::default();
     assert_eq!(identity.name, "anonymous");
-    assert!(identity.capabilities.is_empty());
+    // PHTASK-0040 (owner decision): the default identity now carries Read+Write
+    // (mirrors the server's default_agent), but not Admin.
+    assert!(identity.capabilities.contains(&Capability::Read));
+    assert!(identity.capabilities.contains(&Capability::Write));
+    assert!(!identity.capabilities.contains(&Capability::Admin));
     assert_eq!(identity.specialization_score, 0.0);
 }
 

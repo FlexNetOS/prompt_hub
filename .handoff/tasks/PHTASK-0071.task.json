@@ -1,0 +1,39 @@
+{
+  "acceptance_criteria": [
+    "sqlcipher + ffi are either implemented behind real feature flags, OR removed from SPEC.md with a recorded rationale",
+    "no SPEC-promised feature flag lacks an implementation or an explicit reconciliation note",
+    "if implemented, the no-C trust-boundary invariant holds (pure-Rust crypto; no SQLCipher/OpenSSL/aws-lc linked)"
+  ],
+  "allows_dependency_addition": true,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0071",
+  "intent_lock": {
+    "acceptance_hash": "blake3:c980f1fa03abc8c188809c9017cae11dd7d533ea39af1c31f3da2166414cd788",
+    "objective_hash": "blake3:65c80b5d91d7285f934f478c59f5557426fdba43045fa8d8c80a1c6f9ee8830d",
+    "path_scope_hash": "blake3:880fc0ac9db793950538c2a3ace044e98e5489e781ef6569fb79e925c6e10650"
+  },
+  "objective": "SPEC.md §'Feature Flags' promises `sqlcipher` (encryption at rest) and `ffi` (C ABI bindings, cbindgen), but BOTH are absent from every Cargo.toml and have zero references in src (no sqlcipher/PRAGMA key, no extern \"C\"/no_mangle/cdylib). They were specced but never built. No-downgrade: either IMPLEMENT them (sqlcipher: at-rest encryption behind a feature on the libsql connection; ffi: a cdylib + extern \"C\" surface + cbindgen header) — preferred — OR reconcile SPEC.md to remove the unbuilt flags with a recorded rationale. Trust-boundary invariant: any at-rest crypto MUST be pure-Rust (no C SQLCipher/OpenSSL/aws-lc linked).",
+  "path_scope": [
+    "SPEC.md",
+    "prompt-hub/Cargo.toml",
+    "prompt-hub/src/storage.rs",
+    "prompt-hub/src/lib.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P3",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit handoff 2026-06-18 (completeness reconcile: untracked stubs + hollow features + route gap)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Reconcile SPEC-promised but absent feature flags: sqlcipher + ffi"
+}

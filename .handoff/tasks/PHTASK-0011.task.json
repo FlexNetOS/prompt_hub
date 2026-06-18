@@ -1,0 +1,32 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0011",
+  "title": "Recover feature: `sandbox`",
+  "status": "done",
+  "priority": "P1",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Per-prompt execution sandbox within #![forbid(unsafe_code)]: SandboxMode, SandboxConfig bounds, CRUD engine w/ rate/token/cost/network checks. HubError::SecurityViolation. 15 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`sandbox` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:c338bedaddae94a1131091f47a87953d3617f560ea3fa4357e32dc3a0948970a",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:2d9f9e1742e499a410629fb2e6a76e737b654e026192f636576f9adfae5bb84e"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "4c01df7"
+}

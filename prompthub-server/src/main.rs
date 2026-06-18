@@ -2,12 +2,14 @@
 // WIP server: some handlers/specs are scaffolded ahead of being wired into routes.
 #![allow(dead_code)]
 
+use std::net::SocketAddr;
+
 use anyhow::Result;
 use axum::serve;
 use clap::Parser;
 use prompt_hub::config::HubConfig;
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
 
 mod middleware;
 mod openapi;
@@ -87,36 +89,51 @@ async fn main() -> Result<()> {
 
     info!(addr = %addr, "Server listening");
 
+    // Keep a handle to the hub (and its shutdown coordinator) so we can run an
+    // orderly hub shutdown once the server stops serving. `create_router`
+    // consumes the AppState, so we clone the Arc first.
+    let hub = state.hub.clone();
+    let coordinator = hub.shutdown_coordinator();
+
     // Create router with state
     let app = server::create_router(state);
 
-    // Serve with graceful shutdown
-    serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    // Serve until the hub's shutdown coordinator fires on SIGTERM/SIGINT. The
+    // coordinator is the single shutdown rendezvous shared with the hub's
+    // background daemons.
+    // GovernorLayer's default PeerIpKeyExtractor needs ConnectInfo<SocketAddr>
+    // in request extensions; without `into_make_service_with_connect_info` every
+    // request fails the rate-limiter key extraction ("Unable to extract key!" → 500).
+    let serve_coordinator = coordinator.clone();
+    serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let mut rx = serve_coordinator.subscribe();
+        // Listen for OS signals; this also broadcasts to every other
+        // subscriber (the hub's daemons). On handler-install failure we log
+        // and fall back to awaiting the broadcast so the server can still
+        // be shut down programmatically.
+        tokio::select! {
+            res = serve_coordinator.wait_for_signal() => {
+                if let Err(e) = res {
+                    warn!("signal handler failed, awaiting broadcast instead: {e}");
+                    let _ = rx.recv().await;
+                }
+            }
+            _ = rx.recv() => {}
+        }
+        info!("Server received shutdown signal, draining connections");
+    })
+    .await?;
+
+    // Server has stopped accepting connections; run the orderly hub shutdown
+    // (stop daemons, flush WAL to disk).
+    if let Err(e) = hub.shutdown().await {
+        warn!("hub shutdown reported an error: {e}");
+    }
 
     info!("Server shutdown complete");
     Ok(())
-}
-
-/// Wait for SIGTERM or SIGINT to trigger graceful shutdown.
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("SIGTERM handler");
-        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
-            .expect("SIGINT handler");
-
-        tokio::select! {
-            _ = sigterm.recv() => info!("Received SIGTERM, shutting down gracefully"),
-            _ = sigint.recv() => info!("Received SIGINT, shutting down gracefully"),
-        }
-    }
-
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c().await.expect("ctrl-c handler");
-        info!("Received ctrl-c, shutting down gracefully");
-    }
 }
