@@ -16,10 +16,10 @@
   "id": "PHTASK-0063",
   "intent_lock": {
     "acceptance_hash": "blake3:e1a284bdc0ac02e05ee6d61f0c6a738f5b6971f9e7f782a943afb2c902c8737f",
-    "objective_hash": "blake3:7fec584f56b8c554f2842301b5ef242223a95c48c684ffd1d99930de63d98de2",
+    "objective_hash": "blake3:c1ad6451935a0b45d7ec9bb1555b5f414cd6704a9d6e143c4f813e14d6e38ad7",
     "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135"
   },
-  "objective": "Expose the remaining uncovered capabilities: sandbox (create/get/update/delete/check_sandbox); malware (scan_blob, scan_file); offline/sync/mobile (enable_offline_mode, sync, get_sync_status, enable_mobile_mode, enqueue_mobile_push, should_suppress_sync, build_mobile_sync_plan, dispatch_touch, set_touch_config); chaos (run_chaos, start_chaos_auto); multimodal/i18n (validate_image_mime_type, extract_placeholder_ids, register_translation, get_localized_template, translation_fallback_chain); preview (preview_generate, preview_artifacts); pollination/swarm (extract_pollination_patterns, rank_pollination_patterns, validate_swarm_roles); quality/lifecycle (run_quality_gate, shutdown, is_shutting_down). Handlers + DTOs + RBAC + error map + tests. Offline/mobile/chaos routes must expose COMPLETED impls (see blocked_by).",
+  "objective": "Expose the remaining uncovered capabilities: sandbox (create/get/update/delete/check_sandbox); malware (scan_blob, scan_file, set_malware_scan_config); offline/sync/mobile (enable_offline_mode, sync, get_sync_status, enable_mobile_mode, enqueue_mobile_push, should_suppress_sync, build_mobile_sync_plan, dispatch_touch, set_touch_config); chaos (run_chaos, start_chaos_auto); multimodal/i18n (validate_image_mime_type, extract_placeholder_ids, register_translation, get_localized_template, translation_fallback_chain); preview (preview_generate, preview_artifacts); pollination/swarm (extract_pollination_patterns, rank_pollination_patterns, validate_swarm_roles); quality/lifecycle (run_quality_gate, shutdown, is_shutting_down). Handlers + DTOs + RBAC + error map + tests. Offline/mobile/chaos routes must expose COMPLETED impls (see blocked_by).",
   "path_scope": [
     "prompthub-server/**"
   ],

@@ -1,81 +1,33 @@
 # Handoff Packet (latest) — handoff.packet.v2
 
-## 1. North Star
+> Compiled by `hf fleet render prompt_hub` from the FLEET ledger (meta/.handoff) + this repo's git-text capsule/cards. Not rendered from a per-repo ledger (ADR-0004 §3).
+
+## 1. North Star (prompt_hub)
 A non-technical user makes any request; prompt_hub transforms, communicates, and delivers it as intended (SwarmBundle -> handoff.task.v1).
 
 ## 2. State Precedence
-Git > .handoff/ledger.db > tasks/*.task.json > active.md > this packet.
+Git > FLEET ledger (meta/.handoff/ledger.db) > tasks/*.task.json > this packet.
 
 ## 3. Progress
-Done: 46/46.  Tamper-evident events verified: 0.
+Done: 53/71.  FLEET tamper-evident events verified: 732.
 
-## 4. Remaining (next safe first)
+## 4. Remaining
+- [P2] **PHTASK-0048** — Complete search ONNX embedder real inference + model fetch/verify
+- [P2] **PHTASK-0055** — Complete voice STT/TTS backends behind the FSM
+- [P1] **PHTASK-0056** — EPIC — expose remaining ~125 hub capabilities over HTTP
+- [P1] **PHTASK-0057** — Routes: prompt lifecycle (11 capabilities)
+- [P2] **PHTASK-0058** — Routes: context gathering + lineage (11 capabilities)
+- [P1] **PHTASK-0059** — Routes: provider health/multi-provider + rollout/deploy/rollback (18)
+- [P2] **PHTASK-0060** — Routes: cost-limits + beta + quota + moderation (14)
+- [P2] **PHTASK-0061** — Routes: audit/SOC2/diff + retention/GC + auto-purge (23)
+- [P3] **PHTASK-0062** — Routes: voice + local-llm + analytics + accessibility (16)
+- [P3] **PHTASK-0063** — Routes: sandbox + malware + offline/sync/mobile + chaos + multimodal/i18n + preview + pollination + quality-gate (remaining ~32)
+- [P1] **PHTASK-0064** — CI: add Default-Features Build + Test-Compile to branch-protection required checks
+- [P3] **PHTASK-0065** — Hygiene: retire Python drift (generate_cards.py) + resolve unused libloading dep
+- [P1] **PHTASK-0066** — Complete LockManager TTL sweep (expired locks never deleted)
+- [P2] **PHTASK-0067** — Complete CLI JunieCommand::Task execution (print-only stub)
+- [P3] **PHTASK-0068** — Complete or formally retire the TUI (run_tui is a stub)
+- [P2] **PHTASK-0069** — Wire TLS/mTLS server path or retire the hollow `tls` feature
+- [P3] **PHTASK-0070** — Wire HF tokenizers counting backend or retire the hollow `tokenizers` feature
+- [P3] **PHTASK-0071** — Reconcile SPEC-promised but absent feature flags: sqlcipher + ffi
 
-## 5. Next Best Task
-
-## 6. Resume Commands
-```bash
-hf resume
-done
-```
-
-## 7. Machine Summary
-```json
-{
-  "done": [
-    "PHTASK-0001",
-    "PHTASK-0002",
-    "PHTASK-0003",
-    "PHTASK-0004",
-    "PHTASK-0005",
-    "PHTASK-0006",
-    "PHTASK-0007",
-    "PHTASK-0008",
-    "PHTASK-0009",
-    "PHTASK-0010",
-    "PHTASK-0011",
-    "PHTASK-0012",
-    "PHTASK-0013",
-    "PHTASK-0014",
-    "PHTASK-0015",
-    "PHTASK-0016",
-    "PHTASK-0017",
-    "PHTASK-0018",
-    "PHTASK-0019",
-    "PHTASK-0020",
-    "PHTASK-0021",
-    "PHTASK-0022",
-    "PHTASK-0023",
-    "PHTASK-0024",
-    "PHTASK-0025",
-    "PHTASK-0026",
-    "PHTASK-0027",
-    "PHTASK-0028",
-    "PHTASK-0029",
-    "PHTASK-0030",
-    "PHTASK-0031",
-    "PHTASK-0032",
-    "PHTASK-0033",
-    "PHTASK-0034",
-    "PHTASK-0035",
-    "PHTASK-0036",
-    "PHTASK-0037",
-    "PHTASK-0038",
-    "PHTASK-0039",
-    "PHTASK-0040",
-    "PHTASK-0041",
-    "PHTASK-0042",
-    "PHTASK-0043",
-    "PHTASK-0044",
-    "PHTASK-0045",
-    "PHTASK-0046"
-  ],
-  "next_command": "done",
-  "next_task_id": null,
-  "project": "handoff (Continuity Ledger Kernel)",
-  "remaining": [],
-  "schema": "handoff.packet.v2",
-  "tasks_total": 46,
-  "witnessed_events_verified": 0
-}
-```
