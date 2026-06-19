@@ -37,7 +37,6 @@ pub fn create_router(state: AppState) -> Router {
         // Prompt CRUD
         .route("/api/v1/prompts", post(routes::register_prompt))
         .route("/api/v1/prompts", get(routes::list_prompts))
-        .route("/api/v1/prompts/{id}", get(routes::get_prompt))
         .route("/api/v1/prompts/{id}", patch(routes::update_prompt))
         .route("/api/v1/prompts/get", get(routes::get_prompt_route))
         .route("/api/v1/prompts/{id}/evolve", post(routes::evolve_prompt));
@@ -75,6 +74,30 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/prompts/{id}/lock", delete(routes::unlock_prompt))
         // Audit
         .route("/api/v1/prompts/{id}/audit", get(routes::audit_trail))
+        .route("/api/v1/audit/hash", post(routes::compute_audit_hash_route))
+        .route(
+            "/api/v1/audit/verify",
+            post(routes::verify_audit_integrity_route),
+        )
+        .route(
+            "/api/v1/audit/soc2/summary",
+            post(routes::soc2_evidence_summary_route),
+        )
+        .route(
+            "/api/v1/audit/soc2/validate",
+            post(routes::validate_soc2_schema_route),
+        )
+        .route(
+            "/api/v1/audit/anonymize",
+            post(routes::anonymize_audit_entry_route),
+        )
+        .route("/api/v1/diff/compute", post(routes::compute_diff_route))
+        .route("/api/v1/diff/summarize", post(routes::summarize_diff_route))
+        .route("/api/v1/diff/identical", post(routes::is_identical_route))
+        .route(
+            "/api/v1/diff/unified",
+            post(routes::format_unified_diff_route),
+        )
         // Swarm
         .route("/api/v1/swarm/bundle", get(routes::generate_bundle))
         // Health (Kubernetes probes)
@@ -250,6 +273,115 @@ pub fn create_router(state: AppState) -> Router {
             get(routes::save_budget_config),
         )
         .route("/api/v1/budget/reset", post(routes::reset_budget_period));
+
+    // Cost-limits tracking (feature: cost-limits)
+    #[cfg(feature = "cost-limits")]
+    let router = router
+        .route(
+            "/api/v1/cost-limits/check",
+            post(routes::cost_limits_check_route),
+        )
+        .route(
+            "/api/v1/cost-limits/limits",
+            post(routes::cost_limits_set_limit_route),
+        )
+        .route(
+            "/api/v1/cost-limits/utilization",
+            get(routes::cost_limits_utilization_route),
+        )
+        .route(
+            "/api/v1/cost-limits/status",
+            get(routes::cost_limits_status_route),
+        );
+
+    // Beta-program management (feature: beta-program)
+    #[cfg(feature = "beta-program")]
+    let router = router
+        .route(
+            "/api/v1/beta/cohorts",
+            post(routes::beta_create_cohort_route),
+        )
+        .route(
+            "/api/v1/beta/cohorts/{cohort_id}/enroll",
+            post(routes::beta_enroll_route),
+        )
+        .route(
+            "/api/v1/beta/feedback",
+            post(routes::beta_record_feedback_route),
+        )
+        .route("/api/v1/beta/stats", get(routes::beta_stats_route));
+
+    // Token quota enforcement (feature: quota)
+    #[cfg(feature = "quota")]
+    let router = router
+        .route("/api/v1/quota/consume", post(routes::quota_consume_route))
+        .route("/api/v1/quota/usage", get(routes::quota_usage_route))
+        .route("/api/v1/quota/reset", post(routes::quota_reset_route));
+
+    // Content moderation (feature: moderation)
+    #[cfg(feature = "moderation")]
+    let router = router
+        .route(
+            "/api/v1/moderation/check",
+            post(routes::moderation_check_route),
+        )
+        .route(
+            "/api/v1/moderation/safe",
+            post(routes::moderation_is_safe_route),
+        )
+        .route(
+            "/api/v1/moderation/check-batch",
+            post(routes::moderation_check_batch_route),
+        );
+
+    // Retention / GC routes (feature: retention)
+    #[cfg(feature = "retention")]
+    let router = router
+        .route(
+            "/api/v1/retention/period",
+            post(routes::set_retention_period_route),
+        )
+        .route(
+            "/api/v1/retention/period/{data_type}",
+            get(routes::get_retention_period_route),
+        )
+        .route(
+            "/api/v1/retention/expired",
+            get(routes::is_data_expired_route),
+        )
+        .route(
+            "/api/v1/retention/cleanup",
+            post(routes::run_retention_cleanup_route),
+        )
+        .route("/api/v1/gc/run", post(routes::run_garbage_collection_route))
+        .route(
+            "/api/v1/gc/purge-soft-deleted",
+            post(routes::purge_soft_deleted_route),
+        )
+        .route("/api/v1/gc/stats", get(routes::gc_stats_route))
+        .route("/api/v1/gc/enabled", post(routes::set_gc_enabled_route))
+        .route("/api/v1/gc/enabled", get(routes::gc_enabled_route));
+
+    // Auto-purge routes (feature: auto-purge)
+    #[cfg(feature = "auto-purge")]
+    let router = router
+        .route("/api/v1/auto-purge/purge", post(routes::purge_now_route))
+        .route(
+            "/api/v1/auto-purge/stats",
+            get(routes::get_purge_stats_route),
+        )
+        .route(
+            "/api/v1/auto-purge/config",
+            post(routes::update_purge_config_route),
+        )
+        .route(
+            "/api/v1/auto-purge/daemon/start",
+            post(routes::start_purge_daemon_route),
+        )
+        .route(
+            "/api/v1/auto-purge/daemon/stop",
+            post(routes::stop_purge_daemon_route),
+        );
 
     // Load balancer routes (always-on)
     let router = router

@@ -22,6 +22,15 @@ use prompt_hub::budget::{BudgetAlert, BudgetConfig};
 #[cfg(feature = "multi-provider")]
 use prompt_hub::multi_provider::{ProviderConfig, Vendor};
 
+// Provider health imports (always available)
+use prompt_hub::provider_health::HealthStatus;
+
+#[cfg(feature = "retention")]
+use prompt_hub::retention::DataType;
+
+#[cfg(feature = "auto-purge")]
+use prompt_hub::auto_purge::AutoPurgeConfig;
+
 use crate::responses::{error, success};
 
 // ── Satisfaction request DTOs ─────────────────────────────────────────────
@@ -523,6 +532,343 @@ pub async fn audit_trail(State(state): State<Arc<AppState>>, Path(id): Path<Stri
     }
 }
 
+// ── Extended audit / SOC2 / diff handlers ───────────────────────────────
+
+/// Request body for computing an audit diff hash.
+#[derive(Debug, Deserialize)]
+pub struct AuditHashRequest {
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub timestamp: String,
+}
+
+/// Request body wrapping an audit entry.
+#[derive(Debug, Deserialize)]
+pub struct AuditEntryRequest {
+    pub entry: AuditEntry,
+}
+
+/// Request body for computing a diff between two texts.
+#[derive(Debug, Deserialize)]
+pub struct DiffComputeRequest {
+    pub old: String,
+    pub new: String,
+}
+
+/// Request body carrying a pre-computed diff result.
+#[derive(Debug, Deserialize)]
+pub struct DiffResultRequest {
+    pub diff: prompt_hub::diff::DiffResult,
+}
+
+/// Compute the tamper-evident diff hash for an audit entry.
+#[instrument(skip(payload))]
+pub async fn compute_audit_hash_route(Json(payload): Json<AuditHashRequest>) -> Response {
+    let hash = prompt_hub::PromptHub::compute_audit_hash(
+        &payload.before,
+        &payload.after,
+        &payload.timestamp,
+    );
+    success(json!({ "hash": hash })).into_response()
+}
+
+/// Verify the integrity hash of an audit entry.
+#[instrument(skip(state, payload))]
+pub async fn verify_audit_integrity_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    let valid = state.hub.verify_audit_integrity(&payload.entry);
+    success(json!({ "valid": valid })).into_response()
+}
+
+/// Generate a SOC2 evidence summary for an audit entry.
+#[instrument(skip(state, payload))]
+pub async fn soc2_evidence_summary_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    let summary = state.hub.soc2_evidence_summary(&payload.entry);
+    success(json!({ "summary": summary })).into_response()
+}
+
+/// Validate that an audit entry conforms to the SOC2 schema.
+#[instrument(skip(state, payload))]
+pub async fn validate_soc2_schema_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    match state.hub.validate_soc2_schema(&payload.entry) {
+        Ok(()) => success(json!({ "valid": true })).into_response(),
+        Err(e) => map_hub_error("SOC2 schema validation", e),
+    }
+}
+
+/// Anonymize an audit entry for GDPR right-to-erasure.
+#[instrument(skip(state, payload))]
+pub async fn anonymize_audit_entry_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AuditEntryRequest>,
+) -> Response {
+    let mut entry = payload.entry;
+    state.hub.anonymize_audit_entry(&mut entry);
+    success(json!({ "entry": entry })).into_response()
+}
+
+/// Compute a unified diff between two text documents.
+#[instrument(skip(state, payload))]
+pub async fn compute_diff_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffComputeRequest>,
+) -> Response {
+    let diff = state.hub.compute_diff(&payload.old, &payload.new);
+    success(json!({ "diff": diff })).into_response()
+}
+
+/// Summarize a diff with line counts and changed sections.
+#[instrument(skip(state, payload))]
+pub async fn summarize_diff_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffResultRequest>,
+) -> Response {
+    let summary = state.hub.summarize_diff(&payload.diff);
+    success(json!({ "summary": summary })).into_response()
+}
+
+/// Check whether two documents are identical.
+#[instrument(skip(state, payload))]
+pub async fn is_identical_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffComputeRequest>,
+) -> Response {
+    let identical = state.hub.is_identical(&payload.old, &payload.new);
+    success(json!({ "identical": identical })).into_response()
+}
+
+/// Format a diff as unified diff text.
+#[instrument(skip(state, payload))]
+pub async fn format_unified_diff_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<DiffResultRequest>,
+) -> Response {
+    let text = state.hub.format_unified_diff(&payload.diff);
+    success(json!({ "unified_diff": text })).into_response()
+}
+
+// ── Retention / Garbage Collection handlers ─────────────────────────────
+
+#[cfg(feature = "retention")]
+#[derive(Debug, Deserialize)]
+pub struct SetRetentionRequest {
+    pub data_type: String,
+    pub days: u32,
+}
+
+#[cfg(feature = "retention")]
+#[derive(Debug, Deserialize)]
+pub struct IsExpiredQuery {
+    pub data_type: String,
+    pub age_days: u32,
+}
+
+#[cfg(feature = "retention")]
+#[derive(Debug, Deserialize)]
+pub struct SetGcEnabledRequest {
+    pub enabled: bool,
+}
+
+/// Parse a retention data type from its snake_case or PascalCase name.
+#[cfg(feature = "retention")]
+fn parse_data_type(s: &str) -> Option<DataType> {
+    match s.to_lowercase().as_str() {
+        "audit_log" | "auditlog" => Some(DataType::AuditLog),
+        "soft_deleted_prompt" | "softdeletedprompt" => Some(DataType::SoftDeletedPrompt),
+        "expired_lock" | "expiredlock" => Some(DataType::ExpiredLock),
+        "embedding_vector" | "embeddingvector" => Some(DataType::EmbeddingVector),
+        "session_cache" | "sessioncache" => Some(DataType::SessionCache),
+        "failed_attempt_log" | "failedattemptlog" => Some(DataType::FailedAttemptLog),
+        "analytics_event" | "analyticsevent" => Some(DataType::AnalyticsEvent),
+        _ => None,
+    }
+}
+
+/// Set the retention period (in days) for a data type.
+#[cfg(feature = "retention")]
+#[instrument(skip(state, payload))]
+pub async fn set_retention_period_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SetRetentionRequest>,
+) -> Response {
+    let data_type = match parse_data_type(&payload.data_type) {
+        Some(dt) => dt,
+        None => {
+            return error(StatusCode::BAD_REQUEST, "Invalid data_type").into_response();
+        }
+    };
+
+    state.hub.set_retention_period(data_type, payload.days);
+    success(json!({ "data_type": payload.data_type, "days": payload.days })).into_response()
+}
+
+/// Get the retention period (in days) for a data type.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn get_retention_period_route(
+    State(state): State<Arc<AppState>>,
+    Path(data_type): Path<String>,
+) -> Response {
+    let dt = match parse_data_type(&data_type) {
+        Some(dt) => dt,
+        None => return error(StatusCode::BAD_REQUEST, "Invalid data_type").into_response(),
+    };
+
+    let days = state.hub.get_retention_period(&dt);
+    success(json!({ "data_type": data_type, "days": days })).into_response()
+}
+
+/// Check whether data of a given type has expired based on its retention policy.
+#[cfg(feature = "retention")]
+#[instrument(skip(state, query))]
+pub async fn is_data_expired_route(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<IsExpiredQuery>,
+) -> Response {
+    let dt = match parse_data_type(&query.data_type) {
+        Some(dt) => dt,
+        None => return error(StatusCode::BAD_REQUEST, "Invalid data_type").into_response(),
+    };
+
+    let expired = state.hub.is_data_expired(&dt, query.age_days);
+    success(json!({
+        "data_type": query.data_type,
+        "age_days": query.age_days,
+        "expired": expired
+    }))
+    .into_response()
+}
+
+/// Run retention cleanup for all configured data types.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn run_retention_cleanup_route(State(state): State<Arc<AppState>>) -> Response {
+    let results = state.hub.run_retention_cleanup();
+    success(json!({ "results": results })).into_response()
+}
+
+/// Run a full garbage collection cycle.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn run_garbage_collection_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.run_garbage_collection().await {
+        Ok(report) => success(json!({ "report": report })).into_response(),
+        Err(e) => map_hub_error("garbage collection", e),
+    }
+}
+
+/// Purge soft-deleted prompts and return the number of rows removed.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn purge_soft_deleted_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.purge_soft_deleted().await {
+        Ok(count) => success(json!({ "purged": count })).into_response(),
+        Err(e) => map_hub_error("purge soft deleted", e),
+    }
+}
+
+/// Get cumulative garbage collection statistics.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn gc_stats_route(State(state): State<Arc<AppState>>) -> Response {
+    let stats = state.hub.gc_stats();
+    success(json!({ "stats": stats })).into_response()
+}
+
+/// Enable or disable automatic garbage collection.
+#[cfg(feature = "retention")]
+#[instrument(skip(state, payload))]
+pub async fn set_gc_enabled_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SetGcEnabledRequest>,
+) -> Response {
+    state.hub.set_gc_enabled(payload.enabled);
+    success(json!({ "enabled": payload.enabled })).into_response()
+}
+
+/// Check whether automatic garbage collection is enabled.
+#[cfg(feature = "retention")]
+#[instrument(skip(state))]
+pub async fn gc_enabled_route(State(state): State<Arc<AppState>>) -> Response {
+    let enabled = state.hub.gc_enabled();
+    success(json!({ "enabled": enabled })).into_response()
+}
+
+// ── Auto-purge handlers ─────────────────────────────────────────────────
+
+#[cfg(feature = "auto-purge")]
+#[derive(Debug, Deserialize)]
+pub struct PurgeConfigRequest {
+    pub config: AutoPurgeConfig,
+}
+
+/// Run a single auto-purge cycle immediately.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state))]
+pub async fn purge_now_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.purge_now().await {
+        Ok(stats) => success(json!({ "stats": stats })).into_response(),
+        Err(e) => map_hub_error("purge now", e),
+    }
+}
+
+/// Get the current auto-purge statistics snapshot.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state))]
+pub async fn get_purge_stats_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.get_purge_stats() {
+        Ok(stats) => success(json!({ "stats": stats })).into_response(),
+        Err(e) => map_hub_error("purge stats", e),
+    }
+}
+
+/// Replace the auto-purge configuration.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state, payload))]
+pub async fn update_purge_config_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PurgeConfigRequest>,
+) -> Response {
+    match state.hub.update_purge_config(|c| *c = payload.config) {
+        Ok(()) => success(json!({ "updated": true })).into_response(),
+        Err(e) => map_hub_error("update purge config", e),
+    }
+}
+
+/// Start the auto-purge daemon with the given configuration.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state, payload))]
+pub async fn start_purge_daemon_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PurgeConfigRequest>,
+) -> Response {
+    match state.hub.start_purge_daemon(payload.config).await {
+        Ok(Some(_handle)) => success(json!({ "started": true })).into_response(),
+        Ok(None) => {
+            success(json!({ "started": false, "reason": "already running" })).into_response()
+        }
+        Err(e) => map_hub_error("start purge daemon", e),
+    }
+}
+
+/// Stop the auto-purge daemon.
+#[cfg(feature = "auto-purge")]
+#[instrument(skip(state))]
+pub async fn stop_purge_daemon_route(State(state): State<Arc<AppState>>) -> Response {
+    match state.hub.stop_purge_daemon() {
+        Ok(()) => success(json!({ "stopped": true })).into_response(),
+        Err(e) => map_hub_error("stop purge daemon", e),
+    }
+}
+
 // ── Swarm handlers ───────────────────────────────────────────────────────
 
 /// Generate a swarm bundle.
@@ -972,6 +1318,308 @@ pub async fn reset_budget_period(State(state): State<Arc<AppState>>) -> Response
         "utilization_percent": 0.0,
     }))
     .into_response()
+}
+
+// ── Cost-limits handlers ─────────────────────────────────────────────────
+
+/// Check a cost limit and record spend for an entity-resource pair.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_check_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckCostLimitRequest>,
+) -> Response {
+    if payload.entity_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "entity_id cannot be empty").into_response();
+    }
+    if payload.amount_usd < 0.0 {
+        return error(StatusCode::BAD_REQUEST, "amount_usd cannot be negative").into_response();
+    }
+    let resource = match parse_resource(&payload.resource) {
+        Some(r) => r,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown resource '{}'", payload.resource),
+            )
+            .into_response();
+        }
+    };
+
+    let status = state
+        .hub
+        .check_cost_limits(&payload.entity_id, resource, payload.amount_usd)
+        .await;
+    success(limit_status_to_json(&status)).into_response()
+}
+
+/// Set or update a cost limit for an entity-resource pair.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_set_limit_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SetCostLimitRequest>,
+) -> Response {
+    if payload.entity_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "entity_id cannot be empty").into_response();
+    }
+    if payload.budget_usd < 0.0 {
+        return error(StatusCode::BAD_REQUEST, "budget_usd cannot be negative").into_response();
+    }
+    let resource = match parse_resource(&payload.resource) {
+        Some(r) => r,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown resource '{}'", payload.resource),
+            )
+            .into_response();
+        }
+    };
+    let policy = match parse_overage_policy(&payload.policy) {
+        Some(p) => p,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown overage_policy '{}'", payload.policy),
+            )
+            .into_response();
+        }
+    };
+
+    let entry = state
+        .hub
+        .set_cost_limit(&payload.entity_id, resource, payload.budget_usd, policy);
+    success(json!({ "limit": entry })).into_response()
+}
+
+/// Get utilization percentage for an entity-resource pair.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_utilization_route(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CostUtilizationQuery>,
+) -> Response {
+    if query.entity_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "entity_id cannot be empty").into_response();
+    }
+    let resource = match parse_resource(&query.resource) {
+        Some(r) => r,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("Unknown resource '{}'", query.resource),
+            )
+            .into_response();
+        }
+    };
+
+    let utilization = state.hub.cost_utilization(&query.entity_id, resource);
+    success(json!({ "entity_id": query.entity_id, "resource": query.resource, "utilization_percent": utilization })).into_response()
+}
+
+/// Get all tracked cost-limit statuses.
+#[cfg(feature = "cost-limits")]
+#[instrument(skip(state))]
+pub async fn cost_limits_status_route(State(state): State<Arc<AppState>>) -> Response {
+    let statuses = state
+        .hub
+        .cost_limit_status()
+        .into_iter()
+        .map(|(entity_id, resource, utilization_percent, policy)| {
+            json!({
+                "entity_id": entity_id,
+                "resource": resource,
+                "utilization_percent": utilization_percent,
+                "overage_policy": policy,
+            })
+        })
+        .collect::<Vec<_>>();
+    success(json!({ "statuses": statuses })).into_response()
+}
+
+// ── Beta-program handlers ────────────────────────────────────────────────
+
+/// Create a new beta cohort.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_create_cohort_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateBetaCohortRequest>,
+) -> Response {
+    if payload.id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "id cannot be empty").into_response();
+    }
+    if payload.name.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "name cannot be empty").into_response();
+    }
+
+    let cohort = state.hub.create_beta_cohort(&payload.id, &payload.name);
+    success(json!({ "cohort": cohort })).into_response()
+}
+
+/// Enroll a participant in a beta cohort.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_enroll_route(
+    State(state): State<Arc<AppState>>,
+    Path(cohort_id): Path<String>,
+    Json(payload): Json<EnrollBetaRequest>,
+) -> Response {
+    if cohort_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "cohort_id cannot be empty").into_response();
+    }
+    if payload.participant_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "participant_id cannot be empty").into_response();
+    }
+
+    if state.hub.enroll_beta(&cohort_id, &payload.participant_id) {
+        success(json!({ "enrolled": true })).into_response()
+    } else {
+        error(
+            StatusCode::NOT_FOUND,
+            format!("cohort '{}' not found", cohort_id),
+        )
+        .into_response()
+    }
+}
+
+/// Record feedback from a beta participant.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_record_feedback_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RecordBetaFeedbackRequest>,
+) -> Response {
+    if payload.cohort_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "cohort_id cannot be empty").into_response();
+    }
+    if payload.participant_id.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "participant_id cannot be empty").into_response();
+    }
+    if payload.score < 1 || payload.score > 5 {
+        return error(StatusCode::BAD_REQUEST, "score must be between 1 and 5").into_response();
+    }
+
+    if state.hub.record_feedback(
+        &payload.cohort_id,
+        &payload.participant_id,
+        payload.score,
+        payload.comment,
+    ) {
+        success(json!({ "recorded": true })).into_response()
+    } else {
+        error(
+            StatusCode::NOT_FOUND,
+            format!("cohort '{}' not found", payload.cohort_id),
+        )
+        .into_response()
+    }
+}
+
+/// Get overall beta program statistics.
+#[cfg(feature = "beta-program")]
+#[instrument(skip(state))]
+pub async fn beta_stats_route(State(state): State<Arc<AppState>>) -> Response {
+    let stats = state.hub.beta_stats();
+    success(json!({ "stats": stats })).into_response()
+}
+
+// ── Quota handlers ───────────────────────────────────────────────────────
+
+/// Check and consume tokens against the quota enforcer.
+#[cfg(feature = "quota")]
+#[instrument(skip(state))]
+pub async fn quota_consume_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ConsumeQuotaRequest>,
+) -> Response {
+    match state.hub.check_and_consume(payload.tokens) {
+        Ok(status) => success(quota_status_to_json(&status)).into_response(),
+        Err(e) => map_hub_error("quota consume", e),
+    }
+}
+
+/// Get current quota usage.
+#[cfg(feature = "quota")]
+#[instrument(skip(state))]
+pub async fn quota_usage_route(State(state): State<Arc<AppState>>) -> Response {
+    let usage = state.hub.quota_usage();
+    success(json!({
+        "daily_used": usage.daily_used,
+        "daily_limit": usage.daily_limit,
+        "hourly_used": usage.hourly_used,
+        "hourly_limit": usage.hourly_limit,
+        "burst_used": usage.burst_used,
+        "burst_limit": usage.burst_limit,
+    }))
+    .into_response()
+}
+
+/// Reset all quota counters.
+#[cfg(feature = "quota")]
+#[instrument(skip(state))]
+pub async fn quota_reset_route(State(state): State<Arc<AppState>>) -> Response {
+    state.hub.reset_quota();
+    info!("Quota counters reset");
+    success(json!({ "status": "reset" })).into_response()
+}
+
+// ── Moderation handlers ──────────────────────────────────────────────────
+
+/// Check a prompt for harmful content.
+#[cfg(feature = "moderation")]
+#[instrument(skip(state))]
+pub async fn moderation_check_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckContentRequest>,
+) -> Response {
+    if payload.prompt.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompt cannot be empty").into_response();
+    }
+
+    match state.hub.check_content(&payload.prompt) {
+        Ok(report) => success(moderation_report_to_json(&report)).into_response(),
+        Err(e) => map_hub_error("content moderation", e),
+    }
+}
+
+/// Quick check returning whether content passes moderation.
+#[cfg(feature = "moderation")]
+#[instrument(skip(state))]
+pub async fn moderation_is_safe_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckContentRequest>,
+) -> Response {
+    if payload.prompt.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompt cannot be empty").into_response();
+    }
+
+    let safe = state.hub.is_content_safe(&payload.prompt);
+    success(json!({ "safe": safe })).into_response()
+}
+
+/// Check multiple prompts for harmful content.
+#[cfg(feature = "moderation")]
+#[instrument(skip(state))]
+pub async fn moderation_check_batch_route(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CheckContentBatchRequest>,
+) -> Response {
+    if payload.prompts.is_empty() {
+        return error(StatusCode::BAD_REQUEST, "prompts cannot be empty").into_response();
+    }
+
+    let results = state
+        .hub
+        .check_content_batch(&payload.prompts)
+        .into_iter()
+        .map(|r| match r {
+            Ok(report) => moderation_report_to_json(&report),
+            Err(e) => json!({"error": e.to_string()}),
+        })
+        .collect::<Vec<_>>();
+    success(json!({ "results": results })).into_response()
 }
 
 // ── Load balancer handlers ───────────────────────────────────────────────
@@ -1555,6 +2203,88 @@ pub struct LintTemplateRequest {
     pub template: String,
 }
 
+// ── Cost-limits request DTOs ──────────────────────────────────────────────
+
+/// Request body for checking a cost limit and recording spend.
+#[cfg(feature = "cost-limits")]
+#[derive(Debug, Deserialize)]
+pub struct CheckCostLimitRequest {
+    pub entity_id: String,
+    pub resource: String,
+    pub amount_usd: f64,
+}
+
+/// Request body for setting a cost limit.
+#[cfg(feature = "cost-limits")]
+#[derive(Debug, Deserialize)]
+pub struct SetCostLimitRequest {
+    pub entity_id: String,
+    pub resource: String,
+    pub budget_usd: f64,
+    pub policy: String,
+}
+
+/// Query parameters for cost utilization.
+#[cfg(feature = "cost-limits")]
+#[derive(Debug, Deserialize)]
+pub struct CostUtilizationQuery {
+    pub entity_id: String,
+    pub resource: String,
+}
+
+// ── Beta-program request DTOs ─────────────────────────────────────────────
+
+/// Request body for creating a beta cohort.
+#[cfg(feature = "beta-program")]
+#[derive(Debug, Deserialize)]
+pub struct CreateBetaCohortRequest {
+    pub id: String,
+    pub name: String,
+}
+
+/// Request body for enrolling a participant in a beta cohort.
+#[cfg(feature = "beta-program")]
+#[derive(Debug, Deserialize)]
+pub struct EnrollBetaRequest {
+    pub participant_id: String,
+}
+
+/// Request body for recording beta feedback.
+#[cfg(feature = "beta-program")]
+#[derive(Debug, Deserialize)]
+pub struct RecordBetaFeedbackRequest {
+    pub cohort_id: String,
+    pub participant_id: String,
+    pub score: u8,
+    #[serde(default)]
+    pub comment: String,
+}
+
+// ── Quota request DTOs ────────────────────────────────────────────────────
+
+/// Request body for checking and consuming quota tokens.
+#[cfg(feature = "quota")]
+#[derive(Debug, Deserialize)]
+pub struct ConsumeQuotaRequest {
+    pub tokens: u64,
+}
+
+// ── Moderation request DTOs ───────────────────────────────────────────────
+
+/// Request body for checking content moderation.
+#[cfg(feature = "moderation")]
+#[derive(Debug, Deserialize)]
+pub struct CheckContentRequest {
+    pub prompt: String,
+}
+
+/// Request body for batch moderation checks.
+#[cfg(feature = "moderation")]
+#[derive(Debug, Deserialize)]
+pub struct CheckContentBatchRequest {
+    pub prompts: Vec<String>,
+}
+
 // ── Context gathering request DTOs ────────────────────────────────────────
 
 /// Request body for gathering project context.
@@ -1717,6 +2447,91 @@ fn parse_vendor(vendor: &str) -> Option<Vendor> {
         _ if !vendor.is_empty() => Some(Vendor::Custom(vendor.to_string())),
         _ => None,
     }
+}
+
+/// Parse a cost-limit resource string into a [`Resource`].
+#[cfg(feature = "cost-limits")]
+fn parse_resource(resource: &str) -> Option<prompt_hub::cost_limits::Resource> {
+    match resource.to_lowercase().as_str() {
+        "compute" => Some(prompt_hub::cost_limits::Resource::Compute),
+        "storage" => Some(prompt_hub::cost_limits::Resource::Storage),
+        "api_calls" | "api-calls" | "api calls" => {
+            Some(prompt_hub::cost_limits::Resource::ApiCalls)
+        }
+        _ if !resource.is_empty() => Some(prompt_hub::cost_limits::Resource::Custom(
+            resource.to_string(),
+        )),
+        _ => None,
+    }
+}
+
+/// Parse an overage policy string into an [`OveragePolicy`].
+#[cfg(feature = "cost-limits")]
+fn parse_overage_policy(policy: &str) -> Option<prompt_hub::cost_limits::OveragePolicy> {
+    match policy.to_lowercase().as_str() {
+        "alert" => Some(prompt_hub::cost_limits::OveragePolicy::Alert),
+        "block" => Some(prompt_hub::cost_limits::OveragePolicy::Block),
+        "fail" => Some(prompt_hub::cost_limits::OveragePolicy::Fail),
+        _ => None,
+    }
+}
+
+/// Convert a [`LimitStatus`] to a JSON-friendly representation.
+#[cfg(feature = "cost-limits")]
+fn limit_status_to_json(status: &prompt_hub::cost_limits::LimitStatus) -> Value {
+    match status {
+        prompt_hub::cost_limits::LimitStatus::Ok => json!({"status": "ok"}),
+        prompt_hub::cost_limits::LimitStatus::OverLimit => json!({"status": "over_limit"}),
+        prompt_hub::cost_limits::LimitStatus::Blocked => json!({"status": "blocked"}),
+        prompt_hub::cost_limits::LimitStatus::Failed(msg) => {
+            json!({"status": "failed", "message": msg})
+        }
+    }
+}
+
+/// Convert a [`QuotaStatus`] to a JSON-friendly representation.
+#[cfg(feature = "quota")]
+fn quota_status_to_json(status: &prompt_hub::quota::QuotaStatus) -> Value {
+    let status_str = match status {
+        prompt_hub::quota::QuotaStatus::Allowed => "allowed",
+        prompt_hub::quota::QuotaStatus::DailyExceeded => "daily_exceeded",
+        prompt_hub::quota::QuotaStatus::HourlyExceeded => "hourly_exceeded",
+        prompt_hub::quota::QuotaStatus::BurstExceeded => "burst_exceeded",
+    };
+    json!({"status": status_str})
+}
+
+/// Convert a [`ModerationReport`] to a JSON-friendly representation.
+#[cfg(feature = "moderation")]
+fn moderation_report_to_json(report: &prompt_hub::moderation::ModerationReport) -> Value {
+    let (result, category, matched_term, score) = match &report.result {
+        prompt_hub::moderation::ModerationResult::Allow => {
+            ("allow", None::<String>, None::<String>, None::<u8>)
+        }
+        prompt_hub::moderation::ModerationResult::Block {
+            category,
+            matched_term,
+        } => (
+            "block",
+            Some(format!("{:?}", category)),
+            Some(matched_term.clone()),
+            None::<u8>,
+        ),
+        prompt_hub::moderation::ModerationResult::Flag { category, score } => (
+            "flag",
+            Some(format!("{:?}", category)),
+            None::<String>,
+            Some(*score),
+        ),
+    };
+    json!({
+        "result": result,
+        "category": category,
+        "matched_term": matched_term,
+        "score": score,
+        "highest_score": report.highest_score,
+        "categories_checked": report.categories_checked.iter().map(|c| format!("{:?}", c)).collect::<Vec<_>>(),
+    })
 }
 
 /// Parse a UUID string and map invalid input to a 400 response.
@@ -2350,7 +3165,46 @@ pub async fn is_healthy_route(
 /// Get a summary of all monitored providers.
 #[instrument(skip(state))]
 pub async fn get_health_summary_route(State(state): State<Arc<AppState>>) -> Response {
-    success(json!(state.hub.get_health_summary())).into_response()
+    let summary = state.hub.get_health_summary();
+
+    // Build response records (without non-serializable Instant field)
+    let records: Vec<Value> = summary
+        .providers
+        .iter()
+        .map(|record| {
+            let status_str = match record.status {
+                HealthStatus::Healthy => "healthy",
+                HealthStatus::Degraded => "degraded",
+                HealthStatus::Unhealthy => "unhealthy",
+                HealthStatus::Unknown => "unknown",
+            };
+            json!({
+                "name": record.name,
+                "url": record.url,
+                "status": status_str,
+                "last_latency_ms": record.last_latency_ms,
+                "error_count": record.error_count,
+                "success_count": record.success_count
+            })
+        })
+        .collect();
+
+    let overall_str = match summary.overall {
+        HealthStatus::Healthy => "healthy",
+        HealthStatus::Degraded => "degraded",
+        HealthStatus::Unhealthy => "unhealthy",
+        HealthStatus::Unknown => "unknown",
+    };
+
+    success(json!({
+        "raw": summary,
+        "providers": records,
+        "healthy_count": summary.healthy_count,
+        "degraded_count": summary.degraded_count,
+        "unhealthy_count": summary.unhealthy_count,
+        "overall_status": overall_str
+    }))
+    .into_response()
 }
 
 // ── Multi-provider routing routes ─────────────────────────────────────────
@@ -3763,6 +4617,307 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    // ── Cost-limits route tests ─────────────────────────────────────────────
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_set_and_check() {
+        let state = evolve_test_state().await;
+
+        let response = cost_limits_set_limit_route(
+            axum::extract::State(state.clone()),
+            axum::Json(SetCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "compute".to_string(),
+                budget_usd: 100.0,
+                policy: "block".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = cost_limits_check_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CheckCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "compute".to_string(),
+                amount_usd: 150.0,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_utilization() {
+        let state = evolve_test_state().await;
+
+        cost_limits_set_limit_route(
+            axum::extract::State(state.clone()),
+            axum::Json(SetCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "storage".to_string(),
+                budget_usd: 200.0,
+                policy: "alert".to_string(),
+            }),
+        )
+        .await;
+
+        let response = cost_limits_utilization_route(
+            axum::extract::State(state),
+            axum::extract::Query(CostUtilizationQuery {
+                entity_id: "org-1".to_string(),
+                resource: "storage".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_status() {
+        let state = evolve_test_state().await;
+
+        cost_limits_set_limit_route(
+            axum::extract::State(state.clone()),
+            axum::Json(SetCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "compute".to_string(),
+                budget_usd: 100.0,
+                policy: "alert".to_string(),
+            }),
+        )
+        .await;
+
+        let response = cost_limits_status_route(axum::extract::State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "cost-limits")]
+    #[tokio::test]
+    async fn test_cost_limits_invalid_resource_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = cost_limits_check_route(
+            axum::extract::State(state),
+            axum::Json(CheckCostLimitRequest {
+                entity_id: "org-1".to_string(),
+                resource: "".to_string(),
+                amount_usd: 10.0,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Beta-program route tests ────────────────────────────────────────────
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_create_cohort_and_enroll() {
+        let state = evolve_test_state().await;
+
+        let response = beta_create_cohort_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CreateBetaCohortRequest {
+                id: "beta-1".to_string(),
+                name: "Test Beta".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = beta_enroll_route(
+            axum::extract::State(state.clone()),
+            axum::extract::Path("beta-1".to_string()),
+            axum::Json(EnrollBetaRequest {
+                participant_id: "user-1".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_enroll_missing_cohort_returns_404() {
+        let state = evolve_test_state().await;
+
+        let response = beta_enroll_route(
+            axum::extract::State(state),
+            axum::extract::Path("missing".to_string()),
+            axum::Json(EnrollBetaRequest {
+                participant_id: "user-1".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_record_feedback_and_stats() {
+        let state = evolve_test_state().await;
+
+        beta_create_cohort_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CreateBetaCohortRequest {
+                id: "beta-1".to_string(),
+                name: "Test Beta".to_string(),
+            }),
+        )
+        .await;
+
+        let response = beta_record_feedback_route(
+            axum::extract::State(state.clone()),
+            axum::Json(RecordBetaFeedbackRequest {
+                cohort_id: "beta-1".to_string(),
+                participant_id: "user-1".to_string(),
+                score: 5,
+                comment: "Great!".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = beta_stats_route(axum::extract::State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "beta-program")]
+    #[tokio::test]
+    async fn test_beta_feedback_invalid_score_rejected() {
+        let state = evolve_test_state().await;
+
+        beta_create_cohort_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CreateBetaCohortRequest {
+                id: "beta-1".to_string(),
+                name: "Test Beta".to_string(),
+            }),
+        )
+        .await;
+
+        let response = beta_record_feedback_route(
+            axum::extract::State(state),
+            axum::Json(RecordBetaFeedbackRequest {
+                cohort_id: "beta-1".to_string(),
+                participant_id: "user-1".to_string(),
+                score: 10,
+                comment: "".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Quota route tests ───────────────────────────────────────────────────
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_consume_and_usage() {
+        let state = evolve_test_state().await;
+
+        let response = quota_consume_route(
+            axum::extract::State(state.clone()),
+            axum::Json(ConsumeQuotaRequest { tokens: 1 }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = quota_usage_route(axum::extract::State(state.clone())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = quota_reset_route(axum::extract::State(state)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "quota")]
+    #[tokio::test]
+    async fn test_quota_consume_exceeded() {
+        let state = evolve_test_state().await;
+
+        let response = quota_consume_route(
+            axum::extract::State(state),
+            axum::Json(ConsumeQuotaRequest { tokens: 20_000 }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Moderation route tests ──────────────────────────────────────────────
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_check_safe() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_route(
+            axum::extract::State(state.clone()),
+            axum::Json(CheckContentRequest {
+                prompt: "What is the weather today?".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = moderation_is_safe_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentRequest {
+                prompt: "What is the weather today?".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_check_blocked() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentRequest {
+                prompt: "How to make a bomb and attack".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_check_batch() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_batch_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentBatchRequest {
+                prompts: vec!["Hello world".to_string(), "how to steal money".to_string()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "moderation")]
+    #[tokio::test]
+    async fn test_moderation_empty_prompt_rejected() {
+        let state = evolve_test_state().await;
+
+        let response = moderation_check_route(
+            axum::extract::State(state),
+            axum::Json(CheckContentRequest {
+                prompt: "".to_string(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
     // ── Context gathering route tests ───────────────────────────────────────
 
     /// Seed a small temporary project directory for context tests.
@@ -4408,6 +5563,370 @@ axum = "0.8"
 
         // The underlying rollback layer treats a missing snapshot as a no-op,
         // so the route returns 200 with restored=true.
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Audit / SOC2 / diff route tests ─────────────────────────────────────
+
+    fn sample_audit_entry() -> AuditEntry {
+        let before = Some(r#"{"name":"old"}"#.to_string());
+        let after = Some(r#"{"name":"new"}"#.to_string());
+        let ts = chrono::Utc::now();
+        let ts_str = ts.to_rfc3339();
+        let hash = prompt_hub::PromptHub::compute_audit_hash(&before, &after, &ts_str);
+        AuditEntry {
+            id: 1,
+            timestamp: ts,
+            agent_id: uuid::Uuid::new_v4(),
+            action: "updated".to_string(),
+            prompt_id: Some(uuid::Uuid::new_v4()),
+            diff_hash: hash,
+            before_json: before,
+            after_json: after,
+            ip_address: Some("127.0.0.1".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compute_audit_hash_route() {
+        let response = compute_audit_hash_route(axum::Json(AuditHashRequest {
+            before: Some("before".to_string()),
+            after: Some("after".to_string()),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }))
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_verify_audit_integrity_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = verify_audit_integrity_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_soc2_evidence_summary_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = soc2_evidence_summary_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_validate_soc2_schema_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = validate_soc2_schema_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_anonymize_audit_entry_route() {
+        let state = evolve_test_state().await;
+        let entry = sample_audit_entry();
+
+        let response = anonymize_audit_entry_route(
+            axum::extract::State(state),
+            axum::Json(AuditEntryRequest { entry }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_compute_diff_route() {
+        let state = evolve_test_state().await;
+
+        let response = compute_diff_route(
+            axum::extract::State(state),
+            axum::Json(DiffComputeRequest {
+                old: "A\nB".to_string(),
+                new: "A\nC".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_summarize_diff_route() {
+        let state = evolve_test_state().await;
+        let diff = state.hub.compute_diff("A\nB", "A\nC");
+
+        let response = summarize_diff_route(
+            axum::extract::State(state),
+            axum::Json(DiffResultRequest { diff }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_is_identical_route() {
+        let state = evolve_test_state().await;
+
+        let response = is_identical_route(
+            axum::extract::State(state),
+            axum::Json(DiffComputeRequest {
+                old: "same".to_string(),
+                new: "same".to_string(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_format_unified_diff_route() {
+        let state = evolve_test_state().await;
+        let diff = state.hub.compute_diff("A\nB", "A\nC");
+
+        let response = format_unified_diff_route(
+            axum::extract::State(state),
+            axum::Json(DiffResultRequest { diff }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Retention / GC route tests ──────────────────────────────────────────
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_set_retention_period_route() {
+        let state = evolve_test_state().await;
+
+        let response = set_retention_period_route(
+            axum::extract::State(state),
+            axum::Json(SetRetentionRequest {
+                data_type: "audit_log".to_string(),
+                days: 42,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_get_retention_period_route() {
+        let state = evolve_test_state().await;
+
+        let response = get_retention_period_route(
+            axum::extract::State(state),
+            axum::extract::Path("audit_log".to_string()),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_is_data_expired_route() {
+        let state = evolve_test_state().await;
+
+        let response = is_data_expired_route(
+            axum::extract::State(state),
+            axum::extract::Query(IsExpiredQuery {
+                data_type: "audit_log".to_string(),
+                age_days: 100,
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_run_retention_cleanup_route() {
+        let state = evolve_test_state().await;
+
+        let response = run_retention_cleanup_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_run_garbage_collection_route() {
+        let state = evolve_test_state().await;
+
+        let response = run_garbage_collection_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_purge_soft_deleted_route() {
+        let state = evolve_test_state().await;
+
+        let response = purge_soft_deleted_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_gc_stats_route() {
+        let state = evolve_test_state().await;
+
+        let response = gc_stats_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_set_gc_enabled_route() {
+        let state = evolve_test_state().await;
+
+        let response = set_gc_enabled_route(
+            axum::extract::State(state),
+            axum::Json(SetGcEnabledRequest { enabled: false }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "retention")]
+    #[tokio::test]
+    async fn test_gc_enabled_route() {
+        let state = evolve_test_state().await;
+
+        let response = gc_enabled_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── Auto-purge route tests ──────────────────────────────────────────────
+
+    #[cfg(feature = "auto-purge")]
+    fn empty_purge_config() -> prompt_hub::auto_purge::AutoPurgeConfig {
+        prompt_hub::auto_purge::AutoPurgeConfig {
+            interval: std::time::Duration::from_secs(60),
+            policies: Vec::new(),
+            enabled: false,
+        }
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_purge_now_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = purge_now_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_get_purge_stats_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = get_purge_stats_route(axum::extract::State(state)).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_update_purge_config_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = update_purge_config_route(
+            axum::extract::State(state),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_start_purge_daemon_route() {
+        let state = evolve_test_state().await;
+
+        let response = start_purge_daemon_route(
+            axum::extract::State(state),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[cfg(feature = "auto-purge")]
+    #[tokio::test]
+    async fn test_stop_purge_daemon_route() {
+        let state = evolve_test_state().await;
+        let _ = start_purge_daemon_route(
+            axum::extract::State(state.clone()),
+            axum::Json(PurgeConfigRequest {
+                config: empty_purge_config(),
+            }),
+        )
+        .await;
+
+        let response = stop_purge_daemon_route(axum::extract::State(state)).await;
+
         assert_eq!(response.status(), StatusCode::OK);
     }
 }
