@@ -77,6 +77,21 @@ This directory contains reusable prompts stored in GitHub's standardized `.promp
 
 ---
 
+### [env-state-convergence.prompt.yml](env-state-convergence.prompt.yml)
+**Purpose**: Handle any task touching environment state in a declaratively-managed workspace
+
+**Use when**:
+- A task touches host config, the agent env (`.claude`/`.codex`), a plugin/marketplace cache,
+  dotfiles, a daemon, a toolchain, or any path under a real home dir
+- You're tempted to either hand-edit the runtime or punt env state as "off-limits host config"
+- You need to decide whether a signal is real drift or stale/cosmetic
+
+**Input**: The environment-state situation
+**Output**: Verdict, declared source of truth, detect→declare→sync→lock convergence plan, and a
+means-vs-outcome check. Doctrine companion: [`prompt-hub/templates/env_state_convergence.md`](../prompt-hub/templates/env_state_convergence.md)
+
+---
+
 ## How to Use These Prompts
 
 ### Option 1: Via GitHub UI

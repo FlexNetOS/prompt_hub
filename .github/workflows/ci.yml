@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Report required checks into a GitHub merge queue's temporary branch. Without
+  # this trigger, queued PRs never receive check results and stall forever.
+  # Enabling the queue itself is a separate branch-protection setting (owner action).
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,10 +19,44 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-features
+
+  # Default-features build guard. Every other job uses --all-features, which
+  # masked a default-features-only break (argon2 OsRng needs password-hash's
+  # `getrandom`; a version-mismatched dep meant it only resolved under
+  # --all-features). This job builds each crate with DEFAULT features so an
+  # isolated `cargo build -p prompt-hub` / `cargo publish` can never silently
+  # regress again. PHTASK-0028.
+  default-build:
+    name: Default-Features Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p prompt-hub
+      - run: cargo build -p prompthub
+      - run: cargo build -p prompthub-server
+
+  # Default-features TEST-compile + clippy guard. Every test/clippy job above
+  # uses --all-features, so a feature-specific test that isn't `#[cfg(feature)]`-
+  # gated compiles there but breaks an isolated `cargo test -p prompt-hub`
+  # (E0432/E0433/E0599) — exactly the regression PHTASK-0041 fixed and that went
+  # unnoticed because no CI job exercised the test suite under DEFAULT features.
+  # `--no-run` compiles the tests without running them (fast, deterministic), and
+  # `clippy --all-targets` lints the test code too. PHTASK-0043.
+  default-test:
+    name: Default-Features Test Compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p prompt-hub --no-run
+      - run: cargo clippy -p prompt-hub --all-targets -- -D warnings
 
   test:
     name: Test
@@ -28,7 +66,7 @@ jobs:
         rust: [stable, 1.91.1]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -40,7 +78,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -50,7 +88,7 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -65,7 +103,7 @@ jobs:
       # missing-docs, etc.) so the warning-clean doc build cannot regress.
       RUSTDOCFLAGS: "-D warnings"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo doc --workspace --all-features --no-deps
 
@@ -73,12 +111,16 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-tarpaulin
-      - run: cargo tarpaulin --workspace --all-features --out xml
-      - uses: codecov/codecov-action@v6
+      # --timeout guards tarpaulin's ptrace engine against "Timed out waiting for
+      # test response": under instrumentation a large async suite can exceed the
+      # 60s default per-test ceiling even though every test passes in milliseconds
+      # uninstrumented. 300s is generous headroom; it does not slow healthy runs.
+      - run: cargo tarpaulin --workspace --all-features --timeout 300 --out xml
+      - uses: codecov/codecov-action@v7
         with:
           files: ./cobertura.xml
 
@@ -86,7 +128,7 @@ jobs:
     name: Docker Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: docker build -f docker/Dockerfile -t prompthub:test .
       - run: docker run --rm prompthub:test --help
       - run: docker build -f docker/Dockerfile --target builder -t prompthub:builder .
@@ -95,7 +137,7 @@ jobs:
     name: Changelog
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
@@ -106,7 +148,7 @@ jobs:
     name: Publish Dry Run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo publish -p prompt-hub --dry-run
@@ -115,6 +157,6 @@ jobs:
     name: Safety Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - run: chmod +x scripts/check_safety.sh
       - run: ./scripts/check_safety.sh

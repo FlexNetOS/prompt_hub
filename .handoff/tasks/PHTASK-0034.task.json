@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0034",
+  "title": "Make Junie a first-class PromptHub field",
+  "status": "done",
+  "resolution": "Made the Junie orchestrator a first-class PromptHub field. Type chosen: `junie: Junie` held by value (mirrors the by-value non-Arc subsystems like sanitizer/auth/lineage; Junie holds only a cheap owned AgentIdentity so no Arc is needed), initialized via `Junie::new()` in PromptHub::new(), placed right after the `hooks` field. Added `#[derive(Debug, Clone)]` to the `Junie` struct (additive) so PromptHub's `#[derive(Debug)]` still holds. Exposed `pub fn junie(&self) -> &Junie` accessor in the 'Accessors for server layer' section next to storage()/metrics(). Existing JunieHook wiring is untouched: `hub.hooks.register(Box::new(JunieHook))` still runs in new(), so hook-based orchestration is unchanged while the orchestrator is now reachable directly. NO-DOWNGRADE: nothing removed/stubbed; only additive field + accessor + derives. Tests: added hub::tests::test_hub_exposes_junie_accessor (verifies accessor returns a usable handle with name=Junie, role=Junie, Execute capability, stable identity across calls); existing junie::tests::test_junie_identity and hooks::tests junie tests still pass. Gates (both configs, all green): `cargo build -p prompt-hub` (default), `cargo test -p prompt-hub --all-features junie` (4 passed), `cargo clippy -p prompt-hub --all-features --all-targets -- -D warnings` (clean), `cargo clippy -p prompt-hub --all-targets -- -D warnings` (clean), `cargo fmt -p prompt-hub -- --check` (clean), `cargo build --workspace --all-features` (CLI + server compile).",
+  "priority": "P3",
+  "objective": "JunieHook only reachable via hooks module; no direct hub field, no dedicated CLI wiring beyond commands/junie.rs. Add Junie as a first-class PromptHub field with accessors.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "PromptHub exposes a Junie accessor; CLI wiring consistent"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:8b9e7f279c3958171735b4fd43fecc6011ca2f69e6f57e1f8f3a1ea4381d24fe",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:c90e43dc21d1ac32eee4191d8224d5e5b7d9dfe54f73cb887ebc1af8729fc133"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only."
+}
