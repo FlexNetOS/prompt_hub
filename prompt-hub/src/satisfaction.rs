@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
 use tracing::{info, instrument, warn};
@@ -45,7 +46,7 @@ pub struct SuccessEvent {
 }
 
 /// Satisfaction metrics summary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SatisfactionMetrics {
     pub csat_average: f64,
     pub nps_score: f64,
@@ -56,7 +57,7 @@ pub struct SatisfactionMetrics {
 }
 
 /// Trend direction for satisfaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum TrendDirection {
     Improving,
     Stable,

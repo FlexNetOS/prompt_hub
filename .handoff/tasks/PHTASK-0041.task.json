@@ -1,0 +1,35 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0041",
+  "title": "Feature-gate hub.rs `test_retention_gc_accessible` for default-features builds",
+  "status": "done",
+  "priority": "P2",
+  "objective": "hub.rs test `test_retention_gc_accessible` and its set/get_retention_period calls reference the `#[cfg(feature = \"retention\")]`-gated `crate::retention` module, but the test fn itself is NOT feature-gated. Under DEFAULT features `cargo test -p prompt-hub` and `cargo clippy -p prompt-hub --all-targets` fail with E0432 unresolved import `crate::retention`. Distinct from PHTASK-0028 (argon2 OsRng, done). Pre-existing; uncaught because CI's default-build job builds the library only (no --tests) and the test/clippy jobs use --all-features. Found cycle 88 verifying PHTASK-0038. Fix (NO-DOWNGRADE): gate the test fn behind `#[cfg(feature = \"retention\")]` so default-features test compilation succeeds \u2014 wire the test to its feature, never delete it.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`cargo test -p prompt-hub` (default features) compiles and runs",
+    "`cargo clippy -p prompt-hub --all-targets` (default features) is clean",
+    "the retention test still compiles and runs under --all-features"
+  ],
+  "test_commands": [
+    "cargo test -p prompt-hub",
+    "cargo clippy -p prompt-hub --all-targets -- -D warnings",
+    "cargo test -p prompt-hub --all-features retention"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:98dfb9c61d1104031d80d75fd102b20cf3a4f4b25cc3964401ce50eeba270940",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:85db338896d690895466de3ac56d8d107cf48b114cb1ee18d9bb8765d88ca85d"
+  },
+  "source": "discovered during cycle 88 verification of PHTASK-0038",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only. Here the fix WIRES the test to its existing feature gate; it does not delete the test.",
+  "resolution": "Scope was broader than just the retention test: the whole prompt-hub test suite failed to COMPILE under default features (E0432/E0433/E0599) because many feature-specific tests referenced #[cfg(feature)]-gated modules/methods/types without gating the tests themselves. Fixed all of them with 10 additive cfg gates (test code ONLY, no test deleted, no module removed, no non-test source changed): hub.rs inline tests test_retention_gc_accessible -> #[cfg(feature = \"retention\")] and test_multimodal_accessible -> #[cfg(feature = \"multimodal\")]; file-level #![cfg(feature = ...)] on tests/test_chaos.rs (chaos), test_malware_scan.rs (malware-scan), test_qdrant.rs (qdrant), test_offline.rs (offline), test_voice_anonymize.rs (voice-anonymize), test_voice.rs (voice \u2014 the gated hub voice methods are the E0599 source); per-test #[cfg(feature = \"auto-purge\")] on the one ungated test in test_auto_purge.rs (preserving its existing per-test convention). Did NOT over-gate: analytics/audit/diff inline tests stay ungated (always-compiled modules). Gates (cross-verified by leader in a fresh shell): default `cargo test -p prompt-hub --no-run` compiles (was failing); default clippy --all-targets -D warnings clean; default `cargo build -p prompt-hub` green; all-features clippy --all-targets clean; gated tests STILL RUN under --all-features (test_chaos 4 passed, test_qdrant 7 passed, retention/multimodal run); cargo fmt --check clean. Implemented by rust-implementer in worktree loop/phtask-0041-retention-test-gate (cycle 91). Follow-up PHTASK-0043 filed to add a CI default-features test-compile job so this can't regress (no CI job currently runs default-features tests)."
+}

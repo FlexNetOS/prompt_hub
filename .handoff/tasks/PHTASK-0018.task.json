@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0018",
+  "title": "Recover feature: `touch`",
+  "status": "done",
+  "priority": "P2",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Touch->gesture mapping (Tap/Swipe/LongPress/Pinch/MultiTap), sensitivity thresholds, haptic types, TouchDispatcher trait. 41 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`touch` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:b3a93ac0ac4c81a81491550a2e627b93763d76c242f64cde51a25138ded31800",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:26657c3e3d846363dc2635dddd3c6e2664f647a47d255891c7b0aa5b870cb82d"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "5ac83a5",
+  "cycle": 74
+}

@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0035",
+  "title": "Cover remaining hub methods with server routes",
+  "status": "done",
+  "priority": "P1",
+  "objective": "~48 hub methods have full core impls but NO HTTP surface (evolve + satisfaction now done). Wire the next top-priority methods (e.g. fallback chains, remaining feature engines) as routes.",
+  "path_scope": [
+    "prompthub-server/**"
+  ],
+  "acceptance_criteria": [
+    "next batch of uncovered hub methods exposed as documented HTTP routes with tests"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:ef72abb843f564c75bff74524f613f7e7a14b144feff39e23099137359473ba3",
+    "path_scope_hash": "blake3:1594c75a03ed326706e28a7cd933882c76672dd84b505c26b1752418093ea135",
+    "acceptance_hash": "blake3:c875db0b45fc2ce350a8338eeffd8fbb46dd558fcb50b90b5478b7e4a597b7dd"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "Exposed 4 already-built but HTTP-surfaceless core methods as routes (thin shells, no downgrade): POST /api/v1/prompts/{id}/tokens (count_prompt_tokens), /cost (estimate_prompt_cost), /render (render_prompt), POST /api/v1/input/process (process_input). 4 request DTOs; manual JSON mapping for non-Serialize TokenCount/CostEstimateDetail (no core-API change); Intent serialized directly. Error map mirrors evolve_prompt (bad uuid 400, NotFound 404, Unauthorized 403, ValidationError 422). 8 direct-handler tests (cycle-80 lesson). Gates green both configs; default-build guards hold. Done via worktree feat/hub-methods-server-routes."
+}

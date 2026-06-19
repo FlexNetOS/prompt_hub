@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0016",
+  "title": "Recover feature: `mobile`",
+  "status": "done",
+  "priority": "P3",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). NetworkCondition/CellularGeneration bandwidth estimation, SyncStrategy, MobileConfig, pending-push queue, bandwidth-aware sync planning + suppression. 10 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`mobile` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:55b5da61bc11bc765054d7ea40d6c876737e4715e47b9518230b563ea5d67a00",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:a7552b1c5275b277253c225509a68a0765ccc7ed874ea6b593ca75f98d5b523e"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "b8ec6c5",
+  "cycle": 76
+}

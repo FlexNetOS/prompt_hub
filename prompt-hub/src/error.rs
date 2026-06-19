@@ -77,6 +77,9 @@ pub enum HubError {
     #[error("Security violation: {0}")]
     Security(String),
 
+    #[error("Security policy violation: {0}")]
+    SecurityViolation(String),
+
     #[error("Fallback exhausted: {0}")]
     FallbackExhausted(String),
 
@@ -146,6 +149,7 @@ mod tests {
             HubError::Database("test".to_string()),
             HubError::Plugin("test".to_string()),
             HubError::Security("test".to_string()),
+            HubError::SecurityViolation("test".to_string()),
             HubError::FallbackExhausted("test".to_string()),
             HubError::CostExceeded("test".to_string()),
             HubError::Aborted("test".to_string()),

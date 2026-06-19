@@ -100,13 +100,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Feature Flags
 
-| Feature | Description |
-|---------|-------------|
-| `smart` | ONNX embedding search |
-| `tui` | Terminal UI (ratatui) |
-| `server` | HTTP server deps |
-| `otel` | OpenTelemetry metrics |
-| `vibe` | Vibe Coding mode |
+| Feature | Module / Purpose |
+|---------|------------------|
+| `smart` | ONNX embedding search (`ndarray`) |
+| `smart-ort` | ONNX runtime inference for smart search (`ort`) |
+| `handlebars` | Template engine (default) |
+| `tera` | Alternative template engine (mutually exclusive with `handlebars`) |
+| `tiktoken` | Token counting via `tiktoken-rs` |
+| `tokenizers` | Token counting via HuggingFace `tokenizers` |
+| `otel` | OpenTelemetry / Prometheus text exposition (`prometheus`) |
+| `plugins` | Dynamic plugin loading via `libloading` + `inventory` |
+| `tui` | Terminal UI (ratatui, dialoguer, comfy-table) |
+| `tls` | TLS support for remote storage (`tokio-rustls`) |
+| **P2 gated** | |
+| `budget` | Prompt budget enforcement |
+| `canary` | Canary deployment for prompts |
+| `circuit-breaker` | Circuit breaker pattern |
+| `confidence` | Confidence scoring |
+| `cost` | Cost estimation |
+| `fallback` | Fallback routing |
+| `learn` | Continuous learning loop |
+| `load-balance` | Load balancing across providers |
+| `moderation` | Content moderation pipeline |
+| `multimodal` | Multimodal prompt support |
+| `preview` | Preview before building/deploying |
+| `privacy` | Privacy scanning and redaction |
+| `provider-health` | Provider health monitoring |
+| `quality` | Quality gating |
+| `quota` | Quota enforcement |
+| `rollback` | Version rollback (always-in) |
+| `vibe` | Vibe Coding (NL → deliverable) |
+| **Passthrough** | |
+| `sqlcipher` | SQLCipher encrypted storage |
+| `ffi` | FFI bindings |
+| `garbage-collector` | Garbage collection |
 
 ## Development
 
