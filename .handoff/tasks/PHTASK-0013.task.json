@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0013",
+  "title": "Recover feature: `offline`",
+  "status": "done",
+  "priority": "P2",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). In-memory OfflineStore mirroring CRUD; pending push/pull queues; 4 conflict strategies (LWW/LocalWins/ServerWins/Merge); local-first eventual sync. 12 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`offline` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:ccfdd8f8eb8fdc51bd136039d28c719408bda1d3535ec98ebe93a506bb5d1524",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:f15680941ab0877af4022cf50328a0cf7327c5ea8479644198858db6a07aa591"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "1b224cf",
+  "cycle": 72
+}

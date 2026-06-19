@@ -17,7 +17,7 @@ readme = "README.md"
 default = ["handlebars", "vibe", "rollback", "cost", "learn"]
 smart = ["dep:ndarray"]
 # ONNX runtime inference for smart search (off by default).
-smart-ort = ["dep:ort"]
+smart-ort = ["dep:ort", "dep:reqwest", "dep:ndarray"]
 otel = ["dep:prometheus"]
 tls = ["dep:tokio-rustls"]
 # Template engine — pick one at compile time.
@@ -29,7 +29,10 @@ tokenizers = ["dep:tokenizers"]
 # Dynamic plugin loading via libloading/inventory inventory.
 plugins = ["dep:libloading", "dep:inventory"]
 
-chaos-automation = ["chaos"]
+# chaos-automation needs an HTTP client for real webhook-alert POSTs; reqwest is
+# already an optional dependency (shared with local-llm / qdrant), so we enable
+# the existing dep rather than adding a new one.
+chaos-automation = ["chaos", "dep:reqwest"]
 
 # ---------------------------------------------------------------------------
 # Stub features converted to real gated features (Category B): real pub API,
@@ -67,7 +70,8 @@ analytics = []
 preview = []
 i18n = []
 sandbox = []
-voice = []
+# Voice pipelines use reqwest for real STT/TTS cloud backends (OpenAI-compatible).
+voice = ["dep:reqwest"]
 local-llm = ["dep:reqwest"]
 accessibility = []
 auto-purge = []
@@ -75,11 +79,6 @@ malware-scan = []
 voice-anonymize = []
 touch = []
 qdrant = ["dep:reqwest"]
-
-# ---------------------------------------------------------------------------
-# Stub features awaiting real implementation (Category D).
-# Each gate is feature="[]" today; will be wired when code lands.
-# ---------------------------------------------------------------------------
 mobile = []
 
 # ---------------------------------------------------------------------------
@@ -118,7 +117,7 @@ libloading = { workspace = true, optional = true }
 inventory = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true }
-ort = { workspace = true, optional = true }
+ort = { workspace = true, optional = true, features = ["ndarray"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

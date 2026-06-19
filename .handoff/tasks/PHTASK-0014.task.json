@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0014",
+  "title": "Recover feature: `qdrant`",
+  "status": "done",
+  "priority": "P3",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Qdrant REST client (health/ensure/upsert/delete/search), VectorSearchMode, QdrantEngine: SearchEngine impl with hybrid rank fusion. 21 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`qdrant` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:a01d27a051d3d569607b7a4d928622fd509d4e4a56d43402c16c212e93780d0a",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:096a2f7c4818bebdc195c84e08e4d93dc5aa6ed777166eb972a58cca1e09675f"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "c7ce588",
+  "cycle": 75
+}

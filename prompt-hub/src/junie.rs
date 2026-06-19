@@ -3,6 +3,7 @@
 use crate::models::{AgentIdentity, Capability, Role};
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
 pub struct Junie {
     pub identity: AgentIdentity,
 }

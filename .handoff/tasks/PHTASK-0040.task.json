@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0040",
+  "title": "Default identity lacks Write for non-operator callers",
+  "status": "done",
+  "priority": "P3",
+  "objective": "AgentIdentity::default() (models.rs:139) returns anonymous with empty capabilities. Server default_agent() grants Read+Write so the HTTP API is fine; this only affects programmatic PromptHub::new() callers. Documented workaround: AgentIdentity::local_operator(). Blocked: design decision needed on whether default should carry Write.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "a decision is recorded on default identity capabilities (and applied or explicitly deferred)"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:bd943e60f09159217edadb130c070189aeb090d58bbe6ff6e81df445fed72e21",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:065f69c77b141e88307ade32b1c2accb64496dd2e931a0795e081fa8a76352f7"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "Owner decision (2026-06-13 via /verify follow-up): the default identity should carry Read+Write (mirroring the server's default_agent), a deliberate RBAC posture change. Implemented: AgentIdentity::default() now sets capabilities = vec![Read, Write] (was empty) with an updated doc comment explaining the posture and pointing unprivileged/denial callers at an explicit empty-capabilities identity (or local_operator for Admin). Blast-radius swept so denial coverage survives: test_get_rbac.rs anonymous() and defaults.rs unauthorized() now build an explicit empty-caps identity instead of default(); the two test_agent_identity_default tests (tests/test_models.rs + src/models.rs lib test) updated to assert Read+Write present, Admin absent. Gates: 876 lib tests pass; test_models 33, test_get_rbac 6, test_security 9, test_hub 18; workspace build+clippy -D warnings (--all-features AND default); fmt; rustdoc -D warnings. Done via worktree loop/phtask-0040-default-identity."
+}
