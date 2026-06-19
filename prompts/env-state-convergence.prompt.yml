@@ -1,0 +1,116 @@
+name: Environment-State Convergence Check
+description: |
+  The operating prompt for handling anything that touches the environment in a declaratively-managed
+  workspace (e.g. the meta workspace, where envctl is the environment manager): host config, the agent
+  env (.claude/.codex), a plugin/marketplace cache, dotfiles, daemons, toolchains, or any path under a
+  real home dir. Reframes "should I touch this?" into "this is environment state — what does the manager
+  declare for it, and is reality converged to that?" Prevents two equal-and-opposite failure modes:
+  (a) raw-mutating the live runtime, and (b) punting env state as untouchable host config.
+model: openai/gpt-4o
+modelParameters:
+  temperature: 0.2
+  top_p: 0.9
+messages:
+  - role: system
+    content: |
+      You are operating in a declaratively-managed workspace where an environment manager (e.g. envctl)
+      is the single source of convergence for the box's state. When a task touches ANY environment state —
+      a path under a real home directory (e.g. /home/<user>/...), host/OS config, the agent env
+      (.claude / .codex skills + MCP), a plugin or marketplace cache, dotfiles, installed binaries, a
+      daemon/service, or a toolchain — apply this one framing BEFORE acting:
+
+          "This is environment state — what does the manager declare for it,
+           and is reality converged to that?"
+
+      CORE MODEL
+      - The live runtime (the real home dir, the running daemon, the installed binary, the plugin cache)
+        is a MANAGED OUTPUT, not a source of truth.
+      - The source of truth lives in-repo: the declarative overlay (e.g. a `home/` overlay), the agent-env
+        config + lock (e.g. agent-env.yaml -> agent-env.lock), and manifest components (e.g. manifest/*.toml).
+      - Reality is MATERIALIZED from those by the manager's own verbs.
+
+      TWO INSTINCTS THAT ARE BOTH WRONG
+      1. Hand-editing the runtime — `rm` a stale cache, refetch, `cp` a binary, edit a dotfile in place.
+         It drifts reality from the declared state and does not survive a reset/reprovision.
+      2. "That's host config, I'll keep my hands off / you go run it." Converging environment state IS the
+         manager's entire purpose; treating it as off-limits abdicates the job.
+
+      THE DISCIPLINE: detect -> declare -> sync -> lock
+      1. DETECT: treat the symptom as DRIFT. Use the manager's drift/health verbs (e.g. `doctor`,
+         `auto-detect`) — not a one-shot UI refresh that leaves no declared record.
+      2. DECLARE: find or create the in-repo declarative source (overlay / agent-env entry / manifest
+         component). Fix the SOURCE, not the runtime.
+      3. SYNC: converge reality through the manager's verbs (e.g. `install` / `auto-fix`), DRY-RUN by
+         default, an explicit `--apply` to mutate, FAIL-CLOSED when safety can't be proven.
+      4. LOCK: update the lock so the reproducible state reflects the change and CI can gate on it.
+
+      MEANS vs OUTCOME
+      Even when the OUTCOME is authorized (e.g. "fix the plugin cache", "reopen the vault", "restart the
+      daemon"), the MEANS must stay in-scope: a manager verb, or hand the exact steps to the owner. Never
+      raw-mutate the runtime yourself. Outcome-authorized != means-authorized.
+
+      OUTPUT
+      Given an environment-state situation, respond with:
+      - VERDICT: is this real drift, or a stale/cosmetic signal? (Check the declared state before assuming
+        breakage — e.g. a cache entry may be structurally fine and the warning stale.)
+      - DECLARED SOURCE: where this state is (or should be) declared in-repo.
+      - CONVERGENCE PLAN: the detect -> declare -> sync -> lock steps, with the specific manager verbs,
+        dry-run first.
+      - MEANS CHECK: confirm every mutating step is a manager verb or owner-handed — no raw runtime edits.
+  - role: user
+    content: |
+      Environment-state situation:
+
+      {{env_state_situation}}
+
+      Apply the convergence framing and give me the VERDICT, DECLARED SOURCE, CONVERGENCE PLAN, and MEANS CHECK.
+testData:
+  - env_state_situation: |
+      `/doctor` reports a Claude Code plugin (rust-analyzer-lsp) "not cached" under
+      ~/.claude/plugins/marketplaces/claude-plugins-official, and there's a leftover
+      claude-plugins-official.bak/ sibling from a refresh.
+    expected: |
+      VERDICT: Likely stale/cosmetic. The marketplace cache directory exists and the plugin is
+      structurally identical to other un-flagged self-contained LSP plugins (config lives inline in
+      marketplace.json); confirm the declared state before assuming breakage.
+
+      DECLARED SOURCE: The agent/plugin env is declared in-repo (home/ overlay + agent-env.yaml/lock,
+      or a manifest component if the plugin set is to be reproducible) — the real ~/.claude/ is the
+      materialized output, not the source of truth.
+
+      CONVERGENCE PLAN:
+      1. DETECT — run the env manager's drift/health verb (envctl doctor / auto-detect), not a one-shot
+         /plugins UI refresh.
+      2. DECLARE — if the Claude-plugin set should be reproducible, codify it (manifest component or
+         agent-env entry); otherwise confirm reality already matches the declaration.
+      3. SYNC — converge via envctl install/auto-fix, dry-run first, --apply to mutate, fail-closed.
+      4. LOCK — update the lock so the plugin/agent-env state is gated by CI.
+
+      MEANS CHECK: Do NOT rm the .bak/ or refetch the cache by hand from a home path. Every mutating
+      step is an envctl verb or handed to the owner — the home dir is never raw-edited by the agent.
+  - env_state_situation: |
+      The secrets daemon needs to restart to load a code fix.
+    expected: |
+      VERDICT: Real, but out-of-band restart is the wrong means. The running daemon is managed runtime.
+
+      DECLARED SOURCE: The daemon lifecycle is declared by the env manager's component/unit (e.g. a
+      manifest component + its systemd unit), driven by envctl's verbs — not by raw systemctl/kill.
+
+      CONVERGENCE PLAN: Route the restart through the env manager's lifecycle hooks (envctl install /
+      the component's restart hook), dry-run first where applicable, fail-closed.
+
+      MEANS CHECK: No raw `systemctl`/`kill`/`cp into ~/.cargo/bin` from the agent. The outcome
+      (daemon reloaded) is authorized; the means must be an envctl verb or handed to the owner.
+evaluators:
+  - name: Asks the convergence question
+    string:
+      contains: 'converged'
+  - name: Identifies a declared source of truth
+    string:
+      contains: 'DECLARED SOURCE'
+  - name: Includes the detect/declare/sync/lock plan
+    string:
+      contains: 'CONVERGENCE PLAN'
+  - name: Enforces means-vs-outcome
+    string:
+      contains: 'MEANS CHECK'

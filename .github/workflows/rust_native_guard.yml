@@ -23,7 +23,7 @@ jobs:
     name: Drift Guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0   # need the base ref to diff changed files
 
@@ -40,7 +40,7 @@ jobs:
 
       - name: Post / update PR comment
         if: github.event_name == 'pull_request' && always()
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: rust-native-guard
           path: drift-report.md

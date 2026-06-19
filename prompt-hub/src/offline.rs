@@ -7,7 +7,7 @@
 
 use crate::error::{HubError, Result};
 use crate::models::*;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -30,19 +30,34 @@ pub enum SyncStatus {
 }
 
 /// A detected revision conflict between local and server state for a single prompt.
+///
+/// Carries both the revision counters *and* the wall-clock `updated_at` of each
+/// side so that [`ConflictStrategy::LastWriteWins`] can resolve by recency rather
+/// than always defaulting to local.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConflictEntry {
     pub prompt_id: Uuid,
     pub local_revision: u64,
     pub server_revision: u64,
+    /// Wall-clock time the local copy was last written (`Prompt::updated_at`).
+    pub local_updated_at: DateTime<Utc>,
+    /// Wall-clock time the server copy was last written. For a `Create` conflict
+    /// this is the server `Prompt::updated_at`; for an `Update` conflict — where
+    /// the incoming `PromptPatch` carries no timestamp — it is the time the
+    /// conflicting server change was observed during apply.
+    pub server_updated_at: DateTime<Utc>,
 }
 
 impl std::fmt::Display for ConflictEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "prompt {} local rev={} vs server rev={}",
-            self.prompt_id, self.local_revision, self.server_revision
+            "prompt {} local rev={} ({}) vs server rev={} ({})",
+            self.prompt_id,
+            self.local_revision,
+            self.local_updated_at.to_rfc3339(),
+            self.server_revision,
+            self.server_updated_at.to_rfc3339()
         )
     }
 }
@@ -282,7 +297,7 @@ impl OfflineStore {
             match change {
                 Change::Create(_id, server_prompt) => {
                     // If local already has the prompt with a higher revision, it's a conflict.
-                    if let Some((_local, local_rev)) = self.entries.get(&server_prompt.id) {
+                    if let Some((local, local_rev)) = self.entries.get(&server_prompt.id) {
                         if local_rev <= &1 {
                             self.entries
                                 .insert(server_prompt.id, (server_prompt.clone(), 1));
@@ -292,6 +307,9 @@ impl OfflineStore {
                             prompt_id: server_prompt.id,
                             local_revision: *local_rev,
                             server_revision: 1,
+                            local_updated_at: local.updated_at,
+                            // A full server Prompt carries its own write time.
+                            server_updated_at: server_prompt.updated_at,
                         });
                     } else {
                         self.entries
@@ -305,11 +323,15 @@ impl OfflineStore {
                     );
                     if has_local_change {
                         // Both sides changed — conflict.
-                        if let Some((_, local_rev)) = self.entries.get(id) {
+                        if let Some((local, local_rev)) = self.entries.get(id) {
                             conflicts.push(ConflictEntry {
                                 prompt_id: *id,
                                 local_revision: *local_rev,
                                 server_revision: *local_rev + 1,
+                                local_updated_at: local.updated_at,
+                                // An incoming `PromptPatch` has no timestamp, so the
+                                // server change is stamped at observation time.
+                                server_updated_at: Utc::now(),
                             });
                         }
                         continue;
@@ -379,14 +401,45 @@ impl OfflineStore {
         let strategy = self.config.conflict_resolution.clone();
         match strategy {
             ConflictStrategy::LastWriteWins => {
-                // Keep whichever `updated_at` is newer (local wins ties).
-                if let Some((local, _)) = self.entries.get(&entry.prompt_id) {
-                    let _local_ts = local.updated_at;
-                    // Server timestamp defaults to 0 for comparison; in a real impl
-                    // it would come from the ConflictEntry. For now keep local.
-                    return None; // No conflict after resolution — local wins ties.
+                // Compare the two sides by their `updated_at` wall-clock time and
+                // keep whichever was written most recently.
+                //
+                // Tie-break: when the timestamps are exactly equal, **local wins**
+                // (the locally-resident copy is authoritative on a tie). This is
+                // deterministic and matches the prior "local wins ties" intent.
+                if entry.server_updated_at > entry.local_updated_at {
+                    // Server is newer — adopt the server side: drop the local
+                    // pending push for this prompt so it does not overwrite the
+                    // server copy on the next sync.
+                    let mut dropped_push = Vec::new();
+                    self.pending_push.retain(|c| match c {
+                        Change::Create(id, _) | Change::Update(id, _) | Change::Delete(id)
+                            if *id == entry.prompt_id =>
+                        {
+                            dropped_push.push(c.clone());
+                            false
+                        }
+                        _ => true,
+                    });
+                    // Resolved in favour of the server: report what was discarded
+                    // from the push queue (no pull-side changes were withheld).
+                    Some((dropped_push, Vec::new()))
+                } else {
+                    // Local is newer (or a tie — local wins): keep the local copy
+                    // and withhold the conflicting server change from the pull
+                    // queue so it does not clobber the newer local state.
+                    let mut withheld_pull = Vec::new();
+                    self.pending_pull.retain(|c| match c {
+                        Change::Create(id, _) | Change::Update(id, _) | Change::Delete(id)
+                            if *id == entry.prompt_id =>
+                        {
+                            withheld_pull.push(c.clone());
+                            false
+                        }
+                        _ => true,
+                    });
+                    Some((Vec::new(), withheld_pull))
                 }
-                None
             }
             ConflictStrategy::LocalWins => {
                 self.pending_push.retain(|c| match c {
@@ -406,19 +459,170 @@ impl OfflineStore {
                 });
                 None
             }
-            ConflictStrategy::Merge => {
-                // Best-effort: keep local data but merge server changes into the pull queue.
-                let mut merged_pull = Vec::new();
-                for change in std::mem::take(&mut self.pending_pull) {
-                    match &change {
-                        Change::Update(id, _) if *id == entry.prompt_id => continue, // skip conflicting
-                        _ => merged_pull.push(change),
-                    }
-                }
-                self.pending_pull = merged_pull;
-                None
+            ConflictStrategy::Merge => self.merge_conflict(entry),
+        }
+    }
+
+    /// Perform a real field-level merge for [`ConflictStrategy::Merge`].
+    ///
+    /// The local pending change (the last [`Change::Update`] for this prompt in
+    /// the push queue) and the incoming server change (the [`Change::Update`] for
+    /// this prompt in the pull queue) are compared field by field:
+    ///
+    /// * **Server-only field** — the server set it, local left it untouched →
+    ///   the server value is merged into the local entry (a clean merge).
+    /// * **Local-only field** — local already holds the value; nothing to do.
+    /// * **Both sides changed the same field to *different* values** — a genuine
+    ///   field-level conflict that cannot be merged automatically.
+    ///
+    /// If every overlapping field agrees (no genuine conflict) the merge is
+    /// applied to the local entry, the server change is removed from the pull
+    /// queue, and `Some` is returned (the conflict is resolved). If any field
+    /// truly conflicts the local entry is left untouched, the server change is
+    /// kept in the pull queue, and `None` is returned so the caller keeps the
+    /// prompt in [`SyncStatus::Conflict`] for manual resolution.
+    fn merge_conflict(&mut self, entry: &ConflictEntry) -> Option<(Vec<Change>, Vec<Change>)> {
+        let id = entry.prompt_id;
+
+        // The local side: the most recent local Update patch for this prompt.
+        let local_patch = self.pending_push.iter().rev().find_map(|c| match c {
+            Change::Update(uid, patch) if *uid == id => Some(patch.clone()),
+            _ => None,
+        });
+        // The server side: the Update patch the server is pushing for this prompt.
+        let server_patch = self.pending_pull.iter().find_map(|c| match c {
+            Change::Update(uid, patch) if *uid == id => Some(patch.clone()),
+            _ => None,
+        });
+
+        let server_patch = match server_patch {
+            Some(p) => p,
+            // Nothing concrete from the server to merge — treat as resolved with
+            // local intact (there is no overlapping field to conflict on).
+            None => return Some((Vec::new(), Vec::new())),
+        };
+        let local_patch = local_patch.unwrap_or_default();
+
+        // Compute the genuine field-level conflicts and the server-only fields
+        // that can be merged in cleanly.
+        let MergeReport {
+            conflicts,
+            merge_patch,
+        } = merge_patches(&local_patch, &server_patch);
+
+        if !conflicts.is_empty() {
+            // True field-level conflict — leave both sides untouched for the
+            // caller to surface, and report it unresolved.
+            return None;
+        }
+
+        // Clean merge: fold the server-only fields into the local entry and drop
+        // the server change from the pull queue.
+        if let Some((prompt, rev)) = self.entries.get_mut(&id) {
+            apply_patch(prompt, &merge_patch);
+            prompt.updated_at = Utc::now();
+            *rev += 1;
+        }
+        let mut merged_pull = Vec::new();
+        let mut consumed = Vec::new();
+        for change in std::mem::take(&mut self.pending_pull) {
+            match &change {
+                Change::Update(uid, _) if *uid == id => consumed.push(change),
+                _ => merged_pull.push(change),
             }
         }
+        self.pending_pull = merged_pull;
+        Some((Vec::new(), consumed))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Field-level merge helpers
+// ---------------------------------------------------------------------------
+
+/// Outcome of comparing a local and a server [`PromptPatch`] field by field.
+struct MergeReport {
+    /// Names of fields both sides changed to *different* values (true conflicts).
+    conflicts: Vec<&'static str>,
+    /// A patch containing only the server-set fields that local left untouched
+    /// (or that both sides set to the *same* value) — safe to apply locally.
+    merge_patch: PromptPatch,
+}
+
+/// Compare a *local* and a *server* [`PromptPatch`] field by field.
+///
+/// For every field: if only the server set it (local is `None`) the server value
+/// goes into `merge_patch`; if both set it to the same value it is a no-op merge
+/// (also folded into `merge_patch`); if both set it to *different* values the
+/// field name is recorded as a genuine conflict.
+fn merge_patches(local: &PromptPatch, server: &PromptPatch) -> MergeReport {
+    let mut conflicts = Vec::new();
+    let mut merge = PromptPatch::default();
+
+    /// For one field: classify as clean-merge (→ `$dst`) or conflict.
+    macro_rules! reconcile {
+        ($name:literal, $field:ident) => {
+            match (&local.$field, &server.$field) {
+                (None, Some(sv)) => merge.$field = Some(sv.clone()),
+                (Some(lv), Some(sv)) if lv == sv => merge.$field = Some(sv.clone()),
+                (Some(lv), Some(sv)) if lv != sv => conflicts.push($name),
+                _ => {}
+            }
+        };
+    }
+
+    reconcile!("name", name);
+    reconcile!("system_prompt", system_prompt);
+    reconcile!("user_template", user_template);
+    reconcile!("required_vars", required_vars);
+    reconcile!("domain", domain);
+    reconcile!("tags", tags);
+    reconcile!("target_roles", target_roles);
+    reconcile!("status", status);
+    reconcile!("metadata", metadata);
+    reconcile!("generation_params", generation_params);
+    reconcile!("locale", locale);
+
+    MergeReport {
+        conflicts,
+        merge_patch: merge,
+    }
+}
+
+/// Apply the `Some` fields of a [`PromptPatch`] onto a [`Prompt`] in place.
+fn apply_patch(prompt: &mut Prompt, patch: &PromptPatch) {
+    if let Some(name) = &patch.name {
+        prompt.name = name.clone();
+    }
+    if let Some(sp) = &patch.system_prompt {
+        prompt.system_prompt = sp.clone();
+    }
+    if let Some(ut) = &patch.user_template {
+        prompt.user_template = ut.clone();
+    }
+    if let Some(rv) = &patch.required_vars {
+        prompt.required_vars = rv.clone();
+    }
+    if let Some(d) = &patch.domain {
+        prompt.domain = *d;
+    }
+    if let Some(t) = &patch.tags {
+        prompt.tags = t.clone();
+    }
+    if let Some(tr) = &patch.target_roles {
+        prompt.target_roles = tr.clone();
+    }
+    if let Some(s) = &patch.status {
+        prompt.status = s.clone();
+    }
+    if let Some(m) = &patch.metadata {
+        prompt.metadata = m.clone();
+    }
+    if let Some(gp) = &patch.generation_params {
+        prompt.generation_params = Some(gp.clone());
+    }
+    if let Some(lo) = &patch.locale {
+        prompt.locale = Some(lo.clone());
     }
 }
 
@@ -426,7 +630,7 @@ impl OfflineStore {
 // OfflineState — wrapper used by PromptHub
 // ---------------------------------------------------------------------------
 
-/// State wrapping the offline store and current sync status, held inside [`PromptHub`].
+/// State wrapping the offline store and current sync status, held inside [`PromptHub`](crate::hub::PromptHub).
 #[derive(Debug)]
 pub struct OfflineState {
     pub store: OfflineStore,
@@ -690,6 +894,8 @@ mod tests {
             prompt_id: id,
             local_revision: 3,
             server_revision: 4,
+            local_updated_at: Utc::now(),
+            server_updated_at: Utc::now(),
         };
         store.resolve_conflict(&entry);
 
@@ -701,6 +907,277 @@ mod tests {
         assert!(
             !remaining,
             "local update should have been removed by ServerWins"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // PHTASK-0052: LastWriteWins + Merge conflict-resolution coverage.
+    // -----------------------------------------------------------------------
+
+    use chrono::Duration;
+
+    /// Seed a prompt at a given revision and capture its `updated_at`.
+    fn seed(store: &mut OfflineStore, name: &str, rev: u64) -> (Uuid, DateTime<Utc>) {
+        let prompt = Prompt::new(name, "body");
+        let id = prompt.id;
+        let ts = prompt.updated_at;
+        store.entries.insert(id, (prompt, rev));
+        (id, ts)
+    }
+
+    /// LastWriteWins: when the LOCAL copy is newer, local wins — the conflicting
+    /// server change is withheld from the pull queue and the conflict resolves.
+    #[test]
+    fn test_last_write_wins_local_newer() {
+        let mut store = OfflineStore::new(OfflineConfig {
+            auto_sync: false,
+            conflict_resolution: ConflictStrategy::LastWriteWins,
+        });
+        let (id, local_ts) = seed(&mut store, "lww-local", 5);
+
+        // Server change is older than local; queue it as an incoming pull.
+        store.record_pull(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("server-name".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        let entry = ConflictEntry {
+            prompt_id: id,
+            local_revision: 5,
+            server_revision: 3,
+            local_updated_at: local_ts,
+            server_updated_at: local_ts - Duration::seconds(60),
+        };
+
+        let resolved = store.resolve_conflict(&entry);
+        assert!(resolved.is_some(), "local-newer conflict must resolve");
+        // The conflicting server pull was withheld (local wins).
+        let (_dropped_push, withheld_pull) = resolved.unwrap();
+        assert_eq!(withheld_pull.len(), 1, "server pull should be withheld");
+        assert!(
+            !store
+                .pending_pull
+                .iter()
+                .any(|c| matches!(c, Change::Update(u, _) if *u == id)),
+            "server change must be removed from the pull queue"
+        );
+        // Local entry is untouched (still the local name).
+        assert_eq!(store.entries.get(&id).unwrap().0.name, "lww-local");
+    }
+
+    /// LastWriteWins: when the SERVER copy is newer, server wins — the local
+    /// pending push is dropped so it cannot overwrite the newer server state.
+    #[test]
+    fn test_last_write_wins_server_newer() {
+        let mut store = OfflineStore::new(OfflineConfig {
+            auto_sync: false,
+            conflict_resolution: ConflictStrategy::LastWriteWins,
+        });
+        let (id, local_ts) = seed(&mut store, "lww-server", 2);
+
+        // Local has a pending push for this prompt.
+        store.pending_push.push(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("local-name".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        let entry = ConflictEntry {
+            prompt_id: id,
+            local_revision: 2,
+            server_revision: 4,
+            local_updated_at: local_ts,
+            server_updated_at: local_ts + Duration::seconds(60),
+        };
+
+        let resolved = store.resolve_conflict(&entry);
+        assert!(resolved.is_some(), "server-newer conflict must resolve");
+        let (dropped_push, _) = resolved.unwrap();
+        assert_eq!(dropped_push.len(), 1, "local push should be dropped");
+        assert!(
+            !store
+                .pending_push
+                .iter()
+                .any(|c| matches!(c, Change::Update(u, _) if *u == id)),
+            "local push must be removed so it cannot clobber the newer server copy"
+        );
+    }
+
+    /// LastWriteWins tie-break: equal timestamps → local wins (deterministic).
+    #[test]
+    fn test_last_write_wins_tie_breaks_to_local() {
+        let mut store = OfflineStore::new(OfflineConfig {
+            auto_sync: false,
+            conflict_resolution: ConflictStrategy::LastWriteWins,
+        });
+        let (id, ts) = seed(&mut store, "lww-tie", 3);
+        store.record_pull(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("server-name".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        let entry = ConflictEntry {
+            prompt_id: id,
+            local_revision: 3,
+            server_revision: 3,
+            local_updated_at: ts,
+            server_updated_at: ts, // exact tie
+        };
+
+        let (_, withheld_pull) = store.resolve_conflict(&entry).expect("tie must resolve");
+        assert_eq!(withheld_pull.len(), 1, "tie keeps local, withholds server");
+        assert_eq!(store.entries.get(&id).unwrap().0.name, "lww-tie");
+    }
+
+    /// Merge: non-overlapping fields merge cleanly — server-only fields fold into
+    /// the local entry and the conflict resolves.
+    #[test]
+    fn test_merge_clean_non_overlapping_fields() {
+        let mut store = OfflineStore::new(OfflineConfig {
+            auto_sync: false,
+            conflict_resolution: ConflictStrategy::Merge,
+        });
+        let (id, ts) = seed(&mut store, "merge-clean", 2);
+
+        // Local changed `name`; server changed a *different* field (`tags`).
+        store.pending_push.push(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("local-name".to_string()),
+                ..Default::default()
+            },
+        ));
+        store.record_pull(Change::Update(
+            id,
+            PromptPatch {
+                tags: Some(vec!["server-tag".to_string()]),
+                ..Default::default()
+            },
+        ));
+
+        let entry = ConflictEntry {
+            prompt_id: id,
+            local_revision: 2,
+            server_revision: 3,
+            local_updated_at: ts,
+            server_updated_at: ts + Duration::seconds(10),
+        };
+
+        let resolved = store.resolve_conflict(&entry);
+        assert!(resolved.is_some(), "clean field merge must resolve");
+        let (_, consumed) = resolved.unwrap();
+        assert_eq!(consumed.len(), 1, "server pull is consumed by the merge");
+
+        // The server-only field (tags) was merged into the local entry.
+        let merged = &store.entries.get(&id).unwrap().0;
+        assert_eq!(merged.tags, vec!["server-tag".to_string()]);
+        // The server change is gone from the pull queue.
+        assert!(
+            !store
+                .pending_pull
+                .iter()
+                .any(|c| matches!(c, Change::Update(u, _) if *u == id))
+        );
+    }
+
+    /// Merge: when both sides changed the SAME field to different values, that is
+    /// a genuine conflict — it is flagged (unresolved) and nothing is merged.
+    #[test]
+    fn test_merge_true_conflict_same_field() {
+        let mut store = OfflineStore::new(OfflineConfig {
+            auto_sync: false,
+            conflict_resolution: ConflictStrategy::Merge,
+        });
+        let (id, ts) = seed(&mut store, "merge-conflict", 2);
+
+        // Both sides changed `name` to different values.
+        store.pending_push.push(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("local-name".to_string()),
+                ..Default::default()
+            },
+        ));
+        store.record_pull(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("server-name".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        let entry = ConflictEntry {
+            prompt_id: id,
+            local_revision: 2,
+            server_revision: 3,
+            local_updated_at: ts,
+            server_updated_at: ts + Duration::seconds(10),
+        };
+
+        let resolved = store.resolve_conflict(&entry);
+        assert!(
+            resolved.is_none(),
+            "a true same-field conflict must stay unresolved"
+        );
+        // Nothing merged: local name untouched, server change still queued.
+        assert_eq!(store.entries.get(&id).unwrap().0.name, "merge-conflict");
+        assert!(
+            store
+                .pending_pull
+                .iter()
+                .any(|c| matches!(c, Change::Update(u, _) if *u == id)),
+            "the conflicting server change must remain for manual resolution"
+        );
+    }
+
+    /// Merge: when both sides set the same field to the SAME value, it is not a
+    /// conflict — the merge is clean and resolves.
+    #[test]
+    fn test_merge_same_field_same_value_is_clean() {
+        let mut store = OfflineStore::new(OfflineConfig {
+            auto_sync: false,
+            conflict_resolution: ConflictStrategy::Merge,
+        });
+        let (id, ts) = seed(&mut store, "merge-agree", 2);
+
+        store.pending_push.push(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("agreed-name".to_string()),
+                ..Default::default()
+            },
+        ));
+        store.record_pull(Change::Update(
+            id,
+            PromptPatch {
+                name: Some("agreed-name".to_string()),
+                system_prompt: Some("server-body".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        let entry = ConflictEntry {
+            prompt_id: id,
+            local_revision: 2,
+            server_revision: 3,
+            local_updated_at: ts,
+            server_updated_at: ts + Duration::seconds(10),
+        };
+
+        let resolved = store.resolve_conflict(&entry);
+        assert!(resolved.is_some(), "agreeing fields merge cleanly");
+        // The server-only field (system_prompt) merged in.
+        assert_eq!(
+            store.entries.get(&id).unwrap().0.system_prompt,
+            "server-body"
         );
     }
 }

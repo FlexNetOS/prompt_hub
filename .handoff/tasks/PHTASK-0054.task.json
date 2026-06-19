@@ -1,0 +1,36 @@
+{
+  "acceptance_criteria": [
+    "cost_trends returns multiple real time buckets derived from recorded events",
+    "total_creates/total_updates reflect actual recorded counts",
+    "tests seed events across buckets and assert the resulting series"
+  ],
+  "allows_dependency_addition": false,
+  "allows_network": false,
+  "blocked_by": [],
+  "correlation_id": "prompt-hub-construction",
+  "dependencies": [],
+  "id": "PHTASK-0054",
+  "intent_lock": {
+    "acceptance_hash": "blake3:9651392f92ae3015f636b33c9476b0ec4715b91de87779d1cd88cef232416a63",
+    "objective_hash": "blake3:339131f3893c718cf45be52201fec02c8e3723c2fc8b573a8d23a3e2d70ea853",
+    "path_scope_hash": "blake3:6c025bdf8a96d5b05472b0bf02359625ece56e1395ebe9c29236e73c672b7e0c"
+  },
+  "objective": "analytics.rs cost_trends (:202) uses a single hardcoded 'current' bucket; total_creates/total_updates hardcoded 0 (:150-151); no real time-series. Core counters are real. Complete: real time-bucketed trends derived from recorded events; real create/update totals.",
+  "path_scope": [
+    "prompt-hub/src/analytics.rs"
+  ],
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed — never removed or gated out. Upgrade only.",
+  "priority": "P2",
+  "role": "implementer",
+  "schema": "handoff.task.v1",
+  "source": "filed by deep-audit 2026-06-18 (gap inventory: stubs + route-coverage + hygiene)",
+  "status": "backlog",
+  "test_commands": [
+    "cargo build --workspace",
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check",
+    "cargo test -p prompt-hub"
+  ],
+  "title": "Complete analytics cost-trends real time-series"
+}

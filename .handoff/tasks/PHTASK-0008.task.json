@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0008",
+  "title": "Recover feature: `voice-anonymize`",
+  "status": "done",
+  "priority": "P3",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Regex PII detection (email/phone/SSN/CC/IPv4/DOB/custom) + AnonymizerBuilder with overlap protection. Voice transcript scrubber.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`voice-anonymize` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:efd73961a482249c86f3a0dbf195b8da32ce786ea41b22c87be5704f13788fb0",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:1bdea29d05a87bce62c6cab67b2bbcc60c7aedf2b15e6014004c9a7f9e8fa7bd"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "44e35cf",
+  "cycle": 73
+}

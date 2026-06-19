@@ -150,7 +150,7 @@ impl Default for AutoPurgeConfig {
 // ─────────────────────────────────────────────
 
 /// Per-cycle purge statistics.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PurgeStats {
     /// Number of prompts scanned across all policies.
     pub total_scanned: usize,

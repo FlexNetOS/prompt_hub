@@ -1,0 +1,33 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0005",
+  "title": "Recover feature: `chaos`",
+  "status": "done",
+  "priority": "P2",
+  "objective": "P1 recovery (feature prematurely removed from Cargo.toml during s11-s15 wiring cleanup, rebuilt). Chaos engineering for prompt eval: 6 fault-injection strategies, deterministic RNG, severity scoring. 14 tests.",
+  "path_scope": [
+    "prompt-hub/**"
+  ],
+  "acceptance_criteria": [
+    "`chaos` implemented in prompt-hub core, feature-gated, tests green, gates clean"
+  ],
+  "test_commands": [
+    "cargo check --workspace --all-features",
+    "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "cargo fmt --all --check"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:08259ae667dc18d10a45803ace67e33a949296d678827d0107093503c7e828e7",
+    "path_scope_hash": "blake3:633ec59498f3f63d104fb4c476878fb6b27587566f18f2a4ae32c64cb18bdd3f",
+    "acceptance_hash": "blake3:6836fc1703a9da3de9b72fb282d5120f5316ddcfead9456dcd35b027c4a52b26"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "commit": "1c0fe04",
+  "cycle": 68
+}

@@ -1,0 +1,31 @@
+{
+  "schema": "handoff.task.v1",
+  "id": "PHTASK-0037",
+  "title": "Write real DDL for migration 0008_generation_params",
+  "status": "done",
+  "priority": "P2",
+  "objective": "0008_generation_params.sql is ~all comments (~1 line SQL). Add the generation_params table / ALTER TABLE if not present, or restructure as an application-layer check.",
+  "path_scope": [
+    "prompt-hub/migrations/**"
+  ],
+  "acceptance_criteria": [
+    "migration 0008 contains real, applied DDL or is consciously restructured"
+  ],
+  "test_commands": [
+    "cargo test -p prompt-hub migration"
+  ],
+  "dependencies": [],
+  "blocked_by": [],
+  "allows_network": false,
+  "allows_dependency_addition": false,
+  "correlation_id": "prompt-hub-construction",
+  "role": "implementer",
+  "intent_lock": {
+    "objective_hash": "blake3:6d331368b3a1b32b1a9763dc1542bbd4e1da268270836c2c39f85eac6016685b",
+    "path_scope_hash": "blake3:90bf7a86aa0211449fa375d1da825c9cf3cb0ba36410f646ce9de20d388952b3",
+    "acceptance_hash": "blake3:1d68edcec9999ce8d2f094192657fb532d0bdf6e9b38ba0d05108ce9c9855284"
+  },
+  "source": "migrated from _workspace/backlog.md (2026-06-13)",
+  "policy_note": "Owner directive 2026-06-13: NO DOWNGRADES. A module that looks like dead code / an old feature is an INCOMPLETE feature to be completed \u2014 never removed or gated out. Upgrade only.",
+  "resolution": "Replaced the comments-only 0008_generation_params.sql version-marker with real, idempotent DDL. Verified against the code (code wins over the stale prose): the generation_params column already exists on the prompts table (0001_initial) and stores a serialized GenerationParams JSON blob (storage.rs insert_prompt/update_prompt/row hydration); the marker's promised application-layer column-ensure was never implemented and the JSON was opaque to the planner. NO DOWNGRADE: did not delete or stub the migration. 0008 now creates three IF-NOT-EXISTS indexes that make the stored params queryable, consistent with the index-driven style of 0001/0007: (1) idx_prompts_generation_params \u2014 partial index on prompts(id) WHERE generation_params IS NOT NULL (fast lookup/count of prompts with custom params); (2) idx_prompts_gen_temperature \u2014 expression index on json_extract(generation_params,'$.temperature') (libsql ships JSON1), guarded by json_valid; (3) idx_prompts_gen_max_tokens \u2014 expression index on json_extract(generation_params,'$.max_tokens'). Supporting changes outside the migrations/ path_scope (noted as a conscious, minor deviation): corrected a now-stale comment in storage.rs that described 0008 as a comments-only no-op, and added storage::tests::test_migration_0008_generation_params_indexes (asserts the three indexes land on a fresh :memory: DB, that 0008 is recorded in _migrations, and that a prompt with generation_params round-trips) so the card's own `cargo test -p prompt-hub migration` target is meaningful. Gates green in BOTH configs: `cargo build -p prompt-hub` (default) Finished; `cargo test -p prompt-hub --all-features migration` 1 passed; `cargo test -p prompt-hub --all-features storage` 20 passed; `cargo test -p prompt-hub --all-features --lib` 865 passed/1 ignored; `cargo test -p prompt-hub --all-features --tests` 998 passed/1 ignored; `cargo clippy -p prompt-hub --all-features --all-targets -- -D warnings` clean; `cargo fmt -p prompt-hub -- --check` clean."
+}
