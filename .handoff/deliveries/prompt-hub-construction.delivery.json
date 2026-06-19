@@ -1,6 +1,15 @@
 {
   "schema": "handoff.delivery.v1",
   "correlation_id": "prompt-hub-construction",
+<<<<<<< HEAD
+  "task_id": "PHTASK-0059",
+  "pr": "125",
+  "status": "merged",
+  "summary": "PHTASK-0059 completed via PR 125 (status: merged)",
+  "url": "https://github.com/FlexNetOS/handoff/pull/125",
+  "timestamp_ns": 1781782137010959758
+}
+=======
   "task_id": "PHTASK-0060",
   "pr": "133",
   "status": "merged",
@@ -8,3 +17,4 @@
   "url": "https://github.com/FlexNetOS/handoff/pull/133",
   "timestamp_ns": 1781782408931150533
 }
+>>>>>>> origin/develop
