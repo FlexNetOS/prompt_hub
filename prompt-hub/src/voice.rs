@@ -19,14 +19,20 @@ use uuid::Uuid;
 
 /// Resolves prompt text for a voice turn.
 pub trait PromptResolver {
-    fn resolve<'a>(&'a self, text: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+    fn resolve<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
 }
 
 #[derive(Debug, Default)]
 struct IdentityPromptResolver;
 
 impl PromptResolver for IdentityPromptResolver {
-    fn resolve<'a>(&'a self, text: &'a str) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+    fn resolve<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
         Box::pin(async move { Ok(text.to_string()) })
     }
 }
@@ -356,7 +362,8 @@ impl VoicePipelineEngine {
     /// Returns `HubError` at the first failure in the pipeline chain.
     pub async fn execute_turn(&mut self, prompt_text: &str) -> Result<VoiceInteraction> {
         let resolver = IdentityPromptResolver;
-        self.execute_turn_with_resolver(prompt_text, &resolver).await
+        self.execute_turn_with_resolver(prompt_text, &resolver)
+            .await
     }
 
     /// Execute a complete voice turn while resolving the prompt through a resolver.
