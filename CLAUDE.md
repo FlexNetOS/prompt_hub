@@ -125,7 +125,11 @@ loop / resume request, use the **`prompt-loop`** skill. It orchestrates the crew
 `session-relay` handoff. Simple questions may be answered directly.
 
 - Built harness: `.claude/skills/prompt-loop/` (orchestrator + `scripts/ralph-prompt.sh` runner),
-  `.claude/skills/{feature-build,session-relay}/`, `.claude/agents/*.md`, durable `.handoff/`.
+  `.claude/skills/{feature-build,session-relay,harness-evolution}/`, `.claude/agents/*.md`, durable
+  `.handoff/`. At every run boundary (DONE / HAND OFF) the `evolution-steward` runs the
+  `harness-evolution` retro → mines lessons into `LESSONS.md` → applies low-risk / proposes structural
+  harness upgrades (fail-closed, never weakening a gate). Trigger phrases: "retro", "what did we
+  learn", "improve/upgrade the harness", "evaluate the run".
 - Generic pattern + templates: `~/Desktop/meta/HARNESS-UPGRADE-KIT.md`
 - Tailored kit for THIS repo:  `~/Desktop/meta/harness_hub/upgrade-kits/prompt_hub.md`
 - `/prompt-loop` **defaults to APPLY** (push → PR → auto-merge on green DONE-gates, fail-closed to
@@ -140,3 +144,4 @@ loop / resume request, use the **`prompt-loop`** skill. It orchestrates the crew
 | 2026-06-05 | Initial harness build (6 agents, 3 skills, runner, `_workspace/`) | All | Construction crew per autonomous-operation kit (commit 726edcd) |
 | 2026-06-05 | `/prompt-loop` default flipped to APPLY (push→PR→auto-merge on green); added explicit `safe` override | skills/prompt-loop | User feedback: don't require opt-in for apply on the slash command |
 | 2026-06-13 | Adopted the canonical handoff kernel: migrated `_workspace/{backlog,loop_state,HANDOFF}.md` → `.handoff/` (40 `handoff.task.v1` cards + `hf`-rendered `packets/latest.md` + `active.md`); rewired prompt-loop/session-relay skills + ralph runner to `.handoff/` + `hf` verbs; archived old `_workspace/` under `.handoff/history/` | `.handoff/`, skills/prompt-loop, skills/session-relay, CLAUDE.md | Owner directive: "adopt the new handoff system from meta/handoff; migrate the deprecated backlogs/handoffs; no downgrades, upgrade only" |
+| 2026-06-21 | Added the **evolution-steward** crew member + **harness-evolution** skill (ejected from `harness_hub`, adapted to the `.handoff/` kernel layout — not the generic `.handoff/loop/` layout); wired it into the prompt-loop orchestrator at DONE (full retro) + HAND OFF (lightweight); seeded the durable `LESSONS.md` ledger | `.claude/agents/evolution-steward.md`, `.claude/skills/harness-evolution/`, skills/prompt-loop, `LESSONS.md`, CLAUDE.md | Owner directive: "add /harness-evolution for continued learning and harness upgrades" — close every run with a retro so the harness compounds |
