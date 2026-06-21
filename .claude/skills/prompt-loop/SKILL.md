@@ -48,6 +48,7 @@ is `.handoff/history/generate_cards.py`; blake3 `intent_lock`s must match `hf`).
 | DISCOVER / cycle-start refresh | Sub-agent | `backlog-curator` |
 | Per-cycle feature build | **Agent team** | `feature-architect` → `rust-implementer` ↔ `verification-gate` → `docs-scribe` |
 | Handoff at budget | Sub-agent | `continuity-steward` (via `session-relay`) |
+| Run-boundary retro (DONE / HAND OFF) | Sub-agent | `evolution-steward` (via `harness-evolution`) |
 
 Only one team is active at a time; the per-cycle team is created and disbanded each cycle so each cycle starts lean.
 
@@ -60,6 +61,7 @@ Only one team is active at a time; the per-cycle team is created and disbanded e
 | verification-gate | general-purpose | Cross-boundary QA + both-config gates | feature-build | `.handoff/work/<cycle>_verification_report.md` |
 | docs-scribe | docs-scribe | Docs/ADR/changelog sync | feature-build | `.handoff/work/<cycle>_docs_notes.md` |
 | continuity-steward | general-purpose | Cold-start handoff | — | `.handoff/packets/latest.md` (via `hf fleet render`) |
+| evolution-steward | general-purpose | Run-boundary retro → harness upgrades (fail-closed) | harness-evolution | `.handoff/work/<cycle>_evaluation.md` + `LESSONS.md` + (applied upgrade PR / `_proposed-upgrades.md`) |
 
 > Always invoke every agent with `model: "opus"`.
 
@@ -126,7 +128,9 @@ Run for each cycle until a stop condition:
 **f. Self-pace:** in an interactive session, `ScheduleWakeup` to re-enter the next cycle (long delay if waiting on a slow external step like CI). Under the external runner, do **not** wake — finish the budget then write one sentinel.
 
 ### Phase 3: DONE (no `status:"backlog"` cards left)
-Run the **DONE-criteria suite** (`cargo build --workspace --all-features` · `just test` · `just lint` · `just fmt && git diff --quiet`). All green + no open cards → write `.handoff/DONE` with the evidence (commands + results + landed commits/PRs). This is the terminal sentinel; stop (no wakeup). If any gate is red, the backlog isn't really empty — author a fix card (`.handoff/tasks/PHTASK-NNNN.task.json`, status backlog) and continue.
+1. Run the **DONE-criteria suite** (`cargo build --workspace --all-features` · `just test` · `just lint` · `just fmt && git diff --quiet`). If any gate is red, the backlog isn't really empty — author a fix card (`.handoff/tasks/PHTASK-NNNN.task.json`, status backlog) and continue (skip the retro).
+2. **Run-boundary retro (full).** Spawn `evolution-steward` (sub-agent, opus) per the `harness-evolution` skill: evaluate the whole run from the `.handoff/` kernel artifacts, mine generalizable lessons, append them to `LESSONS.md`, and apply (low-risk, in-scope) or propose (structural/gate-touching → `.handoff/work/<cycle>_proposed-upgrades.md`) the upgrades — fail-closed, never weakening a gate. Applied upgrades land via the standard branch→PR→auto-merge flow with a `CLAUDE.md` change-history row (a *separate* commit from the DONE sentinel — never mid-cycle).
+3. All gates green + no open cards → write `.handoff/DONE` with the evidence (commands + results + landed commits/PRs). This is the terminal sentinel; stop (no wakeup).
 
 ### Phase 4: HAND OFF (budget reached) — Handoff Ledger V2
 Invoke `session-relay` **HAND OFF** with handoff packet compilation:
@@ -134,9 +138,10 @@ Invoke `session-relay` **HAND OFF** with handoff packet compilation:
 1. **Emit session event.** Record `session_stopped` event via mesh heartbeat (`relay:handoff`).
 2. **Compile the packet** (`handoff.packet.v2`) canonically: `cd <meta-root> && hf fleet render prompt_hub` regenerates `.handoff/packets/latest.md` from the cards + FLEET ledger. (Schema also at `.claude/skills/prompt-loop/handoff/schemas/packet.schema.json`.)
 3. **Update `.handoff/active.md`** with the next card + done count; the packet IS the next-session prompt. (`continuity-steward` may add a human-readable summary, but the derived packet is never hand-edited.)
-4. **Commit.** `git add .handoff/ && git commit` (`chore(loop): handoff cycle N — render packet + active`).
-5. **Heartbeat** (best-effort mesh relay). Skip silently if unavailable.
-6. **Stop.** Under the external runner: write exactly one sentinel under `.handoff/` (`HANDOFF` marker / non-empty open cards = more work → respawn; `DONE` = finished; `NEEDS-HUMAN` = human wall).
+4. **Run-boundary retro (lightweight).** Spawn `evolution-steward` (sub-agent, opus) per the `harness-evolution` skill so this run's lessons aren't lost at the budget boundary: a lightweight evaluation → append lessons to `LESSONS.md` (status `noted`, or `applied`/`proposed` for anything actioned). Keep it cheap — the full retro runs at DONE. Auto-applied upgrades land as their own PR, never folded into the handoff commit.
+5. **Commit.** `git add .handoff/ LESSONS.md && git commit` (`chore(loop): handoff cycle N — render packet + active + retro`).
+6. **Heartbeat** (best-effort mesh relay). Skip silently if unavailable.
+7. **Stop.** Under the external runner: write exactly one sentinel under `.handoff/` (`HANDOFF` marker / non-empty open cards = more work → respawn; `DONE` = finished; `NEEDS-HUMAN` = human wall).
 
 ## Data Flow
 ```
@@ -154,6 +159,10 @@ backlog-curator → .handoff/tasks/PHTASK-*.task.json (cards)
         │ at budget                                   │ no open cards + gates green
         ▼                                             ▼
  session-relay HAND OFF (hf fleet render packet)  .handoff/DONE
+        │ (run boundary)                              │ (run boundary)
+        ▼                                             ▼
+ evolution-steward (lightweight retro)         evolution-steward (full retro)
+        └──────── LESSONS.md + apply/propose upgrades (own PR, fail-closed) ───────┘
 ```
 
 ## Error Handling
