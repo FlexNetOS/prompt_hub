@@ -94,10 +94,7 @@ impl Default for AccessibilityConfig {
 impl AccessibilityConfig {
     /// Create a config for plain-text output (stripped whitespace + paragraphs).
     pub fn plain() -> Self {
-        Self {
-            format: AccessibilityFormat::PlainText,
-            ..Default::default()
-        }
+        Self::default()
     }
 
     /// Create a config for structured JSON output with content-type detection.
@@ -220,19 +217,13 @@ fn plain_text(content: &str) -> Result<AccessibleOutput, AccessibilityError> {
         // Detect fenced code blocks (lines starting with spaces/tabs — heuristic)
         if line.starts_with(' ') || line.starts_with('\t') {
             if !in_code_block {
-                // Flush any accumulated text before code block
-                if !code_lines.is_empty() {
-                    result.push_str(&normalize_paragraph(&code_lines.join("\n")));
-                    result.push('\n');
-                    code_lines.clear();
-                }
                 in_code_block = true;
             }
             if in_code_block {
                 code_lines.push(line);
             }
         } else {
-            if in_code_block && !code_lines.is_empty() {
+            if in_code_block {
                 for cl in &code_lines {
                     result.push_str(cl);
                     result.push('\n');
@@ -258,7 +249,7 @@ fn plain_text(content: &str) -> Result<AccessibleOutput, AccessibilityError> {
     }
 
     // Flush any remaining code block lines
-    if in_code_block && !code_lines.is_empty() {
+    if in_code_block {
         for cl in &code_lines {
             result.push_str(cl);
             result.push('\n');
@@ -281,7 +272,7 @@ fn normalize_paragraph(paragraph: &str) -> String {
     let mut prev_space = false;
     for c in paragraph.chars() {
         if c.is_whitespace() {
-            if !prev_space && !result.ends_with(char::is_whitespace) {
+            if !prev_space {
                 result.push(' ');
                 prev_space = true;
             }
@@ -905,6 +896,62 @@ mod tests {
                 assert!(text.contains("Hello world"));
                 assert!(text.contains("This is a paragraph."));
                 assert!(!text.contains("   ")); // no triple spaces
+            }
+            other => panic!("Expected Plain output, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_plain_config_preserves_default_limits() {
+        let config = AccessibilityConfig::plain();
+        assert_eq!(config.format, AccessibilityFormat::PlainText);
+        assert_eq!(config.max_sentence_length, 40);
+        assert!(!config.multisensory);
+    }
+
+    #[test]
+    fn test_content_size_limit_is_exclusive() {
+        let config = AccessibilityConfig::plain();
+        let max_allowed = "a".repeat(10 * 1024 * 1024);
+        assert!(transform(&max_allowed, &config).is_ok());
+
+        let too_large = format!("{}b", max_allowed);
+        let err = transform(&too_large, &config).unwrap_err();
+        match err {
+            AccessibilityError::ContentTooLarge(size) => {
+                assert_eq!(size, 10 * 1024 * 1024 + 1);
+            }
+            other => panic!("Expected ContentTooLarge, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_plain_text_preserves_indented_code_blocks() {
+        let input =
+            "Intro paragraph\n    let value = 1;\n\tprintln!(\"{value}\");\nOutro paragraph";
+        let config = AccessibilityConfig::plain();
+        let output = transform(input, &config).unwrap();
+
+        match output {
+            AccessibleOutput::Plain(text) => {
+                assert_eq!(
+                    text,
+                    "Intro paragraph\n    let value = 1;\n\tprintln!(\"{value}\");\nOutro paragraph\n"
+                );
+            }
+            other => panic!("Expected Plain output, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_plain_text_normalizes_mixed_inline_whitespace() {
+        let input = "alpha\t\t beta   gamma\n";
+        let config = AccessibilityConfig::plain();
+        let output = transform(input, &config).unwrap();
+
+        match output {
+            AccessibleOutput::Plain(text) => {
+                assert_eq!(text, "alpha beta gamma\n");
             }
             other => panic!("Expected Plain output, got {:?}", other),
         }

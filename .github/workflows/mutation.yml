@@ -11,7 +11,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-mutants
-      - run: cargo mutants --workspace --all-features
+      - name: Test changed mutants on PRs
+        if: github.event_name == 'pull_request'
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/cargo-mutants-pr.diff
+          cargo mutants --workspace --all-features --in-diff /tmp/cargo-mutants-pr.diff
+      - name: Test all mutants manually
+        if: github.event_name == 'workflow_dispatch'
+        run: cargo mutants --workspace --all-features
