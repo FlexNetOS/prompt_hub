@@ -2449,7 +2449,7 @@ fn parse_vendor(vendor: &str) -> Option<Vendor> {
     }
 }
 
-/// Parse a cost-limit resource string into a [`Resource`].
+/// Parse a cost-limit resource string into a [`prompt_hub::cost_limits::Resource`].
 #[cfg(feature = "cost-limits")]
 fn parse_resource(resource: &str) -> Option<prompt_hub::cost_limits::Resource> {
     match resource.to_lowercase().as_str() {
@@ -2465,7 +2465,7 @@ fn parse_resource(resource: &str) -> Option<prompt_hub::cost_limits::Resource> {
     }
 }
 
-/// Parse an overage policy string into an [`OveragePolicy`].
+/// Parse an overage policy string into an [`prompt_hub::cost_limits::OveragePolicy`].
 #[cfg(feature = "cost-limits")]
 fn parse_overage_policy(policy: &str) -> Option<prompt_hub::cost_limits::OveragePolicy> {
     match policy.to_lowercase().as_str() {
@@ -2476,7 +2476,7 @@ fn parse_overage_policy(policy: &str) -> Option<prompt_hub::cost_limits::Overage
     }
 }
 
-/// Convert a [`LimitStatus`] to a JSON-friendly representation.
+/// Convert a [`prompt_hub::cost_limits::LimitStatus`] to a JSON-friendly representation.
 #[cfg(feature = "cost-limits")]
 fn limit_status_to_json(status: &prompt_hub::cost_limits::LimitStatus) -> Value {
     match status {
@@ -2489,7 +2489,7 @@ fn limit_status_to_json(status: &prompt_hub::cost_limits::LimitStatus) -> Value 
     }
 }
 
-/// Convert a [`QuotaStatus`] to a JSON-friendly representation.
+/// Convert a [`prompt_hub::quota::QuotaStatus`] to a JSON-friendly representation.
 #[cfg(feature = "quota")]
 fn quota_status_to_json(status: &prompt_hub::quota::QuotaStatus) -> Value {
     let status_str = match status {
@@ -2501,7 +2501,7 @@ fn quota_status_to_json(status: &prompt_hub::quota::QuotaStatus) -> Value {
     json!({"status": status_str})
 }
 
-/// Convert a [`ModerationReport`] to a JSON-friendly representation.
+/// Convert a [`prompt_hub::moderation::ModerationReport`] to a JSON-friendly representation.
 #[cfg(feature = "moderation")]
 fn moderation_report_to_json(report: &prompt_hub::moderation::ModerationReport) -> Value {
     let (result, category, matched_term, score) = match &report.result {

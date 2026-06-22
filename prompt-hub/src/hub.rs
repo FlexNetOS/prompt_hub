@@ -2895,7 +2895,7 @@ impl PromptHub {
     /// Execute a complete voice turn through the pipeline.
     ///
     /// Routes the transcribed text through the hub prompt path via
-    /// [`HubPromptResolver`] before TTS synthesis.
+    /// the hub prompt resolver before TTS synthesis.
     #[cfg(feature = "voice")]
     #[instrument(skip(self))]
     pub async fn execute_voice_turn(&self, prompt_text: &str) -> Result<VoiceInteraction> {
