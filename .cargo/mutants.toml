@@ -1,0 +1,6 @@
+# `AccessibilityConfig::plain()` is intentionally an alias for the default
+# plain-text configuration, so replacing it with `Default::default()` is an
+# equivalent mutant rather than a test gap.
+exclude_re = [
+    "prompt-hub/src/accessibility\\.rs:.*replace AccessibilityConfig::plain -> Self with Default::default\\(\\)",
+]
