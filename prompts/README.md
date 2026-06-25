@@ -92,6 +92,34 @@ means-vs-outcome check. Doctrine companion: [`prompt-hub/templates/env_state_con
 
 ---
 
+### [planning-engineer-loop.prompt.yml](planning-engineer-loop.prompt.yml)
+**Purpose**: Drive a fleet-wide, self-evolving "planning engineer loop" — one invocation builds/refreshes a planning & architecture plan for the whole meta fleet
+
+**Use when**:
+- You want a fresh fleet roadmap / architecture plan with evidence, not vibes
+- You want deep research (web trends from the last 3 months + a per-repo symbol/data-flow scan)
+  run via background agents, plus a code graph for graph-based intelligence
+- You want ASCII architecture diagrams, gaps with upgrade solutions (code-quality/speed/accuracy),
+  a tool evaluation, and a loop that self-evaluates + self-upgrades every run
+- You want the plan to be TDD-native — every plan item backed by a full, RED-first, count-verified
+  test suite (unit + integration + differential-drive) so the plan is falsifiable and verifiable
+
+**Input**: `fleet_filter` (default `all`), `focus` (default `full sweep`), `run_notes` (resume pointer)
+**Output**: Prioritized plan + ASCII target & control-plane architecture, code-graph snapshot+diff,
+gap→upgrade table (code-quality / speed / accuracy / governance+settings+config), tool-eval table,
+governance + settings/config findings, and the harness self-evaluation / `LESSONS.md` entry — runs
+`/harness:harness`, fans out background agents, and uses `git kb code` + `harness-evolution`. Treats
+the agent control plane — **rules, instructions, hooks, policy, CLAUDE.md, AGENTS.md** — and the
+configuration plane — **settings** (`.claude/settings.json`, `.codex/config.toml`, agent-guard) and
+**config** (`.meta.yaml`, Cargo/toolchain, `.kb/config.toml`, `.handoff/policy.toml`, CI, bun) — as
+first-class scan + self-upgrade targets, with hygiene detectors (MCP rot, skill overload, token
+burn, config drift) and a fail-closed risk model (settings/MCP/CI/toolchain owner-walled, gates
+never weakened, lockfiles regenerate-only). TDD-native: every plan item is backed by a full,
+RED-first, count-verified test suite (unit + integration + differential-drive) with a
+plan-item↔test traceability matrix. Built on the meta harness ecosystem.
+
+---
+
 ## How to Use These Prompts
 
 ### Option 1: Via GitHub UI
