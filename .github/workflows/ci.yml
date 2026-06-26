@@ -67,6 +67,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      # macOS runners auto-select an Xcode whose clang resource dir is incomplete,
+      # so the test link fails with `ld: library 'clang_rt.osx' not found` (the
+      # linker's `.../clang/<ver>/lib/darwin` search path does not exist). Pin a
+      # complete latest-stable Xcode so DEVELOPER_DIR points at a toolchain that
+      # ships libclang_rt.osx.a. Upgrade-only: adds a setup step, does not drop the
+      # macOS matrix leg or pin the Rust toolchain down.
+      - name: Select latest-stable Xcode (macOS clang_rt.osx linker fix)
+        if: runner.os == 'macOS'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
