@@ -10,3 +10,12 @@ protocol = "sparse"
 
 [net]
 git-fetch-with-cli = true
+
+# Vendored crate sources — all external dependencies are committed under vendor/
+# so the workspace builds fully offline / self-contained (no crates.io fetch).
+# Regenerate after any dependency change with: cargo vendor vendor
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
