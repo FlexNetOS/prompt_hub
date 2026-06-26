@@ -162,7 +162,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish -p prompt-hub --dry-run
+      # `--registry crates-io` bypasses the vendored `[source.crates-io]`
+      # replacement in .cargo/config.toml: cargo publish cannot run against a
+      # replaced (non-remote) source, so the real registry is selected just for
+      # this verification. Vendoring still governs every normal build.
+      - run: cargo publish -p prompt-hub --dry-run --registry crates-io
 
   safety:
     name: Safety Check
