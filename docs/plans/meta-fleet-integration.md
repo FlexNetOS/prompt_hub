@@ -34,6 +34,25 @@ strict-upgrade-only. Three corrections raise the fidelity:
 installed, configured, parity-proven, and rollback-safe. Integration boundaries are **additive seams over existing
 engines** — never collapse a subsystem's authoritative engine into another repo.
 
+### Owner decisions (2026-06-27 — resolve walls D-G1 & D-G3)
+
+- **D-G1 · Inference authority = `cellm`.** teri benchmarked the local engines: **ruvllm is more advanced than shimmy,
+  but teri found [`cellm`](https://github.com/FlexNetOS/cellm) better than both** (Rust mobile-native serving — paged KV
+  cache, multi-session scheduling, Metal/Vulkan kernels, on-device under 512 MB). cellm is the chosen inference engine.
+  **It is not a `.meta.yaml` member yet** (`grep cellm .meta.yaml` → 0) → P0 adoption + an envctl inference component.
+  shimmy/ruvllm become secondary; per strict-upgrade, ollama/shimmy/ruvllm are **not removed until cellm is
+  installed, configured, and parity-proven**.
+
+- **D-G3 · Union merge method = the 3-phase Frankenstein merge.** This is the general doctrine for consolidating **any
+  two Rust repos** (handoff⊕rusty-idd, the kasetto dual-truth, future merges), in order:
+  1. **Frankenstein rust merge** — combine the two repos **as they are**, unmodified, into one.
+  2. **Frankenstein → organization** — apply OS file/folder organization principles; focus on **data flow** and where
+     components fit; do **path organization FIRST** — consolidate sibling dot-dirs under one root
+     (e.g. `.handoff` + `.idd` + `.kb` → `.handoff/.idd`, `.handoff/.kb`).
+  3. **Per-symbol merge graph** — map endpoint-to-endpoint; **every change carries a test verifying output stays
+     CONSTANT OR BETTER** (differential parity). `grit` is the **coordination substrate around phase 3, never the
+     reconciler itself** (confirmed unfit: it computes a per-symbol hash it never reads, and merges with plain `git merge`).
+
 ---
 
 ## I4 — ASCII architecture diagrams
@@ -90,7 +109,7 @@ engines** — never collapse a subsystem's authoritative engine into another rep
        └──────────────────────────────────────────── envctl ◀──────────────────────────────────────────┘
                                                          │ secretd mint ─▶ github_app ─dispatch─▶ runner (CI plane, G5)
                                                          ▼
-                       inference authority = [DECIDE G1: shimmy server ‖ ruvllm crate]  (ollama swap-parity gated)
+                       inference authority = cellm (G1, owner-decided; adopt + envctl component; ollama swap-parity gated)
                        network plane = lane ⊕ obscura(egress) ⊕ network-control(fabric) ;  A2A/leases = weave
 ```
 
@@ -185,7 +204,7 @@ Consolidated from all 5 clusters; **EXISTS** = wired & source-cited, **PARTIAL**
   the packaged harnesses into Rust-runtime-executable DAGs, which is what closes the "intent → execution" loop.
 - **Authority directions (the law):** install/verify → envctl; work-definition → prompt_hub→rusty-idd; continuity →
   handoff⊕rusty-idd union; A2A/leases → weave; secrets/mint → secretd; network/egress → lane/obscura/network-control;
-  inference → **[DECIDE G1]**; memory/vector → meta-ruvector via the chosen seam.
+  inference → **cellm** (G1, owner-decided; adopt + envctl component); memory/vector → meta-ruvector via the chosen seam.
 - **External/AGPL containment:** Odysseus, n8n, teri stay behind an API/sandbox boundary; claude-code/codex are pinned
   vendor forks (never source-merge); hermes-agent (Python) and ruflo (JS) stay standalone, not engine-merged.
 
@@ -198,9 +217,9 @@ owner/structural/kernel-class) · acceptance criterion (the falsifiable I8 condi
 
 | # | Gap | Target surface | Evidence | Tier | Acceptance criterion |
 |---|---|---|---|---|---|
-| G1 | Inference authority unresolved (shimmy vs ruvllm); ollama-replacement directive unenforced | envctl manifest + owner decision | shimmy has no `manifest/*` component (grep empty); `ruvllm` 0 path-dep consumers; owner doctrine "shimmy = official ollama replacement, don't remove ollama until swap proven" | **PROPOSE** | An envctl inference component installs the chosen engine pinned + a swap-parity gate proving it serves the ollama-compat surface before ollama is removed |
+| G1 | **Inference authority DECIDED = `cellm`** (owner 2026-06-27). teri: ruvllm > shimmy, but **cellm > both**. cellm is **not a `.meta.yaml` member yet** | adopt cellm (`meta add-repo`) + envctl inference component | `gh repo view FlexNetOS/cellm` (Rust, paged-KV, Metal/Vulkan, <512MB); cellm absent from `.meta.yaml` (grep 0); shimmy no `manifest/*`; ruvllm 0 consumers | **APPLY** (owner-decided) | cellm adopted + pinned envctl component serves the ollama-compat surface with a swap-parity gate; ollama/shimmy/ruvllm **not removed until cellm parity-proven** (strict-upgrade) |
 | G2 | meta-ruvector declared substrate but **0 consumers**; baseline "select seam by trait/API" superseded by lifeos's MCP-mirror choice | meta-ruvector ↔ lifeos | grep of network-control/lane/envctl Cargo.toml empty; `lifeos/.../storage/ruvector.rs` | **PROPOSE** | Baseline V2 reconciled to the MCP-mirror decision; first real consumer's seam documented and version-pinned |
-| G3 | handoff⊕rusty-idd union has **no symbol-level merge engine**; grit unfit (hash computed, never read; plain git merge) | handoff/rusty-idd + grit | `grit/parser/mod.rs:328-420` write-only hash; `git/mod.rs:221-253` plain merge | **PROPOSE** (kernel-class) | A symbol-aware reconciler dedups the ~95%-shared handoff/rusty-idd crates with grit as the *coordination* substrate, not the reconciler |
+| G3 | handoff⊕rusty-idd union needs a merge method; grit unfit as reconciler | `grit/parser/mod.rs:328-420` write-only hash; `git/mod.rs:221-253` plain merge | **owner-decided 2026-06-27** | Apply the **3-phase Frankenstein merge** (§Owner decisions): (1) combine as-is → (2) path/data-flow organization (consolidate dot-dirs) → (3) per-symbol endpoint-to-endpoint merge, **every change gated by an output-constant-or-better parity test**; grit = coordination around phase 3 only |
 | G4 | **Harness execution layer not wired**: no harness_hub-markdown → `WorkflowDefinition` parser; harness-agent-rs absent from the model | harness_hub ↔ harness-agent-rs | `har-contract/src/lib.rs:737` consumes pre-parsed workflows; no parser in either repo | **PROPOSE** | A parser converts a packaged harness into a `WorkflowDefinition` that `har` executes end-to-end on one real harness (differential-drive vs the Claude-executed path) |
 | G5 | CI control/exec planes typed but unwired (mint prod path P1; runner dispatch P2/P3 fail-closed) | flexnetos_github_app ↔ secretd ↔ runner | `app-core/src/mint.rs` `UnwiredMinter` default; runner README "P0 scaffold" | **APPLY** (mint path; frozen contract exists) / **PROPOSE** (dispatch) | `fxapp` mints a real installation token through `secretctl mint-github` and the merge-gate posts a required status check |
 | G6 | LifeOS front-door seams unbuilt (registry page S16; handoff projection S17; `/ai` Odysseus S18) | lifeos | baseline P0/P1; lifeos has the AI runtime + ruvector mirror but not these | **PROPOSE** | LifeOS renders live envctl component status from `auto-detect --json` and a handoff status feed; `/ai` embeds a local-bound Odysseus |
@@ -212,9 +231,9 @@ owner/structural/kernel-class) · acceptance criterion (the falsifiable I8 condi
 
 ## I7 — Integration roadmap (extends rusty-idd P0–P2; does not duplicate)
 
-**P0 — unblockers (decide + wire the frozen-contract paths)**
-- **D-G1** owner decision: inference authority (shimmy server vs ruvllm crate) → then envctl inference component (pinned, ollama swap-parity gate). *[owner wall]*
-- **D-G3** owner decision: handoff⊕rusty-idd symbol-merge approach (grit = coordinator only). *[owner wall, kernel-class]*
+**P0 — unblockers (owner decisions LANDED 2026-06-27; now actionable)**
+- **G1 (APPLY):** adopt **cellm** (`meta add-repo github.com/FlexNetOS/cellm`) + an envctl inference component (pinned, ollama swap-parity gate). Keep ollama/shimmy/ruvllm until cellm is parity-proven (strict-upgrade).
+- **G3 (method decided):** consolidate the handoff⊕rusty-idd union via the **3-phase Frankenstein merge** (combine-as-is → path/data-flow organization → per-symbol parity-gated merge; grit = coordination only).
 - **G5 mint path** (APPLY): wire `flexnetos_github_app` to the frozen `secretctl mint-github` prod path — unblocks the CI control plane (the contract already exists).
 
 **P1 — the execution + front-door layer**
@@ -230,9 +249,10 @@ owner/structural/kernel-class) · acceptance criterion (the falsifiable I8 condi
 - weave Damian/job-lane runner (the deferred execution half) — or record it stays deferred with rationale.
 - autoresearch freshness loop (Odysseus/model-provider/license deltas → prompt_hub/rusty-idd).
 
-**Witnessed next actions (Feature-Forge-ready, sequenced):** ① owner decisions D-G1, D-G3. ② `feature:` G5 mint prod path
-(envctl/flexnetos_github_app, frozen contract). ③ `feature:` G4 parser (harness_hub↔harness-agent-rs). ④ `feature:` G6
-LifeOS registry+projection (lifeos, additive). ⑤ `harden:` G7 items (one PR each). ⑥ index the fleet code graph (`git kb code index`).
+**Witnessed next actions (Feature-Forge-ready, sequenced):** ① `feature:` G1 adopt cellm + envctl inference component
+(owner-decided). ② `feature:` G5 mint prod path (envctl/flexnetos_github_app, frozen contract). ③ `feature:` G4 parser
+(harness_hub↔harness-agent-rs). ④ `feature:` G6 LifeOS registry+projection (lifeos, additive). ⑤ `feature:` G3 handoff⊕rusty-idd
+Frankenstein merge (parity-gated). ⑥ `harden:` G7 items (one PR each). ⑦ index the fleet code graph (`git kb code index`).
 
 ---
 
@@ -249,11 +269,13 @@ skipped"), each is flagged with its target test home for the per-seam Feature-Fo
 | G5 mint | `fxapp` mints a real token via `secretctl mint-github`; merge-gate posts required check | flexnetos_github_app `crates/app-core/tests/mint_e2e.rs` (differential-drive vs `UnwiredMinter`) | **design-only — RED deferred** |
 | G4 parser | one packaged harness → `WorkflowDefinition` executes on `har` matching the Claude path | harness-agent-rs `har-dag-executor/tests/harness_parse.rs` | **design-only — RED deferred** |
 | G6 registry | LifeOS renders live `envctl auto-detect --json` component status | lifeos `crates/lifeos-core/tests/registry.rs` | **design-only — RED deferred** |
-| G1 inference | envctl inference component serves the ollama-compat surface before ollama removal | envctl `crates/engine/tests/inference_component.rs` | **design-only — RED deferred (gated on D-G1)** |
+| G1 cellm | envctl inference component installs cellm + serves the ollama-compat surface (swap-parity) before ollama removal | envctl `crates/engine/tests/inference_component.rs` (differential vs ollama) | **design-only — RED deferred (owner-decided cellm)** |
+| G3 merge | each per-symbol merge step keeps output **constant or better** (differential parity) | per-merge golden/differential test in the merged repo | **design-only — RED deferred (Frankenstein phase 3)** |
 | G7 vox | vox installs under `$META_ROOT` not `/usr/local`; managed by a manifest component | envctl `crates/engine/tests/vox_component.rs` | **design-only — RED deferred** |
 
-**Tests authored this cycle: 0 (architecture/mapping cycle).** Honest fail-closed reason recorded above. The next loop
-running with a chosen owner decision (D-G1/D-G3) and a single target repo SHOULD author the RED suite for that one seam.
+**Tests authored this cycle: 0 (architecture/mapping cycle).** Honest fail-closed reason recorded above. With D-G1 (cellm)
+and D-G3 (Frankenstein merge) now owner-decided, the next loop SHOULD pick one target (G1 cellm adoption is the cleanest
+single-repo start) and author its RED suite.
 
 ---
 
@@ -263,7 +285,9 @@ running with a chosen owner decision (D-G1/D-G3) and a single target repo SHOULD
   call-site, cross-checked against `.meta.yaml`), the handoff ledger contract (4× source-verified), the grit-unfit
   caveat, and the LifeOS corrections. MEDIUM on call-graph internals (code graph unindexed) and on the breadth leaf
   forks (role/build-state corroborated, symbol-level not).
-- **Owner walls (NEEDS-HUMAN):** D-G1 inference authority, D-G3 union merge-engine approach, the disposition of the 4
-  empty repos and kasetto's canonical home. These are scope/irreversible decisions — surfaced, not performed.
+- **Owner walls — D-G1 & D-G3 RESOLVED 2026-06-27** (inference = cellm; union merge = 3-phase Frankenstein). **Remaining
+  walls (NEEDS-HUMAN):** disposition of the 4 empty repos (`flexnetos_wiki/brain`, `my-wiki`, `assets`) + empty
+  `hooks_hub`/`flow_hub`, and kasetto's canonical home (now with a decided *method* — the Frankenstein merge — but the
+  keep-which choice is still owner's). Surfaced, not performed.
 - **Biggest single lever:** **S14 / G4** — wiring harness_hub's markdown harnesses to the `harness-agent-rs` Rust DAG
   runtime is what converts the entire "intent front door" from Claude-executed prose into a runnable execution layer.
