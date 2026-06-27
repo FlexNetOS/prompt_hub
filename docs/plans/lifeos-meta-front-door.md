@@ -1,5 +1,13 @@
 # LifeOS Meta Front-Door — Integration Plan
 
+> **➤ Extended 2026-06-27 by the full-fleet cycle → [`meta-fleet-integration.md`](./meta-fleet-integration.md).**
+> That cycle re-validated this baseline against current HEAD with 5 source-citing agents and corrects it:
+> (1) LifeOS is a **real multi-crate app with a durable AI runtime** (not a skeleton); (2) the ruvector seam is **already
+> chosen** (MCP-REST mirror), superseding `[V2]`'s "not yet selected"; (3) network-control composes **lane only** (NOT
+> ruvector — corrects `[N1]`); (4) the baseline omits the **harness execution layer** (`harness-agent-rs` Rust DAG runtime);
+> (5) the prompt_hub intent-boundary "ADR-0007" citation mis-points (prompt_hub's ADR-0007 is the plugin system). The
+> two-front-door + handoff⊕rusty-idd-union verdicts are **confirmed in source**. Read the fleet doc for the extended matrix.
+
 > **Status:** synthesized plan (decision-grade, evidence-backed)
 > **Source of truth:** `rusty-idd` plan-loop run on branch `plan/lifeos-meta-front-door`
 > @ commit `5a55284` (3 cycles complete). This doc distills its committed
