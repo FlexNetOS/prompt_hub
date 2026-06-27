@@ -161,7 +161,7 @@ marked "keep as substrate; do not duplicate." New/under-modeled components are *
 | **n8n** | workflow automation (AGPL fork); agent web-access seam | REST/webhook :5678 via lane; n8n-mcp | `_workspace/` loop | AGPL → API/sandbox boundary |
 | teri | swarm-intelligence prediction (AGPL) | HTTP API + CLI `teri serve` | rusqlite bundled (C) | AGPL → API boundary if consumed |
 | Hubs (plugin/mcp/tool/database/network/vault) | curated registries | `registry.json` catalogs | manifest-only | tool_hub thin (1); **vault_hub no registry.json** |
-| Empty/placeholder | `flexnetos_wiki/brain`, `my-wiki`, `assets`, `hooks_hub`(0), `flow_hub`(0) | — | **0 content** | declared-but-not-built (G7) |
+| Empty/placeholder | ~~`flexnetos_wiki/brain`, `my-wiki`, `assets`~~ (DELETED 2026-06-27, meta #69); `hooks_hub`(0), `flow_hub`(0) remain | — | **0 content** | 4 empty repos removed (owner); scaffolded hubs kept (G7) |
 
 ### Named-seam catalog (producer → consumer · contract · authority · status)
 
@@ -285,9 +285,10 @@ single-repo start) and author its RED suite.
   call-site, cross-checked against `.meta.yaml`), the handoff ledger contract (4× source-verified), the grit-unfit
   caveat, and the LifeOS corrections. MEDIUM on call-graph internals (code graph unindexed) and on the breadth leaf
   forks (role/build-state corroborated, symbol-level not).
-- **Owner walls — D-G1 & D-G3 RESOLVED 2026-06-27** (inference = cellm; union merge = 3-phase Frankenstein). **Remaining
-  walls (NEEDS-HUMAN):** disposition of the 4 empty repos (`flexnetos_wiki/brain`, `my-wiki`, `assets`) + empty
-  `hooks_hub`/`flow_hub`, and kasetto's canonical home (now with a decided *method* — the Frankenstein merge — but the
-  keep-which choice is still owner's). Surfaced, not performed.
+- **Owner walls — D-G1, D-G3 & the empty repos RESOLVED 2026-06-27.** Inference = cellm; union merge = 3-phase
+  Frankenstein; the **4 empty repos (`flexnetos_wiki/brain`, `my-wiki`, `assets`) were deleted + unregistered**
+  (meta #69 — verified empty, 0 commits). **Remaining walls (NEEDS-HUMAN):** disposition of the scaffolded-but-empty
+  hubs `hooks_hub`/`flow_hub` (build or retire — distinct from the deleted zero-content repos), and kasetto's canonical
+  home (method decided = Frankenstein merge; the keep-which choice is still owner's). Surfaced, not performed.
 - **Biggest single lever:** **S14 / G4** — wiring harness_hub's markdown harnesses to the `harness-agent-rs` Rust DAG
   runtime is what converts the entire "intent front door" from Claude-executed prose into a runnable execution layer.
