@@ -1,0 +1,14 @@
+# The Docker build fetches crates from crates.io in-container and never copies
+# .cargo/config.toml, so the vendored sources are not needed in the build
+# context. Excluding them (and other local-only trees) keeps the context small
+# and the docker build fast.
+vendor/
+target/
+.git/
+.github/
+.handoff/
+worktrees/
+docs/audits/
+*.db
+*.db-wal
+*.db-shm

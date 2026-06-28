@@ -1,0 +1,6 @@
+# Vendored crate sources (cargo vendor) are checksum-verified by cargo against
+# each crate's .cargo-checksum.json. Git must check them out byte-for-byte on
+# every platform — any EOL/CRLF normalization changes the bytes and makes the
+# Windows build fail with `error: the listed checksum of vendor/... has changed`.
+# `-text` disables all line-ending conversion for the vendored tree.
+vendor/** -text
