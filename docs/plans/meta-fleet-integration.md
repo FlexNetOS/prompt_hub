@@ -37,10 +37,10 @@ engines** — never collapse a subsystem's authoritative engine into another rep
 ### Owner decisions (2026-06-27 — resolve walls D-G1 & D-G3)
 
 - **D-G1 · Inference authority = `inferrs`** (corrected 2026-06-27 — an earlier answer naming `cellm` was a mistake).
-  The chosen primary inference engine is **[`inferrs`](https://github.com/ericcurtin/inferrs)** — Rust, Apache-2.0, a
+  The chosen primary inference engine is **[`inferrs`](https://github.com/FlexNetOS/inferrs)** — Rust, Apache-2.0, a
   TurboQuant inference server. teri's local-engine benchmark stands (ruvllm > shimmy); **inferrs is the primary**,
-  ruvllm/shimmy secondary. **inferrs is an EXTERNAL upstream** (`ericcurtin/inferrs`, not a FlexNetOS repo) → adoption =
-  fork into the org + register in `.meta.yaml` + an envctl inference component (pinned), distinct from a same-org adopt.
+  ruvllm/shimmy secondary. **`FlexNetOS/inferrs` is the org fork** (upstream = `ericcurtin/inferrs`), so adoption is a
+  **same-org register**: add the existing fork to `.meta.yaml` + an envctl inference component (pinned) — no fork-first step.
   Per strict-upgrade, ollama/shimmy/ruvllm are **not removed until inferrs is installed, configured, and parity-proven**.
 
 - **D-G3 · Union merge method = the 3-phase Frankenstein merge.** This is the general doctrine for consolidating **any
@@ -217,7 +217,7 @@ owner/structural/kernel-class) · acceptance criterion (the falsifiable I8 condi
 
 | # | Gap | Target surface | Evidence | Tier | Acceptance criterion |
 |---|---|---|---|---|---|
-| G1 | **Inference authority DECIDED = `inferrs`** (owner 2026-06-27; corrects an earlier `cellm` mistake). teri: ruvllm > shimmy; inferrs is primary. inferrs is an **external upstream** | fork+adopt inferrs (`meta add-repo`) + envctl inference component | `gh repo view ericcurtin/inferrs` (Rust, Apache-2.0, TurboQuant inference server); inferrs not yet in `.meta.yaml`; shimmy no `manifest/*`; ruvllm 0 consumers | **APPLY** (owner-decided) | inferrs forked+adopted + pinned envctl component serves the ollama-compat surface with a swap-parity gate; ollama/shimmy/ruvllm **not removed until inferrs parity-proven** (strict-upgrade) |
+| G1 | **Inference authority DECIDED = `inferrs`** (owner 2026-06-27; corrects an earlier `cellm` mistake). teri: ruvllm > shimmy; inferrs is primary. **`FlexNetOS/inferrs` = org fork** (upstream `ericcurtin/inferrs`) | register the fork (`meta add-repo`) + envctl inference component | `gh repo view FlexNetOS/inferrs` (fork, Rust, Apache-2.0, TurboQuant inference server); inferrs not yet in `.meta.yaml`; shimmy no `manifest/*`; ruvllm 0 consumers | **APPLY** (owner-decided) | inferrs forked+adopted + pinned envctl component serves the ollama-compat surface with a swap-parity gate; ollama/shimmy/ruvllm **not removed until inferrs parity-proven** (strict-upgrade) |
 | G2 | meta-ruvector declared substrate but **0 consumers**; baseline "select seam by trait/API" superseded by lifeos's MCP-mirror choice | meta-ruvector ↔ lifeos | grep of network-control/lane/envctl Cargo.toml empty; `lifeos/.../storage/ruvector.rs` | **PROPOSE** | Baseline V2 reconciled to the MCP-mirror decision; first real consumer's seam documented and version-pinned |
 | G3 | handoff⊕rusty-idd union needs a merge method; grit unfit as reconciler | `grit/parser/mod.rs:328-420` write-only hash; `git/mod.rs:221-253` plain merge | **owner-decided 2026-06-27** | Apply the **3-phase Frankenstein merge** (§Owner decisions): (1) combine as-is → (2) path/data-flow organization (consolidate dot-dirs) → (3) per-symbol endpoint-to-endpoint merge, **every change gated by an output-constant-or-better parity test**; grit = coordination around phase 3 only |
 | G4 | **Harness execution layer not wired**: no harness_hub-markdown → `WorkflowDefinition` parser; harness-agent-rs absent from the model | harness_hub ↔ harness-agent-rs | `har-contract/src/lib.rs:737` consumes pre-parsed workflows; no parser in either repo | **PROPOSE** | A parser converts a packaged harness into a `WorkflowDefinition` that `har` executes end-to-end on one real harness (differential-drive vs the Claude-executed path) |
@@ -232,7 +232,7 @@ owner/structural/kernel-class) · acceptance criterion (the falsifiable I8 condi
 ## I7 — Integration roadmap (extends rusty-idd P0–P2; does not duplicate)
 
 **P0 — unblockers (owner decisions LANDED 2026-06-27; now actionable)**
-- **G1 (APPLY):** fork+adopt **inferrs** (external `github.com/ericcurtin/inferrs` → FlexNetOS fork → `meta add-repo`) + an envctl inference component (pinned, ollama swap-parity gate). Keep ollama/shimmy/ruvllm until inferrs is parity-proven (strict-upgrade).
+- **G1 (APPLY):** adopt **inferrs** (`meta add-repo github.com/FlexNetOS/inferrs` — org fork of `ericcurtin/inferrs`) + an envctl inference component (pinned, ollama swap-parity gate). Keep ollama/shimmy/ruvllm until inferrs is parity-proven (strict-upgrade).
 - **G3 (method decided):** consolidate the handoff⊕rusty-idd union via the **3-phase Frankenstein merge** (combine-as-is → path/data-flow organization → per-symbol parity-gated merge; grit = coordination only).
 - **G5 mint path** (APPLY): wire `flexnetos_github_app` to the frozen `secretctl mint-github` prod path — unblocks the CI control plane (the contract already exists).
 
