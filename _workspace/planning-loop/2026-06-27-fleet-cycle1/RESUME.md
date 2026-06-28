@@ -15,15 +15,15 @@
 - I9: evolution scorecard → `evaluation.md`.
 
 ## Owner decisions LANDED 2026-06-27 (resolve D-G1 & D-G3)
-- **D-G1 inference authority = `inferrs`** (`github.com/ericcurtin/inferrs`; Rust, Apache-2.0, TurboQuant inference server.
-  Corrects an earlier `cellm` mistake). teri: ruvllm > shimmy; inferrs is primary. **inferrs is an EXTERNAL upstream**
-  → fork+adopt into FlexNetOS + register in `.meta.yaml` + envctl component; keep ollama/shimmy/ruvllm until parity-proven.
+- **D-G1 inference authority = `inferrs`** (`github.com/FlexNetOS/inferrs`, org fork of `ericcurtin/inferrs`; Rust,
+  Apache-2.0, TurboQuant inference server. Corrects an earlier `cellm` mistake). teri: ruvllm > shimmy; inferrs is primary.
+  Same-org adopt → register the fork in `.meta.yaml` + envctl component; keep ollama/shimmy/ruvllm until parity-proven.
 - **D-G3 union merge = 3-phase Frankenstein merge** (general doctrine for any 2 Rust repos): (1) combine as-is →
   (2) path/data-flow organization (consolidate dot-dirs, e.g. `.handoff/.idd`, `.handoff/.kb`) → (3) per-symbol
   endpoint-to-endpoint merge, every change gated by an output-constant-or-better parity test. grit = coordination only.
 
 ## Next cycle should
-1. **G1 (cleanest single-repo start):** fork+adopt `github.com/ericcurtin/inferrs` (external) + envctl inference component
+1. **G1 (cleanest single-repo start):** adopt `github.com/FlexNetOS/inferrs` (org fork) + envctl inference component
    (pinned, ollama swap-parity gate). Author its RED suite (differential vs ollama).
 2. Highest single lever: **G4/S14** — build the harness_hub-markdown → `WorkflowDefinition` parser so packaged
    harnesses execute on the `harness-agent-rs` Rust DAG runtime (closes the intent→execution loop).
