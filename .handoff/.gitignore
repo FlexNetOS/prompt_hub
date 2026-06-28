@@ -12,3 +12,9 @@ locks/
 # meta/handoff ledger (federated per-repo ledger). Negation overrides the root `*.db` ignore;
 # WAL/shm sidecars (ledger.db-wal / -shm) stay ignored via the root *.db-wal / *.db-shm rules.
 !ledger.db
+
+# handoff continuity: binary ledger cache is gitignored
+# (committed truth = ledger.events.jsonl — ADR-0018 D1 / HFTASK-0067)
+ledger.db
+ledger.db-wal
+ledger.db-shm

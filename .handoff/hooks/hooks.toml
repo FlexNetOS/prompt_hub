@@ -1,7 +1,4 @@
-# prompt_hub (FLEET member) — hook contract (handoff.hooks.v1).
-# Adapted from the kernel reference. MEMBER MODEL (ADR-0004 §3): this repo has NO
-# local ledger.db; events are witnessed in the FLEET ledger (meta/.handoff) and the
-# packet is compiled by `hf fleet render prompt_hub` (run from the meta root).
+# Continuity Ledger Kernel — hook contract (handoff.hooks.v1)
 #
 # Brought forward (upgraded) from the 2026-06-02 ark_handoff_ledger_v2_package
 # templates — see ADR-0001 Research §R9. This is the lifecycle-automation layer:
@@ -16,7 +13,7 @@ schema = "handoff.hooks.v1"
 
 [[hooks]]
 event = "SessionStart"
-command = ".handoff/hooks/loop-entry.sh"  # rehydrate (member: fleet render) + loop entry
+command = "hf resume --compact"          # rehydrate state; also the loop entry point
 timeout_seconds = 10
 fail_mode = "warn"
 
@@ -44,10 +41,14 @@ command = "hf drift --json && hf policy check-handoff --json"  # drift gate — 
 timeout_seconds = 30
 fail_mode = "block"
 
+# Session end (the canonical lifecycle-end event — matches .claude/settings.json and the
+# deployed session-end.sh). Renamed from the pre-HFTASK-0069 `SessionStop`, which was a
+# dangling name the typed contract (CONTRACT_EVENTS) rejected. `hf export` refreshes the
+# committed `.handoff/ledger.events.jsonl` truth (ADR-0018 D1 / HFTASK-0067).
 [[hooks]]
-event = "SessionStop"
-command = "hf checkpoint --auto && (cd \"$(git -C . rev-parse --show-toplevel)/..\" && hf fleet render prompt_hub)"
-timeout_seconds = 60
+event = "SessionEnd"
+command = "hf checkpoint --auto && hf handoff && hf export && hf sync --auto && hf session reap"
+timeout_seconds = 90
 fail_mode = "warn"
 
 # --- Loop v2 additions (ADR-0001) ---
@@ -63,6 +64,52 @@ fail_mode = "block"
 [[hooks]]
 # After a merge lands, mirror state one-way to .kb + ensure meta registration (§6).
 event = "PostMerge"
-command = "hf sync --auto"               # HFTASK-0011
+command = "hf sync --auto && hf session reap" # HFTASK-0011 + HFTASK-0089
 timeout_seconds = 45
+fail_mode = "warn"
+
+# --- HFTASK-0052: the 6 PRD §18 events that complete the 12-event typed contract.
+# Fired via `hf hook run <event>`, which wraps each command in the typed
+# handoff.hook_event.v1 / handoff.hook_result.v1 envelope (severity + required_actions).
+
+[[hooks]]
+# Resuming an existing session (vs a cold SessionStart): rehydrate without re-preflight.
+event = "SessionResume"
+command = "hf resume --compact"
+timeout_seconds = 10
+fail_mode = "warn"
+
+[[hooks]]
+# Before the agent runs a shell command: confirm a task is claimed (no unclaimed mutation).
+event = "PreCommand"
+command = "hf policy check-claim --json"
+timeout_seconds = 10
+fail_mode = "warn"
+
+[[hooks]]
+# After a command: opportunistic checkpoint so progress is witnessed.
+event = "PostCommand"
+command = "hf checkpoint --auto --quiet"
+timeout_seconds = 30
+fail_mode = "warn"
+
+[[hooks]]
+# Before running tests: ensure the working tree is in-scope for the claimed task.
+event = "PreTest"
+command = "hf policy check-edit --json"
+timeout_seconds = 10
+fail_mode = "warn"
+
+[[hooks]]
+# After tests: run the drift sentinel so a green test run that drifted scope is caught.
+event = "PostTest"
+command = "hf drift --json"
+timeout_seconds = 30
+fail_mode = "block"
+
+[[hooks]]
+# After a handoff packet renders: a final drift gate so the packet reflects clean truth.
+event = "PostHandoff"
+command = "hf drift --json"
+timeout_seconds = 30
 fail_mode = "warn"
