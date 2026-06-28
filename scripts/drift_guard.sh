@@ -33,20 +33,6 @@ else
   fi
 fi
 
-# Third-party vendored crate sources (vendor/) are NOT subject to the
-# Rust-native contract — they are external dependencies copied verbatim by
-# `cargo vendor`, not this workspace's code (and legitimately use async_trait,
-# C, unsafe, etc.). Drop them so vendoring does not trip the guard. target/ is
-# build output and is excluded for the same reason.
-FILTERED=()
-for _f in "${FILES[@]}"; do
-  case "$_f" in
-    vendor/*|target/*) continue ;;
-    *) FILTERED+=("$_f") ;;
-  esac
-done
-FILES=("${FILTERED[@]+"${FILTERED[@]}"}")
-
 : >"$REPORT"
 {
   echo "# Rust-Native Guard report"
