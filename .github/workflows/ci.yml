@@ -82,6 +82,14 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          # macOS stable restored target artifacts can carry stale build-script
+          # linker search paths from retired Xcode images (for example
+          # Xcode_26.6_Release_Candidate_2), which makes fresh runners fail to
+          # find libclang_rt.osx even after setup-xcode selects latest-stable.
+          # Keep registry caching but rebuild target artifacts on macOS; Linux
+          # and Windows keep target caching for speed.
+          cache-targets: ${{ runner.os != 'macOS' }}
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --workspace --all-features
 
