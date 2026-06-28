@@ -17,3 +17,11 @@ worktrees/
 # (ADR-0004 §3 revised 2026-06-13: federated per-repo ledger). WAL/shm sidecars stay
 # ignored via *.db-shm / *.db-wal above; only the ledger db itself is tracked.
 !.handoff/ledger.db
+
+# handoff continuity: binary ledger cache + migration artifacts are gitignored
+# (committed truth = .handoff/ledger.events.jsonl — ADR-0018 D1 / HFTASK-0067)
+.handoff/**/ledger.db
+.handoff/**/*.rvf
+.handoff/**/*.rvf.lock
+.handoff/**/*.sqlite.bak
+.handoff/**/*.redb.tmp
