@@ -1,63 +1,66 @@
 #!/usr/bin/env bash
-# SessionStart hook — rehydrate prompt_hub's continuity state and auto-invoke the loop.
+# SessionStart hook — rehydrate kernel state and auto-invoke the handoff loop.
 #
-# prompt_hub is a Tier-B FLEET member (ADR-0004 §3): it has NO local ledger.db.
-# Its resume packet is compiled centrally by `hf fleet render prompt_hub` (run from
-# the meta root) from the git-text cards + the FLEET ledger (meta/.handoff).
+# Wired from handoff/.claude/settings.json (project layer). The kernel's own
+# contract (.handoff/hooks/hooks.toml) names SessionStart as the loop entry point;
+# this script is the executable realization of that for the Claude Code harness.
 #
-# Behavior: regenerate + print the member packet (becomes session context), then —
-# only when an unblocked backlog card exists — emit a directive telling Claude to run
-# the `prompt-loop` skill. No open card → no directive (don't force a loop with
-# nothing to do). Best-effort: never hard-fail a hook.
+# Behavior: print the compact resume packet (becomes session context), then — only
+# when the ledger has a safe next task — emit a directive telling Claude to run the
+# `handoff-loop` skill. No work queued → no directive (don't force a loop with
+# nothing to do).
 set -uo pipefail
-REPO="${CLAUDE_PROJECT_DIR:-.}"
-cd "$REPO" 2>/dev/null || exit 0
+cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
 
-# Locate hf (PATH, then a sibling kernel build). Never hard-fail.
+# Locate the hf binary (PATH, then debug/release build). Never hard-fail a hook.
 HF=""
 if command -v hf >/dev/null 2>&1; then HF="hf"
-elif [ -x ../handoff/target/release/hf ]; then HF="../handoff/target/release/hf"
-elif [ -x ../handoff/target/debug/hf ];   then HF="../handoff/target/debug/hf"
+elif [ -x target/debug/hf ];   then HF="./target/debug/hf"
+elif [ -x target/release/hf ]; then HF="./target/release/hf"
 fi
 if [ -z "$HF" ]; then
-  echo "[handoff] hf not on PATH — install it to enable the loop (see meta/handoff/FLEET_GUIDE.md)."
+  echo "[handoff] hf not built — run 'cargo build -p hf' to enable the loop."
   exit 0
 fi
 
-# Find the meta root (parent holding .meta.yaml + the FLEET ledger) and render this
-# member's packet from there (the member model — never a local ledger).
-META="$(cd .. 2>/dev/null && pwd)"
-if [ -f "$META/.meta.yaml" ] && [ -d "$META/.handoff" ]; then
-  ( cd "$META" && "$HF" fleet render prompt_hub >/dev/null 2>&1 ) || true
+# Rehydrate (compact packet → session context).
+"$HF" resume --compact 2>/dev/null || true
+
+# HFTASK-0085 (automation rung 1): if the installed hf is BEHIND the kernel source, say so
+# loudly so the binary gets refreshed (handoff-loop-init.sh auto-rebuilds; manual fallback
+# `cargo install --path hf`). Only meaningful in the kernel checkout (.git + hf/ present);
+# never hard-fails the hook.
+if [ -d .git ] && [ -f hf/Cargo.toml ] && command -v git >/dev/null 2>&1; then
+  _inst="$("$HF" version --json 2>/dev/null | grep '"commit"' | sed -E 's/.*"commit"[^"]*"([^"]+)".*/\1/')"
+  _head="$(git rev-parse --short HEAD 2>/dev/null)"
+  if [ -n "$_inst" ] && [ -n "$_head" ] && [ "$_inst" != "unknown" ] && [ "$_inst" != "$_head" ]; then
+    echo "[handoff] hf binary stamp '${_inst}' is BEHIND kernel HEAD '${_head}' — refresh it:"
+    echo "          bash scripts/handoff-loop-init.sh   (auto-rebuilds)   |   cargo install --path hf --locked --force"
+  fi
 fi
 
-# Print the freshly rendered packet (rehydration → session context).
-[ -f .handoff/packets/latest.md ] && cat .handoff/packets/latest.md 2>/dev/null || true
-
-# Detect a safe next card: first status:"backlog" with empty blocked_by, lowest priority.
-NEXT="$(python3 - <<'PY' 2>/dev/null || true
-import json, glob
-best=None; order={"P0":0,"P1":1,"P2":2,"P3":3}
-for f in sorted(glob.glob(".handoff/tasks/*.task.json")):
-    try: c=json.load(open(f))
-    except Exception: continue
-    if c.get("status")!="backlog": continue
-    if c.get("blocked_by"): continue
-    k=order.get(c.get("priority","P3"),3)
-    if best is None or k<best[0]: best=(k,c.get("id",""))
-print(best[1] if best else "")
-PY
-)"
+# Detect a safe next task from ledger truth (resume --json).
+NEXT="$("$HF" resume --json 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    t = d.get("next_task_id") or ""
+    if (not t) and isinstance(d.get("next_command"), str) and d["next_command"].startswith("hf claim "):
+        t = d["next_command"].split()[-1]
+    print("" if t in ("", "done") else t)
+except Exception:
+    print("")
+' 2>/dev/null || true)"
 
 if [ -n "$NEXT" ]; then
   cat <<EOF
 
-[prompt-loop] Backlog has a safe next card: ${NEXT}.
-ACTION: invoke the \`prompt-loop\` skill to continue the autonomous construction-crew
-loop (architect → implement ↔ verify → docs → commit → push/PR/auto-merge), one card
-per cycle. The packet above is rendered state and may be stale — the loop re-derives
-truth from Git > FLEET ledger > .handoff/tasks/*.task.json first.
-Skip ONLY if the user's first request is a one-off question unrelated to the loop.
+[handoff-loop] Ledger has a safe next task: ${NEXT}.
+ACTION: invoke the \`handoff-loop\` skill to continue the autonomous Continuity Kernel
+loop (reconcile drift → research → implement → verify → gatekeeper verdict → ship →
+handoff), one witnessed task per cycle. The packet above is rendered state and may be
+stale — the loop re-derives truth from Git > ledger > cards first.
+Skip ONLY if the user's first request is a one-off question unrelated to the kernel.
 EOF
 fi
 exit 0
