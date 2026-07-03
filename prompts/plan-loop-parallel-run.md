@@ -115,7 +115,7 @@ Per-target artifacts (`graph/<T>.*`, `findings/<axis>-<T>.md`, `reports/*-<T>.md
   mode — the lease guarantees no two grab the same node). Recommended first wave: independent organs with
   no cross-deps in the `target-dag` ready-set.
 - **Collision note (known rough edge):** concurrent envctl PRs can still conflict on `loop_state.md` /
-  `targets.md`. Mitigations: the per-target write discipline (§7) keeps diffs region-isolated and
+  `targets.md` / `graph/target-dag.{json,md}`. Mitigations: the per-target write discipline (§7) keeps diffs region-isolated and
   mostly auto-mergeable; merge the PRs sequentially if needed; a follow-up loop wrap-up reconciles
   `targets.md`/`loop_state.md` to status-truth. (Proposed harness upgrade: namespace run state under
   `.handoff/loop/plan/runs/<target>/` to remove the shared-file conflict entirely — see
