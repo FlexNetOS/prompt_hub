@@ -27,7 +27,7 @@ jobs:
     # Opt-in: set repository variable ENABLE_AI_WORKFLOWS=true to run.
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -124,7 +124,7 @@ jobs:
     name: Performance Impact Analysis
     if: ${{ vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -202,7 +202,7 @@ jobs:
     needs: [security-analysis, performance-impact]
     if: ${{ always() && vars.ENABLE_AI_WORKFLOWS == 'true' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Verify compilation
         run: |
