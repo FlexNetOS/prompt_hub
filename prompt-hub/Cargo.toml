@@ -118,11 +118,16 @@ inventory = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true }
 ort = { workspace = true, optional = true, features = ["ndarray"] }
+# TEAS front-door emitter (S1): blake3 IntentLock hashes over the WorkOrder
+# contract surface. Direct dep (not workspace) — first blake3 user in the tree.
+blake3 = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
+# Validates emitted WorkOrders against the embedded canonical task_graph schema.
+jsonschema = "0.30"
 
 [[bench]]
 name = "search_latency"

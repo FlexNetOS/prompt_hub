@@ -110,6 +110,7 @@ pub mod storage;
 pub mod summarizer;
 pub mod swarm;
 pub mod sync;
+pub mod teas_frontdoor;
 pub mod templates;
 pub mod tokens;
 #[cfg(feature = "touch")]
@@ -133,6 +134,7 @@ pub use error::{HubError, Result};
 pub use hub::PromptHub;
 pub use models::UserProfile;
 pub use models::*;
+pub use teas_frontdoor::{emit_work_orders, EmittedWorkOrder, IntentLock, TASK_GRAPH_SCHEMA};
 
 #[cfg(feature = "gather")]
 pub use gather::{
