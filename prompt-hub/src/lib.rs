@@ -103,6 +103,7 @@ pub mod rollback;
 pub mod sandbox;
 pub mod sanitize;
 // satisfaction is deeply wired into PromptHub struct — kept always-in for now.
+pub mod goal_artifact;
 pub mod satisfaction;
 pub mod search;
 pub mod shutdown;
@@ -131,10 +132,14 @@ pub use inventory;
 // Re-export commonly used types
 pub use config::HubConfig;
 pub use error::{HubError, Result};
+pub use goal_artifact::{
+    GOAL_ARTIFACT_KIND, GOAL_ARTIFACT_SCHEMA_VERSION, GOAL_ARTIFACT_TARGET, GoalArtifact,
+    GoalProvenance, SourceCitation,
+};
 pub use hub::PromptHub;
 pub use models::UserProfile;
 pub use models::*;
-pub use teas_frontdoor::{emit_work_orders, EmittedWorkOrder, IntentLock, TASK_GRAPH_SCHEMA};
+pub use teas_frontdoor::{EmittedWorkOrder, IntentLock, TASK_GRAPH_SCHEMA, emit_work_orders};
 
 #[cfg(feature = "gather")]
 pub use gather::{
