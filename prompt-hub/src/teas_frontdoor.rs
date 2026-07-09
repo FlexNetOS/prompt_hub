@@ -14,6 +14,8 @@
 //! converge at consolidation); this module intentionally does not depend on the
 //! `handoff` or `rvagent-engine` crates.
 
+#![forbid(unsafe_code)]
+
 use serde::Serialize;
 
 use crate::models::{Complexity, ExecutionPlan, ExecutionStep, Intent, Urgency};
@@ -45,7 +47,7 @@ pub struct IntentLock {
 /// the schema forbids (`additionalProperties: false`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EmittedWorkOrder {
-    /// Schema tag, always [`SCHEMA_TAG`] (`handoff.task.v1`).
+    /// Schema tag, always `SCHEMA_TAG` (`handoff.task.v1`).
     pub schema: String,
     /// Stable identity, e.g. `TASK-0001`. Matches `^[A-Z]*TASK-[A-Z0-9][A-Z0-9-]*$`.
     pub id: String,
@@ -105,8 +107,7 @@ pub fn emit_work_orders(intent: &Intent, plan: &ExecutionPlan) -> Vec<EmittedWor
             let path_scope: Vec<String> = Vec::new();
             let acceptance_criteria = acceptance_for(step, position);
 
-            let dependencies =
-                resolve_dependencies(step, &plan.steps, &task_id_for_position);
+            let dependencies = resolve_dependencies(step, &plan.steps, &task_id_for_position);
             let blocked_by = dependencies.clone();
 
             let intent_lock = Some(IntentLock {
@@ -177,10 +178,11 @@ fn objective_for(step: &ExecutionStep, position: usize) -> String {
 /// Builds a non-empty acceptance-criteria list for a step (schema requires >=1).
 fn acceptance_for(step: &ExecutionStep, position: usize) -> Vec<String> {
     match first_non_empty(&[&step.description, &step.action]) {
-        Some(text) => vec![format!("{} — completes and verification passes", text.trim())],
-        None => vec![format!(
-            "Step {position} completes and verification passes"
+        Some(text) => vec![format!(
+            "{} — completes and verification passes",
+            text.trim()
         )],
+        None => vec![format!("Step {position} completes and verification passes")],
     }
 }
 
@@ -216,10 +218,7 @@ fn resolve_dependencies(
 
 /// Returns the first trimmed, non-empty string from the candidates.
 fn first_non_empty<'a>(candidates: &[&'a String]) -> Option<&'a str> {
-    candidates
-        .iter()
-        .map(|s| s.trim())
-        .find(|s| !s.is_empty())
+    candidates.iter().map(|s| s.trim()).find(|s| !s.is_empty())
 }
 
 /// Truncates `text` to at most `max_chars` characters on a word boundary,
@@ -325,8 +324,10 @@ mod tests {
         assert!(!orders.is_empty(), "at least one WorkOrder emitted");
         for order in &orders {
             let value = serde_json::to_value(order).expect("serializes");
-            let errors: Vec<String> =
-                validator.iter_errors(&value).map(|e| e.to_string()).collect();
+            let errors: Vec<String> = validator
+                .iter_errors(&value)
+                .map(|e| e.to_string())
+                .collect();
             assert!(
                 errors.is_empty(),
                 "WorkOrder {} failed schema validation: {:?}\njson: {}",

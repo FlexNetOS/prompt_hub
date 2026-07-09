@@ -7,6 +7,8 @@
 //! and bind it to a change. Contract pinned by
 //! `tests/goal_artifact_contract.rs` (formerly the additive RED suite).
 
+#![forbid(unsafe_code)]
+
 use crate::models::{Intent, Prompt};
 use serde::{Deserialize, Serialize};
 
