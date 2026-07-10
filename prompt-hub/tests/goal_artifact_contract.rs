@@ -9,22 +9,15 @@
 //! lifeos-meta-front-door.md:10-11) so rusty-idd can consume it deterministically
 //! and bind it to a change.
 //!
-//! These tests are intentionally RED: prompt_hub today exposes NO goal-artifact
-//! emission API (verified: `grep -rni 'goal_artifact|provenance|emit_goal' src`
-//! returns nothing). The closest structured thing prompt_hub can emit for a
-//! prompt/intent is the serialized public model (`Prompt`/`Intent`), which
-//! carries NO `schema_version`, NO `provenance`, and is a bare record rather
-//! than a consumer-targeted envelope. Each test asserts one required property of
-//! the convergence contract against that best-available emission, so it FAILS
-//! for the RIGHT reason (capability/contract absent), not on a compile error.
-//!
-//! These compile and run against prompt_hub's REAL public API only
-//! (`prompt_hub::{PromptHub, HubConfig, models::*}` + serde, all existing deps).
-//! When Feature Forge implements the emission, flipping these to GREEN is the
-//! acceptance signal.
+//! GREEN since the `goal_artifact` module landed: `GoalArtifact::from_prompt` /
+//! `::from_intent` emit the stable envelope (schema_version + provenance with
+//! `[P#]`/`[I#]` source citations + producer/consumer binding). This suite is
+//! now the pinned convergence contract — a regression in the envelope shape
+//! turns it RED again. (It began life as the additive RED suite whose flip to
+//! GREEN was the acceptance signal.)
 
 use prompt_hub::models::*;
-use prompt_hub::{HubConfig, PromptHub};
+use prompt_hub::{GoalArtifact, HubConfig, PromptHub};
 use serde_json::Value;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -33,7 +26,10 @@ use tempfile::TempDir;
 
 /// A benign prompt that passes the injection sanitizer (no jailbreak keywords).
 fn sample_prompt(name: &str) -> Prompt {
-    let mut p = Prompt::new(name, "You are a helpful planning assistant for build tasks.");
+    let mut p = Prompt::new(
+        name,
+        "You are a helpful planning assistant for build tasks.",
+    );
     p.domain = Domain::General;
     p.tags = vec!["planning".to_string()];
     p.target_roles = vec![Role::Developer];
@@ -53,12 +49,10 @@ fn sample_intent() -> Intent {
     }
 }
 
-/// The ONLY structured artifact prompt_hub can currently emit for a prompt is
-/// the serialized `Prompt` itself — there is no dedicated goal-artifact emission
-/// API (ADR-0007 convergence contract). We assert the convergence contract
-/// against this best-available emission.
+/// The goal-artifact emission for a prompt record (ADR-0007 convergence
+/// contract): the stable envelope rusty-idd consumes.
 fn current_emission(prompt: &Prompt) -> Value {
-    serde_json::to_value(prompt).expect("Prompt derives Serialize")
+    serde_json::to_value(GoalArtifact::from_prompt(prompt)).expect("GoalArtifact derives Serialize")
 }
 
 // ── Contract: stable schema version ─────────────────────────────────────────
@@ -70,7 +64,10 @@ fn goal_artifact_declares_stable_schema_version() {
     // therefore MUST carry a top-level `schema_version`.
     let artifact = current_emission(&sample_prompt("schema-version-case"));
     assert!(
-        artifact.get("schema_version").and_then(Value::as_str).is_some(),
+        artifact
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .is_some(),
         "ADR-0007 goal-artifact contract: emission must carry a stable \
          top-level `schema_version` string for rusty-idd to consume; the bare \
          serialized Prompt has none. Emitted keys: {:?}",
@@ -86,7 +83,10 @@ fn goal_artifact_carries_provenance_block() {
     // artifact MUST carry a `provenance` object, not just prompt content.
     let artifact = current_emission(&sample_prompt("provenance-case"));
     assert!(
-        artifact.get("provenance").map(Value::is_object).unwrap_or(false),
+        artifact
+            .get("provenance")
+            .map(Value::is_object)
+            .unwrap_or(false),
         "ADR-0007 goal-artifact contract: emission must carry a `provenance` \
          object; the bare serialized Prompt has no provenance. Emitted keys: {:?}",
         artifact.as_object().map(|o| o.keys().collect::<Vec<_>>())
@@ -150,10 +150,12 @@ fn goal_artifact_envelope_wraps_the_goal_payload() {
     // prompt row (lifeos-meta-front-door.md:147 "planning outputs create/select
     // OpenSpec changes").
     let intent = sample_intent();
-    // Best-available emission of an intent today: the serialized Intent. It is
-    // not wrapped in any goal-artifact envelope.
-    let emitted = serde_json::to_value(&intent).expect("Intent derives Serialize");
-    let has_envelope = emitted.get("artifact_kind").and_then(Value::as_str) == Some("goal_artifact")
+    // The intent is emitted wrapped in the goal-artifact envelope, bound to its
+    // originating prompt record.
+    let emitted = serde_json::to_value(GoalArtifact::from_intent(&intent, "prompt-000"))
+        .expect("GoalArtifact derives Serialize");
+    let has_envelope = emitted.get("artifact_kind").and_then(Value::as_str)
+        == Some("goal_artifact")
         && emitted.get("goal").is_some()
         && emitted.get("origin_prompt_id").is_some();
     assert!(
@@ -196,10 +198,16 @@ async fn registered_prompt_emits_contract_compliant_goal_artifact() {
         .first()
         .expect("registered prompt should be retrievable")
         .prompt;
-    assert_eq!(stored.id, id, "round-trip should return the registered prompt");
+    assert_eq!(
+        stored.id, id,
+        "round-trip should return the registered prompt"
+    );
 
     let artifact = current_emission(stored);
-    let schema_ok = artifact.get("schema_version").and_then(Value::as_str).is_some();
+    let schema_ok = artifact
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .is_some();
     let provenance_ok = artifact
         .get("provenance")
         .and_then(|p| p.get("sources"))

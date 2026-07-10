@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flexnetos.dev/lifeos/teas/task_graph.schema.json",
+  "title": "TEAS WorkOrder (task_graph row)",
+  "description": "Canonical HEALED profile of the unit-of-work aggregate for the LifeOS Task Execution Automation System. Superset of handoff.task.v1 (origin), rusty-idd work-order (mirror), the execution-framework 40-column task_graph.csv, and planning-spine-v0 task.schema.json. Heals DOMAIN_MODEL contradiction 9.1: both CSV projections derive from this schema; Rust types are schemars-generated from it. The current handoff WorkOrder struct is the origin and CONVERGES to this superset (it does not yet emit every field — see DOMAIN_MODEL 9.6); 'const handoff.task.v1' denotes the healed profile, not the present struct shape. One task schema, workspace-wide.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "title",
+    "objective",
+    "status",
+    "priority",
+    "path_scope",
+    "acceptance_criteria"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "handoff.task.v1",
+      "description": "Schema tag; pins the shared kernel version."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Z]*TASK-[A-Z0-9][A-Z0-9-]*$",
+      "description": "Stable identity, e.g. HFTASK-0058, PHTASK-0025, TASK-0001, KBTASK-FLEET-ROLLOUT."
+    },
+    "correlation_id": {
+      "type": ["string", "null"],
+      "description": "Cross-system handle (= upstream SwarmBundle.workflow_id / OpenSpec change id)."
+    },
+    "parent_id": { "type": ["string", "null"] },
+    "phase": { "type": ["string", "null"] },
+    "title": { "type": "string", "minLength": 1 },
+    "goal": { "type": ["string", "null"] },
+    "objective": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["backlog", "active", "claimed", "blocked", "checkpointed", "review", "done"],
+      "description": "Card-declared status. Authoritative status is derived from the ledger by replay; on conflict the ledger wins."
+    },
+    "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high", "critical"], "default": "medium" },
+    "owner_lane": { "type": ["string", "null"], "description": "Concurrency lane, e.g. lane_d_filesystem." },
+    "owner_agent": { "type": ["string", "null"] },
+    "helper_id": { "type": ["string", "null"] },
+    "role": { "type": ["string", "null"] },
+    "model_tag": { "type": ["string", "null"], "description": "Routing hint for tier selection (e.g. haiku/sonnet/opus/agent-booster)." },
+    "agent_runtime": { "type": ["string", "null"] },
+    "path_scope": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths this WorkOrder may touch. Hashed into IntentLock.path_scope_hash."
+    },
+    "allowed_paths": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "blocked_paths": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "input_files": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "target_files": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "target_artifacts": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Proof-of-done criteria. Hashed into IntentLock.acceptance_hash."
+    },
+    "test_commands": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "verification_command": { "type": ["string", "null"] },
+    "completion_gate": { "type": ["string", "null"], "description": "Hard transition check gating Done." },
+    "required_tools": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "command_template": { "type": ["string", "null"] },
+    "execution_cell": {
+      "type": ["string", "null"],
+      "enum": ["doc-cell", "sim-cell", "dev-cell", "proof-cell", "policy-cell", "release-cell", null],
+      "description": "Hermetic cell type; network denied by default, read-only FS except writable_paths."
+    },
+    "dependencies": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "blocked_by": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "blocks": { "type": "array", "items": { "type": "string" }, "default": [] },
+    "start_after": { "type": ["string", "null"] },
+    "parallel_group": { "type": ["string", "null"] },
+    "can_run_parallel": { "type": "boolean", "default": false },
+    "max_parallel": { "type": "integer", "minimum": 1, "default": 1 },
+    "allows_network": { "type": "boolean", "default": false, "description": "Gate default: deny_unless_task_allows." },
+    "allows_dependency_addition": { "type": "boolean", "default": false, "description": "Gate default: deny_without_audit_event." },
+    "human_approval_required": {
+      "type": "boolean",
+      "default": false,
+      "description": "MUST be true for spend, legal, external real-world action, production mutation, account creation, credential handling, trading, physical home automation, or anything irreversible."
+    },
+    "proof_required": { "type": "boolean", "const": true, "default": true, "description": "No proof, no Done. When present must be true; defaults true. Optional at the schema layer because the origin handoff struct does not yet emit it (DOMAIN_MODEL 9.6); the 'no Done without proof' invariant is enforced at the ledger/gate layer regardless." },
+    "proof_uri": { "type": ["string", "null"], "description": "Location of the ProofRecord once produced." },
+    "heartbeat_file": { "type": ["string", "null"] },
+    "logs_uri": { "type": ["string", "null"] },
+    "rollback_plan": { "type": ["string", "null"], "minLength": 1, "description": "Exact steps to reverse this WorkOrder. Canonically REQUIRED and enforced at the gate/adapter layer; optional at the schema layer until the origin handoff struct grows it (DOMAIN_MODEL 9.6)." },
+    "intent_lock": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "Value object: blake3 hashes pinning the immutable contract surface. A verifier recomputes these; any mismatch is drift and the WorkOrder is refused. Legacy 3-hash locks round-trip (no-downgrade).",
+      "required": ["objective_hash", "path_scope_hash", "acceptance_hash"],
+      "properties": {
+        "objective_hash": { "type": "string", "pattern": "^(blake3:)?[0-9a-f]{64}$" },
+        "path_scope_hash": { "type": "string", "pattern": "^(blake3:)?[0-9a-f]{64}$" },
+        "acceptance_hash": { "type": "string", "pattern": "^(blake3:)?[0-9a-f]{64}$" },
+        "constraint_hash": { "type": ["string", "null"], "pattern": "^(blake3:)?[0-9a-f]{64}$" },
+        "northstar_revision": { "type": ["string", "null"] }
+      }
+    },
+    "notes": { "type": ["string", "null"] }
+  }
+}
