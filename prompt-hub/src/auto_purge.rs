@@ -225,18 +225,18 @@ impl AutoPurgeEngine {
 
     /// Get a clone of the current configuration.
     pub fn config(&self) -> AutoPurgeConfig {
-        self.config.read().unwrap().clone()
+        self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     /// Update the configuration in-place.
     pub fn update_config(&self, updater: impl FnOnce(&mut AutoPurgeConfig)) {
-        let mut guard = self.config.write().unwrap();
+        let mut guard = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         updater(&mut guard);
     }
 
     /// Check whether purging is enabled.
     pub fn is_enabled(&self) -> bool {
-        self.config.read().unwrap().enabled
+        self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner).enabled
     }
 
     // ───────────────────────────────────────────
@@ -247,7 +247,7 @@ impl AutoPurgeEngine {
     /// and execute configured actions. Returns a snapshot of statistics.
     pub async fn run_purge(&self, hub: &crate::hub::PromptHub) -> Result<PurgeStats> {
         let config_snapshot = {
-            let config = self.config.read().unwrap();
+            let config = self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner);
             (config.enabled, config.policies.clone())
         };
 
@@ -351,7 +351,7 @@ impl AutoPurgeEngine {
 
     /// Spawn the daemon loop as a tokio task.
     pub async fn spawn_daemon_task(&self) -> Result<tokio::task::JoinHandle<()>> {
-        let config = self.config.read().unwrap();
+        let config = self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         let interval = config.interval;
 
         let mut shutdown_signal = self._shutdown_rx.as_ref().map(|rx| rx.resubscribe());
