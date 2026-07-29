@@ -173,7 +173,7 @@ mod tests {
             _identity: &'a AgentIdentity,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
             Box::pin(async move {
-                self.log.lock().unwrap().push(format!("{}:pre", self.name));
+                self.log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(format!("{}:pre", self.name));
                 if self.fail_pre {
                     return Err(HubError::Internal(format!("{} pre failed", self.name)));
                 }
@@ -188,7 +188,7 @@ mod tests {
             _identity: &'a AgentIdentity,
         ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
             Box::pin(async move {
-                self.log.lock().unwrap().push(format!("{}:post", self.name));
+                self.log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(format!("{}:post", self.name));
                 if self.fail_post {
                     return Err(HubError::Internal(format!("{} post failed", self.name)));
                 }
@@ -202,7 +202,7 @@ mod tests {
     }
 
     fn drain(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
-        log.lock().unwrap().clone()
+        log.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     #[test]
