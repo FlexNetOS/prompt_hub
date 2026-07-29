@@ -66,7 +66,10 @@ impl ProviderHealthMonitor {
     /// Register a provider to be monitored.
     #[instrument(skip(self))]
     pub fn register(&self, name: &str, url: &str) {
-        let mut providers = self.providers.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut providers = self
+            .providers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         providers.insert(
             name.to_string(),
             ProviderHealthRecord {
@@ -87,7 +90,10 @@ impl ProviderHealthMonitor {
     /// Record a successful probe result.
     #[instrument(skip(self), fields(name, latency_ms))]
     pub fn record_success(&self, name: &str, latency_ms: u64) {
-        let mut providers = self.providers.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut providers = self
+            .providers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(record) = providers.get_mut(name) {
             record.last_probe = Some(Instant::now());
             record.last_latency_ms = latency_ms;
@@ -107,7 +113,10 @@ impl ProviderHealthMonitor {
     /// Record a failed probe result.
     #[instrument(skip(self), fields(name))]
     pub fn record_failure(&self, name: &str) {
-        let mut providers = self.providers.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut providers = self
+            .providers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(record) = providers.get_mut(name) {
             record.last_probe = Some(Instant::now());
             record.error_count += 1;
@@ -133,7 +142,10 @@ impl ProviderHealthMonitor {
 
     /// Get health summary for all providers.
     pub fn summary(&self) -> HealthSummary {
-        let providers = self.providers.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let providers = self
+            .providers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let records: Vec<ProviderHealthRecord> = providers.values().cloned().collect();
 
         let healthy = records
@@ -168,7 +180,10 @@ impl ProviderHealthMonitor {
 
     /// Get health for a specific provider.
     pub fn get_health(&self, name: &str) -> Option<HealthStatus> {
-        let providers = self.providers.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let providers = self
+            .providers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         providers.get(name).map(|r| r.status)
     }
 
@@ -181,7 +196,10 @@ impl ProviderHealthMonitor {
 
     /// Get number of registered providers.
     pub fn provider_count(&self) -> usize {
-        self.providers.read().unwrap_or_else(std::sync::PoisonError::into_inner).len()
+        self.providers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// Configure thresholds.
@@ -201,7 +219,10 @@ impl ProviderHealthMonitor {
 
     /// Remove a provider from monitoring.
     pub fn unregister(&self, name: &str) {
-        let mut providers = self.providers.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut providers = self
+            .providers
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         providers.remove(name);
         info!("Unregistered provider '{}' from health monitoring", name);
     }
