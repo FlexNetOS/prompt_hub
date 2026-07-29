@@ -114,8 +114,14 @@ impl QuotaEnforcer {
         self.daily_used.store(0, Ordering::SeqCst);
         self.hourly_used.store(0, Ordering::SeqCst);
         self.burst_used.store(0, Ordering::SeqCst);
-        *self.hour_start.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
-        *self.day_start.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+        *self
+            .hour_start
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+        *self
+            .day_start
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
         info!("All quota counters reset");
     }
 
@@ -137,25 +143,40 @@ impl QuotaEnforcer {
 
         // Check hourly window
         {
-            let hour_start = self.hour_start.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let hour_start = self
+                .hour_start
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if now.duration_since(*hour_start) >= Duration::from_secs(3600) {
                 drop(hour_start);
                 self.hourly_used.store(0, Ordering::SeqCst);
                 self.burst_used.store(0, Ordering::SeqCst);
-                *self.hour_start.write().unwrap_or_else(std::sync::PoisonError::into_inner) = now;
+                *self
+                    .hour_start
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = now;
             }
         }
 
         // Check daily window
         {
-            let day_start = self.day_start.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let day_start = self
+                .day_start
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if now.duration_since(*day_start) >= Duration::from_secs(86400) {
                 drop(day_start);
                 self.daily_used.store(0, Ordering::SeqCst);
                 self.hourly_used.store(0, Ordering::SeqCst);
                 self.burst_used.store(0, Ordering::SeqCst);
-                *self.day_start.write().unwrap_or_else(std::sync::PoisonError::into_inner) = now;
-                *self.hour_start.write().unwrap_or_else(std::sync::PoisonError::into_inner) = now;
+                *self
+                    .day_start
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = now;
+                *self
+                    .hour_start
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = now;
             }
         }
     }

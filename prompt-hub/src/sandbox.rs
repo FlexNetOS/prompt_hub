@@ -212,7 +212,10 @@ impl SandboxEngine {
         cost_usd: f64,
         network_call: bool,
     ) -> SandboxCheckResult {
-        let store = self.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let store = self
+            .store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let sandbox = match store.get(&sandbox_id) {
             Some(s) => s,
             None => return SandboxCheckResult::Allowed, // unknown sandbox → allow
@@ -235,7 +238,8 @@ impl SandboxEngine {
         {
             let mut windows = self
                 .rate_windows
-                .lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let key = sandbox_id.to_string();
             let window = windows.entry(key).or_insert_with(RateWindow::new);
             window.record();
