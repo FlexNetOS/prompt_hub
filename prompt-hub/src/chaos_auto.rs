@@ -728,7 +728,9 @@ mod tests {
             alert_threshold: 0.8,
             actions: vec![AlertAction::Callback(Arc::new(
                 move |_record: &ChaosRunRecord| {
-                    *trigger_clone.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+                    *trigger_clone
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
                 },
             ))],
             history_max_entries: 100,
@@ -762,7 +764,11 @@ mod tests {
             }
         }
 
-        assert!(*triggered.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        assert!(
+            *triggered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        );
     }
 
     // 6. Trend insufficient data — fewer than 3 records → Stable

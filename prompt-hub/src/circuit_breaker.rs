@@ -49,7 +49,10 @@ impl CircuitBreaker {
     pub fn call<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
         // Check and potentially transition state
         {
-            let mut state = self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self
+                .state
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             match &*state {
                 BreakerState::Open { opened_at } => {
                     if opened_at.elapsed() > self.reset_timeout {
@@ -76,7 +79,10 @@ impl CircuitBreaker {
         // Execute the call
         match f() {
             Ok(val) => {
-                let mut state = self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut state = self
+                    .state
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let BreakerState::HalfOpen { calls, successes } = &mut *state {
                     *calls += 1;
                     *successes += 1;
@@ -88,7 +94,10 @@ impl CircuitBreaker {
                 Ok(val)
             }
             Err(e) => {
-                let mut state = self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut state = self
+                    .state
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 match &mut *state {
                     BreakerState::Closed { failures } => {
                         *failures += 1;
@@ -117,7 +126,10 @@ impl CircuitBreaker {
 
     /// Get the current state name for observability.
     pub fn current_state(&self) -> &'static str {
-        let state = self.state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let state = self
+            .state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match &*state {
             BreakerState::Closed { .. } => "closed",
             BreakerState::Open { .. } => "open",
@@ -127,7 +139,10 @@ impl CircuitBreaker {
 
     /// Reset the breaker to closed state.
     pub fn reset(&self) {
-        let mut state = self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self
+            .state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *state = BreakerState::Closed { failures: 0 };
         info!("Circuit breaker manually reset to CLOSED");
     }

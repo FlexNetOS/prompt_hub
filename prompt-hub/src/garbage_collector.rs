@@ -84,7 +84,12 @@ impl GarbageCollector {
         let cleaned = self.clean_orphaned_embeddings(storage).await?;
 
         // Phase 3: Vacuum if the retention policy requests it.
-        let vacuumed = if self.retention_policy.read().unwrap_or_else(std::sync::PoisonError::into_inner).auto_purge_enabled() {
+        let vacuumed = if self
+            .retention_policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .auto_purge_enabled()
+        {
             self.vacuum(storage).await?;
             true
         } else {
