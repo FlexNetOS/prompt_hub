@@ -81,7 +81,10 @@ impl SatisfactionTracker {
             warn!("Invalid CSAT score: {}, must be 1-5", score);
             return;
         }
-        let mut ratings = self.ratings.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut ratings = self
+            .ratings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         ratings.push_back(RatingEntry {
             score,
             kind: RatingKind::CSAT,
@@ -101,7 +104,10 @@ impl SatisfactionTracker {
             warn!("Invalid NPS score: {}, must be 1-10", score);
             return;
         }
-        let mut ratings = self.ratings.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut ratings = self
+            .ratings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         ratings.push_back(RatingEntry {
             score,
             kind: RatingKind::NPS,
@@ -117,7 +123,10 @@ impl SatisfactionTracker {
     /// Record a success event for the funnel.
     #[instrument(skip(self), fields(successful, attempts))]
     pub fn record_event(&self, prompt_id: &str, successful: bool, attempts: u8) {
-        let mut events = self.success_events.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut events = self
+            .success_events
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         events.push_back(SuccessEvent {
             prompt_id: prompt_id.to_string(),
             successful,
@@ -131,7 +140,10 @@ impl SatisfactionTracker {
 
     /// Calculate one-shot success rate (succeeded on first attempt).
     pub fn one_shot_success_rate(&self) -> f64 {
-        let events = self.success_events.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let events = self
+            .success_events
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let one_shot: usize = events
             .iter()
             .filter(|e| e.successful && e.attempts == 1)
@@ -146,8 +158,14 @@ impl SatisfactionTracker {
 
     /// Compute overall satisfaction metrics.
     pub fn metrics(&self) -> SatisfactionMetrics {
-        let ratings = self.ratings.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let events = self.success_events.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ratings = self
+            .ratings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let events = self
+            .success_events
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let csat_scores: Vec<u8> = ratings
             .iter()
@@ -213,18 +231,30 @@ impl SatisfactionTracker {
 
     /// Get the total number of ratings recorded.
     pub fn rating_count(&self) -> usize {
-        self.ratings.read().unwrap_or_else(std::sync::PoisonError::into_inner).len()
+        self.ratings
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// Get the total number of events recorded.
     pub fn event_count(&self) -> usize {
-        self.success_events.read().unwrap_or_else(std::sync::PoisonError::into_inner).len()
+        self.success_events
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// Clear all data.
     pub fn clear(&self) {
-        self.ratings.write().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
-        self.success_events.write().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+        self.ratings
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.success_events
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         info!("Satisfaction tracker cleared");
     }
 }
