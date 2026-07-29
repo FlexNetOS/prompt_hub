@@ -84,7 +84,7 @@ impl GarbageCollector {
         let cleaned = self.clean_orphaned_embeddings(storage).await?;
 
         // Phase 3: Vacuum if the retention policy requests it.
-        let vacuumed = if self.retention_policy.read().unwrap().auto_purge_enabled() {
+        let vacuumed = if self.retention_policy.read().unwrap_or_else(std::sync::PoisonError::into_inner).auto_purge_enabled() {
             self.vacuum(storage).await?;
             true
         } else {
@@ -117,7 +117,7 @@ impl GarbageCollector {
         let retention_days = self
             .retention_policy
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_period(&DataType::SoftDeletedPrompt);
         let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
         info!(
@@ -176,7 +176,7 @@ impl GarbageCollector {
     pub fn set_retention_period(&self, data_type: DataType, days: u32) {
         self.retention_policy
             .write()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .set_period(data_type, days);
     }
 
