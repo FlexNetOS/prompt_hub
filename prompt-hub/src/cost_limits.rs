@@ -168,7 +168,7 @@ impl CostLimiter {
 
     /// Get a copy of the underlying config.
     pub fn config(&self) -> CostLimitConfig {
-        self.config.lock().unwrap().clone()
+        self.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
 
     /// Add or update a limit for an entity-resource pair.
@@ -180,7 +180,7 @@ impl CostLimiter {
         budget_usd: f64,
         policy: OveragePolicy,
     ) -> LimitEntry {
-        let mut config = self.config.lock().unwrap();
+        let mut config = self.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let limit_resource = resource.clone();
         let limit = LimitEntry::new(entity_id, limit_resource, budget_usd, policy);
 
@@ -212,7 +212,7 @@ impl CostLimiter {
         resource: Resource,
         amount_usd: f64,
     ) -> LimitStatus {
-        let mut config = self.config.lock().unwrap();
+        let mut config = self.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let key = resource.clone();
         let micros = (amount_usd * 1_000_000.0).round() as u64;
@@ -268,7 +268,7 @@ impl CostLimiter {
         if let Some(entry) = self
             .config
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .limits
             .get_mut(entity_id)
             .and_then(|e| e.iter_mut().find(|x| x.resource == key))
@@ -282,7 +282,7 @@ impl CostLimiter {
         let key = resource.clone();
         self.config
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .limits
             .get(entity_id)
             .and_then(|entries| entries.iter().find(|e| e.resource == key))
@@ -293,7 +293,7 @@ impl CostLimiter {
     pub fn entity_status(&self, entity_id: &str) -> Vec<(Resource, f64, OveragePolicy)> {
         self.config
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .limits
             .get(entity_id)
             .map(|entries| {
@@ -313,7 +313,7 @@ impl CostLimiter {
 
     /// Reset all spend counters for a new billing period.
     pub fn reset_all(&self) {
-        let mut config = self.config.lock().unwrap();
+        let mut config = self.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         for entries in config.limits.values_mut() {
             for entry in entries.iter_mut() {
                 entry.reset();
@@ -323,7 +323,7 @@ impl CostLimiter {
 
     /// Get all entity IDs.
     pub fn entity_ids(&self) -> Vec<String> {
-        self.config.lock().unwrap().limits.keys().cloned().collect()
+        self.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner).limits.keys().cloned().collect()
     }
 }
 
@@ -429,7 +429,7 @@ mod tests {
         let limiter = CostLimiter::default();
         limiter.set_limit("org-1", Resource::Compute, 100.0, OveragePolicy::Alert);
         // Simulate spend via direct access.
-        let mut config = limiter.config.lock().unwrap();
+        let mut config = limiter.config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(entries) = config.limits.get_mut("org-1") {
             entries[0].current_spend_micros = 90_000_000; // $90
         }
