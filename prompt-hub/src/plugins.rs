@@ -468,7 +468,7 @@ mod tests {
     fn test_load_static_plugins() {
         // Clear any existing registrations from previous tests
         {
-            let mut reg = PLUGIN_REGISTRY.lock().unwrap();
+            let mut reg = PLUGIN_REGISTRY.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             reg.clear();
         }
 
@@ -487,7 +487,7 @@ mod tests {
 
         // Clean up so we don't pollute other test runs
         {
-            let mut reg = PLUGIN_REGISTRY.lock().unwrap();
+            let mut reg = PLUGIN_REGISTRY.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             reg.clear();
         }
     }

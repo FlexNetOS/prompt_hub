@@ -18,7 +18,7 @@ async fn test_touch_config_accessible_on_hub() {
         .expect("hub creation");
 
     let cfg = hub.touch_config();
-    let inner = cfg.lock().unwrap();
+    let inner = cfg.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     assert_eq!(inner.swipe_threshold, 50);
     assert_eq!(inner.tap_debounce_ms, 300);
     assert!(inner.haptic_feedback);
