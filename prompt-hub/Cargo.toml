@@ -127,7 +127,7 @@ tempfile = { workspace = true }
 criterion = { workspace = true }
 proptest = { workspace = true }
 # Validates emitted WorkOrders against the embedded canonical task_graph schema.
-jsonschema = "0.30"
+jsonschema = "0.48"
 
 [[bench]]
 name = "search_latency"
