@@ -390,7 +390,7 @@ mod tests {
                     let lock = LockManager::create_lock(prompt_id, agent_id, 300);
                     assert_eq!(lock.prompt_id, prompt_id);
                     assert_eq!(lock.agent_id, agent_id);
-                    tokens.lock().unwrap().push(lock);
+                    tokens.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(lock);
                 });
             }
         });
