@@ -31,7 +31,7 @@ async fn test_full_hub_offline_flow() {
     assert!(matches!(status, prompt_hub::offline::SyncStatus::Offline));
 
     // The offline store should be empty (sync hasn't run yet).
-    let guard = hub.offlined().read().unwrap();
+    let guard = hub.offlined().read().unwrap_or_else(std::sync::PoisonError::into_inner);
     let state = guard.as_ref().unwrap();
     assert_eq!(state.store.pending_push_count(), 0);
 
