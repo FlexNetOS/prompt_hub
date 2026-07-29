@@ -729,7 +729,11 @@ impl PromptHub {
         // spawn_task does not do long-running synchronous work — it only
         // sets up tokio intervals and spawns a task which immediately drops
         // the future reference back to us via JoinHandle.
-        let handle = auto.lock().unwrap_or_else(std::sync::PoisonError::into_inner).spawn_task(self).await?;
+        let handle = auto
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .spawn_task(self)
+            .await?;
         self.chaos_auto = Some(auto);
 
         Ok(Some(handle))
@@ -740,7 +744,10 @@ impl PromptHub {
     /// Return a handle to the auto-purge engine, if enabled.
     #[cfg(feature = "auto-purge")]
     pub fn auto_purge_engine(&self) -> Option<Arc<crate::auto_purge::AutoPurgeEngine>> {
-        let outer = self.auto_purge_engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let outer = self
+            .auto_purge_engine
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         outer.clone()
     }
 
@@ -748,7 +755,10 @@ impl PromptHub {
     #[cfg(feature = "auto-purge")]
     pub async fn purge_now(&self) -> Result<crate::auto_purge::PurgeStats> {
         let engine = {
-            let outer = self.auto_purge_engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let outer = self
+                .auto_purge_engine
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             outer
                 .clone()
                 .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
@@ -760,7 +770,10 @@ impl PromptHub {
     #[cfg(feature = "auto-purge")]
     pub fn get_purge_stats(&self) -> Result<crate::auto_purge::PurgeStats> {
         let engine = {
-            let outer = self.auto_purge_engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let outer = self
+                .auto_purge_engine
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             outer
                 .clone()
                 .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
@@ -775,7 +788,10 @@ impl PromptHub {
         updater: impl FnOnce(&mut crate::auto_purge::AutoPurgeConfig),
     ) -> Result<()> {
         let engine = {
-            let outer = self.auto_purge_engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let outer = self
+                .auto_purge_engine
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             outer
                 .clone()
                 .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
@@ -791,7 +807,10 @@ impl PromptHub {
         config: crate::auto_purge::AutoPurgeConfig,
     ) -> Result<Option<tokio::task::JoinHandle<()>>> {
         let engine = {
-            let mut outer = self.auto_purge_engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut outer = self
+                .auto_purge_engine
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if outer.is_none() {
                 *outer = Some(Arc::new(crate::auto_purge::AutoPurgeEngine::new(config)));
             }
@@ -810,7 +829,10 @@ impl PromptHub {
     #[cfg(feature = "auto-purge")]
     pub fn stop_purge_daemon(&self) -> Result<()> {
         let engine = {
-            let outer = self.auto_purge_engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let outer = self
+                .auto_purge_engine
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             outer
                 .clone()
                 .ok_or_else(|| HubError::Internal("auto-purge not initialized".into()))?
@@ -829,7 +851,10 @@ impl PromptHub {
     /// queued for push sync when connectivity returns.
     #[cfg(feature = "mobile")]
     pub fn enable_mobile_mode(&self, config: crate::mobile::MobileConfig) -> Result<()> {
-        let mut guard = self.mobile_engine.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .mobile_engine
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if guard.is_some() {
             return Err(HubError::InvalidInput(
                 "mobile mode is already enabled".to_string(),
@@ -851,26 +876,36 @@ impl PromptHub {
         op_type: crate::mobile::PushOpType,
         payload_size_bytes: usize,
     ) -> Result<u64> {
-        let guard = self.mobile_engine.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = self
+            .mobile_engine
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let engine = guard.as_ref().ok_or_else(|| {
             HubError::InvalidInput(
                 "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
             )
         })?;
-        let mut inner = engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut inner = engine
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(inner.enqueue_push(op_type, payload_size_bytes))
     }
 
     /// Check whether device sync should be suppressed based on current network condition.
     #[cfg(feature = "mobile")]
     pub fn should_suppress_sync(&self) -> Result<bool> {
-        let guard = self.mobile_engine.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = self
+            .mobile_engine
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let engine = guard.as_ref().ok_or_else(|| {
             HubError::InvalidInput(
                 "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
             )
         })?;
-        let inner = engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let inner = engine
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(inner.should_suppress_sync())
     }
 
@@ -880,13 +915,18 @@ impl PromptHub {
         &self,
         available_bytes: usize,
     ) -> Result<crate::mobile::SyncPlan> {
-        let guard = self.mobile_engine.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = self
+            .mobile_engine
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let engine = guard.as_ref().ok_or_else(|| {
             HubError::InvalidInput(
                 "mobile mode is not enabled; call enable_mobile_mode first".to_string(),
             )
         })?;
-        let inner = engine.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let inner = engine
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         Ok(inner.build_sync_plan(available_bytes))
     }
 
@@ -2183,7 +2223,10 @@ impl PromptHub {
     #[instrument(skip(self))]
     pub fn register_provider(&self, name: &str, url: &str) {
         let monitor = self.health_monitor();
-        monitor.lock().unwrap_or_else(std::sync::PoisonError::into_inner).register(name, url);
+        monitor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .register(name, url);
         info!(provider = name, url = url, "Registered LLM provider");
     }
 
@@ -2220,7 +2263,10 @@ impl PromptHub {
     #[instrument(skip(self))]
     pub fn record_failure(&self, provider_name: &str) {
         let monitor = self.health_monitor();
-        monitor.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record_failure(provider_name);
+        monitor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_failure(provider_name);
         warn!(provider = provider_name, "Recorded provider failure");
     }
 
@@ -2235,7 +2281,10 @@ impl PromptHub {
     #[instrument(skip(self))]
     pub fn is_healthy(&self, provider_name: &str) -> bool {
         let monitor = self.health_monitor();
-        let healthy = monitor.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_healthy(provider_name);
+        let healthy = monitor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_healthy(provider_name);
         info!(provider = provider_name, healthy = healthy, "Health check");
         healthy
     }
@@ -2247,7 +2296,10 @@ impl PromptHub {
     /// never probed appear with `HealthStatus::Unknown` status.
     pub fn get_health_summary(&self) -> HealthSummary {
         let monitor = self.health_monitor();
-        monitor.lock().unwrap_or_else(std::sync::PoisonError::into_inner).summary()
+        monitor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .summary()
     }
 
     // ── Load balancer -----------------------------------------------------------
@@ -2296,7 +2348,9 @@ impl PromptHub {
     #[instrument(skip(self))]
     pub fn add_lb_provider(&self, name: &str, url: &str, weight: u32) {
         let lb = self.load_balancer();
-        lb.lock().unwrap_or_else(std::sync::PoisonError::into_inner).add_provider(name, url, weight);
+        lb.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .add_provider(name, url, weight);
         info!(
             provider = name,
             weight = weight,
@@ -2332,7 +2386,9 @@ impl PromptHub {
     #[instrument(skip(self))]
     pub fn record_lb_latency(&self, provider_name: &str, latency_ms: u64) {
         let lb = self.load_balancer();
-        lb.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record_latency(provider_name, latency_ms);
+        lb.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_latency(provider_name, latency_ms);
     }
 
     /// Record a failure event for the named provider in the load balancer pool.
@@ -2342,14 +2398,18 @@ impl PromptHub {
     #[instrument(skip(self))]
     pub fn record_lb_failure(&self, provider_name: &str) {
         let lb = self.load_balancer();
-        lb.lock().unwrap_or_else(std::sync::PoisonError::into_inner).record_error(provider_name);
+        lb.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record_error(provider_name);
         warn!(provider = provider_name, "Recorded load balancer failure");
     }
 
     /// Return current stats for all providers in the load balancer pool.
     pub fn get_lb_stats(&self) -> Vec<ProviderStats> {
         let lb = self.load_balancer();
-        lb.lock().unwrap_or_else(std::sync::PoisonError::into_inner).stats()
+        lb.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .stats()
     }
 
     // ── Budget tracking ────────────────────────────────────────────────
@@ -2572,7 +2632,10 @@ impl PromptHub {
     /// Get the health statistics for all providers in the pool.
     #[cfg(feature = "multi-provider")]
     pub fn provider_pool_stats(&self) -> crate::multi_provider::PoolStats {
-        self.multi_provider_router.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pool_stats()
+        self.multi_provider_router
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pool_stats()
     }
 
     // ── Circuit breaker ----------------------------------------------------------
@@ -2690,7 +2753,10 @@ impl PromptHub {
     /// Register a new rollout configuration into the active rollouts list.
     #[cfg(feature = "gradual-rollout")]
     pub fn register_rollout(&self, config: GraduatedRolloutConfig) {
-        let mut guards = self.active_rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guards = self
+            .active_rollouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guards.push(config);
     }
 
@@ -2704,7 +2770,10 @@ impl PromptHub {
         feature: &str,
         user_id: Uuid,
     ) -> Option<bool> {
-        let guards = self.active_rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guards = self
+            .active_rollouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let config = guards
             .iter()
             .find(|c| c.rollout_id == rollout_id && c.active)?;
@@ -2734,7 +2803,10 @@ impl PromptHub {
         error_rate: f64,
         latency_p99_ms: u64,
     ) -> Option<bool> {
-        let guards = self.active_rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guards = self
+            .active_rollouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let config = guards
             .iter()
             .find(|c| c.rollout_id == rollout_id && c.active)?;
@@ -2749,7 +2821,10 @@ impl PromptHub {
     /// or `None` if already at Production or not found.
     #[cfg(feature = "gradual-rollout")]
     pub fn advance_segment(&self, rollout_id: &str, segment_idx: usize) -> Option<RolloutStage> {
-        let mut guards = self.active_rollouts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guards = self
+            .active_rollouts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let config = guards
             .iter_mut()
             .find(|c| c.rollout_id == rollout_id && c.active)?;
@@ -2932,7 +3007,8 @@ impl PromptHub {
     pub fn configure_local_model(&mut self, config: LocalModelConfig) {
         let mut configs = self
             .local_model_config
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         configs.push(config);
     }
 
@@ -2968,31 +3044,46 @@ impl PromptHub {
     /// Record an analytics event for tracking usage metrics.
     #[instrument(skip(self, event))]
     pub fn record_analytics_event(&self, event: crate::analytics::AnalyticsEvent) {
-        let mut analytics = self.analytics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut analytics = self
+            .analytics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         analytics.record_event(event);
     }
 
     /// Get a usage report of all tracked analytics.
     pub fn get_usage_report(&self) -> crate::analytics::UsageReport {
-        let analytics = self.analytics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let analytics = self
+            .analytics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         analytics.usage_report()
     }
 
     /// Get the overall success rate.
     pub fn success_rate(&self) -> f64 {
-        let analytics = self.analytics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let analytics = self
+            .analytics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         analytics.success_rate()
     }
 
     /// Get total cost in USD.
     pub fn total_cost_usd(&self) -> f64 {
-        let analytics = self.analytics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let analytics = self
+            .analytics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         analytics.total_cost_usd()
     }
 
     /// Reset all analytics counters.
     pub fn reset_analytics(&self) {
-        let mut analytics = self.analytics.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut analytics = self
+            .analytics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         analytics.reset();
     }
 
@@ -3061,7 +3152,10 @@ impl PromptHub {
     /// Set a retention period for a data type.
     #[cfg(feature = "retention")]
     pub fn set_retention_period(&self, data_type: DataType, days: u32) {
-        let mut policy = self.retention_policy.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut policy = self
+            .retention_policy
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         policy.set_period(data_type.clone(), days);
         drop(policy);
         self.garbage_collector.set_retention_period(data_type, days);
@@ -3070,21 +3164,30 @@ impl PromptHub {
     /// Get the retention period (in days) for a data type.
     #[cfg(feature = "retention")]
     pub fn get_retention_period(&self, data_type: &DataType) -> u32 {
-        let policy = self.retention_policy.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let policy = self
+            .retention_policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         policy.get_period(data_type)
     }
 
     /// Check if data of a given type has expired based on its retention policy.
     #[cfg(feature = "retention")]
     pub fn is_data_expired(&self, data_type: &DataType, age_days: u32) -> bool {
-        let policy = self.retention_policy.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let policy = self
+            .retention_policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         policy.is_expired(data_type, age_days)
     }
 
     /// Run scheduled cleanup and return results for expired items.
     #[cfg(feature = "retention")]
     pub fn run_retention_cleanup(&self) -> Vec<crate::retention::CleanupResult> {
-        let policy = self.retention_policy.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let policy = self
+            .retention_policy
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         policy.run_cleanup()
     }
 
@@ -3169,7 +3272,8 @@ impl PromptHub {
     pub fn set_malware_scan_config(&self, config: MalwareScanConfig) {
         let mut cfg = self
             .malware_scan_config
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         *cfg = config;
     }
 
@@ -3178,7 +3282,8 @@ impl PromptHub {
     pub fn scan_blob(&self, blob: &[u8]) -> Result<ScanResult> {
         let cfg = self
             .malware_scan_config
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         crate::malware_scan::scan_blob(blob, &cfg)
     }
 
@@ -3187,7 +3292,8 @@ impl PromptHub {
     pub fn scan_file(&self, path: impl AsRef<Path>) -> Result<ScanResult> {
         let cfg = self
             .malware_scan_config
-            .lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         crate::malware_scan::scan_file(path, &cfg)
     }
 
@@ -3204,7 +3310,10 @@ impl PromptHub {
     /// * `config` — [`OfflineConfig`](crate::offline::OfflineConfig) controlling auto-sync behaviour and conflict strategy.
     #[cfg(feature = "offline")]
     pub fn enable_offline_mode(&self, config: crate::offline::OfflineConfig) -> Result<()> {
-        let mut guard = self.offlined.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .offlined
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if guard.is_some() {
             return Err(HubError::InvalidInput(
                 "offline mode is already enabled".to_string(),
@@ -3227,7 +3336,10 @@ impl PromptHub {
         let pending_push: Vec<_>;
 
         {
-            let mut guard = self.offlined.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut guard = self
+                .offlined
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let state = guard.as_mut().ok_or_else(|| {
                 HubError::InvalidInput(
                     "offline mode is not enabled; call enable_offline_mode first".to_string(),
@@ -3302,7 +3414,10 @@ impl PromptHub {
 
         // Re-acquire the guard to update the offline state.
         {
-            let mut guard = self.offlined.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut guard = self
+                .offlined
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let state = guard.as_mut().unwrap();
             state
                 .store
@@ -3312,7 +3427,10 @@ impl PromptHub {
         // Apply server changes, resolve conflicts, and update status (single write lock).
         let status;
         {
-            let mut guard = self.offlined.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut guard = self
+                .offlined
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let state = guard.as_mut().unwrap();
             let conflicts = state.store.apply_server_changes(pull_changes);
 
@@ -3336,7 +3454,10 @@ impl PromptHub {
     /// Return the current sync status, or `None` if offline mode is not enabled.
     #[cfg(feature = "offline")]
     pub fn get_sync_status(&self) -> Option<crate::offline::SyncStatus> {
-        let guard = self.offlined.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = self
+            .offlined
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.as_ref().map(|s| s.status.clone())
     }
 
@@ -3364,7 +3485,10 @@ impl PromptHub {
         &self,
         text: &str,
     ) -> Result<(String, Vec<crate::voice_anonymize::PiiMatch>)> {
-        let anon = self.voice_anonymizer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let anon = self
+            .voice_anonymizer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         anon.anonymize(text)
     }
 
@@ -3381,7 +3505,10 @@ impl PromptHub {
     /// Update the touch config in-place.  Replaces every field atomically.
     #[cfg(feature = "touch")]
     pub fn set_touch_config(&self, cfg: crate::touch::TouchConfig) -> crate::touch::TouchConfig {
-        let mut guard = self.touch_config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self
+            .touch_config
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         std::mem::replace(&mut *guard, cfg)
     }
 
@@ -3399,7 +3526,10 @@ impl PromptHub {
         &self,
         event: crate::touch::TouchEvent,
     ) -> Result<crate::touch::ActionResult> {
-        let cfg = self.touch_config.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let cfg = self
+            .touch_config
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let action = crate::touch::gesture_to_action(&event, &cfg).ok_or_else(|| {
             HubError::InvalidInput(format!("Unsupported touch gesture: {}", event))
@@ -4087,7 +4217,13 @@ mod tests {
 
         let handle1 = hub.pollination();
         let handle2 = hub.pollination();
-        assert_eq!(handle1.lock().unwrap_or_else(std::sync::PoisonError::into_inner).pool_size(), 0);
+        assert_eq!(
+            handle1
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .pool_size(),
+            0
+        );
         assert_eq!(Arc::strong_count(&handle1), Arc::strong_count(&handle2));
     }
 
@@ -4109,7 +4245,13 @@ mod tests {
         };
 
         hub.pollination_mut().share_pattern(pattern).unwrap();
-        assert_eq!(hub.pollination().lock().unwrap_or_else(std::sync::PoisonError::into_inner).pool_size(), 1);
+        assert_eq!(
+            hub.pollination()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .pool_size(),
+            1
+        );
     }
 
     // - Swarm role registry tests ------------------------------------------
@@ -4300,7 +4442,11 @@ mod tests {
         hub.record_failure("claude");
         assert!(!hub.is_healthy("claude"));
 
-        let gpt_status = hub.health_monitor().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_health("gpt-4o");
+        let gpt_status = hub
+            .health_monitor()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_health("gpt-4o");
         assert!(gpt_status.is_some());
     }
 
@@ -4316,7 +4462,10 @@ mod tests {
         // Configure thresholds via the monitor directly
         {
             let monitor = hub.health_monitor();
-            monitor.lock().unwrap_or_else(std::sync::PoisonError::into_inner).configure(100, 50); // latency=100ms, error_rate=50%
+            monitor
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .configure(100, 50); // latency=100ms, error_rate=50%
         }
 
         // Record many failures to push over the threshold
