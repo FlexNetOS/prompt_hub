@@ -133,12 +133,18 @@ impl BetaProgram {
 
     /// Get the current config (cloned).
     pub fn config(&self) -> BetaProgramConfig {
-        self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+        self.config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Create a new beta cohort.
     pub fn create_cohort(&self, id: &str, name: &str) -> BetaCohort {
-        let mut config = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut config = self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let cohort = BetaCohort::new(id, name);
         config.cohorts.insert(id.to_string(), cohort.clone());
         cohort
@@ -146,12 +152,20 @@ impl BetaProgram {
 
     /// Get a reference to a specific cohort.
     pub fn cohort(&self, id: &str) -> Option<BetaCohort> {
-        self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner).cohorts.get(id).cloned()
+        self.config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cohorts
+            .get(id)
+            .cloned()
     }
 
     /// Enroll a participant in a cohort.
     pub fn enroll(&self, cohort_id: &str, participant_id: &str) -> bool {
-        let mut config = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut config = self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(cohort) = config.cohorts.get_mut(cohort_id) {
             cohort.enroll(participant_id);
             true
@@ -162,7 +176,10 @@ impl BetaProgram {
 
     /// Unenroll a participant from a cohort.
     pub fn unenroll(&self, cohort_id: &str, participant_id: &str) -> bool {
-        let mut config = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut config = self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(cohort) = config.cohorts.get_mut(cohort_id) {
             cohort.unenroll(participant_id);
             true
@@ -179,7 +196,10 @@ impl BetaProgram {
         score: u8,
         comment: String,
     ) -> bool {
-        let mut config = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut config = self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(cohort) = config.cohorts.get_mut(cohort_id) {
             cohort.record_feedback(score);
             config.feedbacks.push(BetaFeedback {
@@ -196,7 +216,10 @@ impl BetaProgram {
 
     /// Advance a cohort's rollout stage.
     pub fn advance_stage(&self, cohort_id: &str, target: RolloutStage) -> bool {
-        let mut config = self.config.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut config = self
+            .config
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(cohort) = config.cohorts.get_mut(cohort_id) {
             cohort.advance_stage(target);
             true
@@ -207,7 +230,10 @@ impl BetaProgram {
 
     /// Get overall program stats.
     pub fn stats(&self) -> ProgramStats {
-        let config = self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let total_cohorts = config.cohorts.len();
         let total_participants: usize = config.cohorts.values().map(|c| c.members.len()).sum();
         let avg_satisfaction = if total_cohorts == 0 {
@@ -231,7 +257,10 @@ impl BetaProgram {
 
     /// Get the overall average stage across all cohorts.
     pub fn average_stage(&self) -> RolloutStage {
-        let config = self.config.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if config.cohorts.is_empty() {
             return RolloutStage::Internal;
         }
