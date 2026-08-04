@@ -38,7 +38,7 @@ jobs:
           fi
       - name: 'Qodana Scan'
         if: steps.qodana_token.outputs.available == 'true'
-        uses: JetBrains/qodana-action@v2026.1
+        uses: JetBrains/qodana-action@v2026.2
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
         with:
