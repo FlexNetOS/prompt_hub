@@ -64,7 +64,7 @@ tokio-rustls = { version = "0.26.2" }
 ratatui = { version = "0.30" }
 dialoguer = { version = "0.12" }
 console = { version = "0.16" }
-comfy-table = { version = "7.1" }
+comfy-table = { version = "8.0" }
 syntect = { version = "5.2" }
 ndarray = { version = "0.17.2" }
 petgraph = { version = "0.8.3" }
